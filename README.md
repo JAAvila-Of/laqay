@@ -89,7 +89,11 @@ hotkey or simulates a paste. Modifier state is ephemeral and unrelated keys are
 not retained or logged. There is one instance per interactive session.
 
 The first desktop trial produced no paste requests despite a confirmed Ctrl+V.
-Input detection remains unverified. Aggregate counters now distinguish raw
+A later input-only trial in an active RDP session detected two Ctrl+V presses
+through both Raw Input and the passive hook, with eight keyboard events per
+source and no raw parsing errors. This verifies reception in that trial, not
+complete image pasting or the cause of earlier missing events.
+Aggregate counters now distinguish raw
 message receipt, parsing, chord recognition, missing context, and queue rejection.
 Pass `-InputBackend hook` to compare Raw Input with an optional passive
 `WH_KEYBOARD_LL` observer. The hook always calls `CallNextHookEx`; it neither
@@ -112,7 +116,8 @@ registration and after cleanup. Metadata failures are explicit. It never
 switches desktops or sessions. Readiness is announced from the message loop;
 the runner relays it and fails if readiness is absent after five seconds.
 Callback entry is counted independently of thread-local state. These diagnostics
-are intended to investigate RDP reception; RDP support is not validated yet.
+confirmed reception in one RDP trial; complete image pasting over RDP is not
+validated yet.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
