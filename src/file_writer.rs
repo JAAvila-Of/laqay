@@ -101,9 +101,21 @@ impl Drop for PendingFile {
 
 fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
     for _ in 0..1024 {
-        let id = NEXT_TEMPORARY_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| io::Error::other("Staging identifiers exhausted"))?;
+        let mut id = NEXT_TEMPORARY_ID.load(Ordering::Relaxed);
+        loop {
+            let next = id
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("Staging identifiers exhausted"))?;
+            match NEXT_TEMPORARY_ID.compare_exchange_weak(
+                id,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => id = observed,
+            }
+        }
         let path = directory.join(format!(".laqay-{}-{id}.tmp", std::process::id()));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => {
@@ -144,6 +156,17 @@ pub fn create_screenshot(
     time: ScreenshotTime,
     encode: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<PathBuf> {
+    create_screenshot_checked(directory, time, encode, || Ok(()))
+}
+
+/// Revalidate the caller's paste context immediately before each publication
+/// attempt. Cancellation removes staging data without publishing a PNG.
+pub fn create_screenshot_checked(
+    directory: &Path,
+    time: ScreenshotTime,
+    encode: impl FnOnce(&mut File) -> io::Result<()>,
+    mut before_publish: impl FnMut() -> io::Result<()>,
+) -> io::Result<PathBuf> {
     if !directory.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -168,6 +191,7 @@ pub fn create_screenshot(
     )?;
     let mut collision = 0;
     loop {
+        before_publish()?;
         let destination = directory.join(time.filename(collision));
         let target = wide_path(&destination)?;
         // SAFETY: Both strings are NUL-terminated and live through the call.
@@ -314,5 +338,23 @@ mod tests {
         let result =
             create_screenshot(Path::new("relative"), time(), |_| panic!("must not encode"));
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn cancellation_after_encoding_never_publishes_a_png() {
+        let directory = TestDirectory::new();
+        let result = create_screenshot_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"complete"),
+            || {
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "context changed",
+                ))
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
     }
 }

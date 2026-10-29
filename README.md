@@ -5,9 +5,10 @@ Paste it. Save it.
 Laqay is a Windows utility under development. Its goal is to save clipboard
 images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
-**Current status:** initial engineering validation. Image paste, tray controls,
-and startup integration are not implemented. Running `laqay.exe` currently exits
-without installing hooks or changing system settings.
+**Current status:** engineering validation. Running `laqay.exe` currently exits
+without registering input or changing system settings. An opt-in image-paste
+experiment is implemented separately; its desktop behavior is not verified yet.
+Tray controls and startup integration are not implemented.
 
 ## Requirements
 
@@ -72,7 +73,43 @@ the destination folder and publish it with a non-replacing move after encoding
 and synchronization complete. Filename collisions, including simultaneous
 writers, use increasing suffixes. Encoding failure removes the staging file
 when possible; a disconnected or changed destination can leave a `.tmp` file.
-PNG encoding and the paste workflow are not connected to this module yet.
+The bounded experiment below connects native PNG encoding to this module.
+
+## Bounded Ctrl+V experiment
+
+Build with `cargo build --locked --release --examples`. After agreeing on a
+desktop test window, run `scripts/Invoke-PasteProbe.ps1 -Seconds 30
+-Destination <approved-folder> -OutputDirectory <private-log-directory>` from PowerShell. This runtime test
+observes real keyboard input and can save a clipboard image; do not run it as
+an unattended build check. It requires no UI automation helper.
+
+The experiment creates a hidden message-only window and registers keyboard Raw
+Input without suppressing legacy input. It never registers Ctrl+V as a global
+hotkey or simulates a paste. Modifier state is ephemeral and unrelated keys are
+not retained or logged. There is one instance per interactive session.
+
+For a Ctrl+V request it checks the Explorer process, native and semantic focus,
+the physical Shell folder, and clipboard sequence. Only the explicitly approved
+destination directory is eligible; other folders are declined before clipboard
+data is read. File transfers, virtual
+files, text, unsupported formats, uncertain context, and additional modifiers
+are declined. PNG, uncompressed 24/32-bit DIB, and supported DIBV5 data are
+converted using WIC. Existing PNG bytes are preserved after validation, with
+allocation padding after IEND removed. Images and decoded buffers are capped
+at 128 MiB. Palettes, compressed DIB, unusual bit masks, and embedded DIB color
+profiles are currently rejected; CF_BITMAP-only content is not supported yet.
+
+Before publishing the PNG it rechecks context and clipboard sequence. Those
+checks are not an atomic Windows transaction: context can still change between
+the final check and file publication. A busy bounded request queue can decline
+rapid requests. Explorer also receives the original Ctrl+V; whether it produces
+a sound, notice, or another operation must be measured in the desktop test.
+No clipboard contents are replaced or copied to the logs.
+
+The observer requests shutdown after 30 seconds at most. The PowerShell runner
+terminates only its own process if it exceeds an additional five-second grace
+period and checks that it exited. All image files are staged and published in
+the selected Explorer folder, never in the private log directory automatically.
 
 ## Intended behavior
 

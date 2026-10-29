@@ -4,9 +4,19 @@
 pub mod explorer;
 
 pub mod context;
+pub mod keys;
 
 #[cfg(windows)]
 pub mod file_writer;
+
+#[cfg(windows)]
+pub mod image;
+
+#[cfg(windows)]
+pub mod clipboard;
+
+#[cfg(windows)]
+pub mod paste_probe;
 
 /// Available clipboard representations, determined at the time of a paste request.
 #[derive(Debug, Default, Clone, Copy)]
