@@ -5,6 +5,9 @@ pub mod explorer;
 
 pub mod context;
 
+#[cfg(windows)]
+pub mod file_writer;
+
 /// Available clipboard representations, determined at the time of a paste request.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ClipboardFormats {

@@ -15,8 +15,9 @@ use windows::{
         },
         UI::{
             Accessibility::{
-                CUIAutomation, IUIAutomation, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
-                UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+                CUIAutomation, IUIAutomation, TreeScope_Subtree, UIA_DataGridControlTypeId,
+                UIA_DataItemControlTypeId, UIA_HasKeyboardFocusPropertyId, UIA_ListControlTypeId,
+                UIA_ListItemControlTypeId,
             },
             Shell::{
                 IFolderView, IPersistFolder2, IShellBrowser, IShellItem, IShellWindows,
@@ -24,8 +25,8 @@ use windows::{
                 ShellWindows,
             },
             WindowsAndMessaging::{
-                GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
-                IsChild, IsWindowVisible,
+                GUITHREADINFO, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
+                GetWindowThreadProcessId, IsChild, IsWindowVisible,
             },
         },
     },
@@ -72,8 +73,68 @@ pub struct ExplorerSnapshot {
 #[derive(Debug)]
 pub struct FocusObservation {
     pub control_type: i32,
+    pub global_control_window: usize,
+    pub native_control: Option<NativeControlObservation>,
     pub folder_items_focused: bool,
     pub unchanged: bool,
+}
+
+#[derive(Debug)]
+pub struct NativeControlObservation {
+    pub window: usize,
+    pub win32_class: String,
+    pub control_type: i32,
+    pub provider_window: usize,
+    pub has_keyboard_focus: bool,
+    pub focused_descendant_type: Option<i32>,
+}
+
+fn inspect_control(automation: &IUIAutomation, window: HWND) -> Result<NativeControlObservation> {
+    // SAFETY: The HWND is queried without changing state. UIA objects remain in
+    // the caller's MTA. The class-name buffer is writable local storage; no text
+    // contents, accessible names, values or clipboard data are requested.
+    unsafe {
+        let mut class = [0u16; 256];
+        let length = GetClassNameW(window, &mut class);
+        if length == 0 {
+            return Err(windows::core::Error::from_thread());
+        }
+        let element = automation.ElementFromHandle(window)?;
+        let condition = automation
+            .CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))?;
+        let focused_descendant_type = element
+            .FindFirst(TreeScope_Subtree, &condition)
+            .and_then(|focused| focused.CurrentControlType())
+            .ok()
+            .map(|kind| kind.0);
+        Ok(NativeControlObservation {
+            window: window.0 as usize,
+            win32_class: String::from_utf16_lossy(&class[..length as usize]),
+            control_type: element.CurrentControlType()?.0,
+            provider_window: element.CurrentNativeWindowHandle()?.0 as usize,
+            has_keyboard_focus: element.CurrentHasKeyboardFocus()?.as_bool(),
+            focused_descendant_type,
+        })
+    }
+}
+
+/// Inspect an explicitly supplied native control without activating its window.
+/// This exposes structural metadata only and never authorizes a paste target.
+pub fn inspect_native_control(window: usize) -> Result<NativeControlObservation> {
+    std::thread::spawn(move || {
+        let _apartment = Apartment::new(COINIT_MULTITHREADED)?;
+        // SAFETY: The automation client is created and released on this MTA
+        // worker. Only owned scalar/string observations return to the caller.
+        let automation: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
+        inspect_control(&automation, HWND(window as *mut _))
+    })
+    .join()
+    .unwrap_or_else(|_| {
+        Err(windows::core::Error::from_hresult(
+            windows::Win32::Foundation::E_FAIL,
+        ))
+    })
 }
 
 impl ExplorerSnapshot {
@@ -113,6 +174,17 @@ fn observe_semantic_focus(
         let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)?;
         let focused = automation.GetFocusedElement()?;
         let kind = focused.CurrentControlType()?;
+        let global_control_window = focused.CurrentNativeWindowHandle()?.0 as usize;
+        let mut info = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let native_control = GetGUIThreadInfo(
+            GetWindowThreadProcessId(GetForegroundWindow(), None),
+            &mut info,
+        )
+        .ok()
+        .and_then(|_| inspect_control(&automation, info.hwndFocus).ok());
         let folder_items_focused = [
             UIA_ListControlTypeId,
             UIA_ListItemControlTypeId,
@@ -135,6 +207,8 @@ fn observe_semantic_focus(
             && after.CurrentIsEnabled()?.as_bool();
         Ok(FocusObservation {
             control_type: kind.0,
+            global_control_window,
+            native_control,
             folder_items_focused,
             unchanged,
         })

@@ -54,6 +54,26 @@ It announces readiness and waits for one line on stdin before taking a snapshot.
 EOF cancels the snapshot. This allows a test runner to finish build scheduling
 before a short foreground interaction begins.
 
+Runners without interactive stdin can use `explorer_probe --event <unique-id>`.
+Wait for its readiness message, then signal the named Windows event
+`Local\Laqay.ExplorerProbe.<unique-id>`. The identifier accepts 1-64 ASCII letters,
+digits, or hyphens. The one-shot wait expires after 180 seconds and never polls.
+Use a fresh identifier for each invocation.
+
+`explorer_probe --inspect <native-window-handle>` inspects structural control
+metadata without activating a window. Handles can become invalid between
+observations. This mode requests no accessible names, text values, or clipboard
+contents and does not authorize a paste target.
+
+## File publication foundation
+
+The library can stage encoder output in a uniquely reserved `.tmp` file inside
+the destination folder and publish it with a non-replacing move after encoding
+and synchronization complete. Filename collisions, including simultaneous
+writers, use increasing suffixes. Encoding failure removes the staging file
+when possible; a disconnected or changed destination can leave a `.tmp` file.
+PNG encoding and the paste workflow are not connected to this module yet.
+
 ## Intended behavior
 
 Capture an image, open a filesystem folder, and press Ctrl+V. Laqay should write
