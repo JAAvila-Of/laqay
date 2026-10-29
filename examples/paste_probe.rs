@@ -7,7 +7,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::args()
         .nth(2)
         .ok_or("Missing approved destination directory")?;
-    laqay::paste_probe::run(seconds, std::path::Path::new(&directory))?;
+    let use_hook = match std::env::args().nth(3).as_deref().unwrap_or("raw") {
+        "raw" => false,
+        "hook" => true,
+        _ => return Err("Input backend must be raw or hook".into()),
+    };
+    laqay::paste_probe::run(seconds, std::path::Path::new(&directory), use_hook)?;
     Ok(())
 }
 

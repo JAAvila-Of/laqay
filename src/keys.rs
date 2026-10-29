@@ -1,6 +1,6 @@
 //! Ephemeral modifier state and repeat suppression; no keyboard history.
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PasteKeys {
     modifiers: [bool; 8],
     v_down: bool,

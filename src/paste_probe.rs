@@ -8,7 +8,7 @@ use crate::{
     keys::PasteKeys,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
@@ -52,7 +52,124 @@ struct Request {
 
 struct State {
     keys: RefCell<PasteKeys>,
+    hook_keys: RefCell<PasteKeys>,
+    use_hook: bool,
+    counts: Counts,
     sender: SyncSender<Request>,
+}
+
+#[derive(Default, Debug)]
+struct Counts {
+    raw_messages: Cell<u64>,
+    raw_keyboard: Cell<u64>,
+    raw_errors: Cell<u64>,
+    raw_chords: Cell<u64>,
+    hook_events: Cell<u64>,
+    hook_injected: Cell<u64>,
+    hook_chords: Cell<u64>,
+    snapshot_failures: Cell<u64>,
+    queued: Cell<u64>,
+    queue_rejections: Cell<u64>,
+}
+
+fn increment(counter: &Cell<u64>) {
+    counter.set(counter.get().saturating_add(1));
+}
+
+impl State {
+    fn enqueue(&self) {
+        if let Some(request) = current_request() {
+            if self.sender.try_send(request).is_ok() {
+                increment(&self.counts.queued);
+            } else {
+                increment(&self.counts.queue_rejections);
+            }
+        } else {
+            increment(&self.counts.snapshot_failures);
+        }
+    }
+}
+
+fn normalized_key(code: u16, scan: u16, extended: bool) -> u16 {
+    match code {
+        0x11 => {
+            if extended {
+                0xa3
+            } else {
+                0xa2
+            }
+        }
+        0x12 => {
+            if extended {
+                0xa5
+            } else {
+                0xa4
+            }
+        }
+        0x10 => {
+            if scan == 0x36 {
+                0xa1
+            } else {
+                0xa0
+            }
+        }
+        other => other,
+    }
+}
+
+thread_local! {
+    static HOOK_STATE: Cell<*const State> = const { Cell::new(std::ptr::null()) };
+}
+
+unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // SAFETY: Windows supplies a live KBDLLHOOKSTRUCT for actionable events.
+    // The thread-local pointer exists only while the hook and State are alive.
+    // The callback only updates aggregate counters and submits bounded work.
+    unsafe {
+        if code == HC_ACTION as i32 {
+            let _ = HOOK_STATE.try_with(|slot| {
+                let Some(state) = slot.get().as_ref() else {
+                    return;
+                };
+                let key = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+                increment(&state.counts.hook_events);
+                if key.flags.contains(LLKHF_INJECTED) {
+                    increment(&state.counts.hook_injected);
+                }
+                let message = wparam.0 as u32;
+                if !matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
+                    return;
+                }
+                let down = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
+                let normalized = normalized_key(
+                    key.vkCode as u16,
+                    key.scanCode as u16,
+                    key.flags.contains(LLKHF_EXTENDED),
+                );
+                if let Ok(mut keys) = state.hook_keys.try_borrow_mut() {
+                    if keys.transition(normalized, down) && !key.flags.contains(LLKHF_ALTDOWN) {
+                        increment(&state.counts.hook_chords);
+                        if state.use_hook {
+                            state.enqueue();
+                        }
+                    }
+                }
+            });
+        }
+        // This observer never suppresses an event or generates replacement input.
+        CallNextHookEx(None, code, wparam, lparam)
+    }
+}
+
+struct Hook(HHOOK);
+impl Drop for Hook {
+    fn drop(&mut self) {
+        // SAFETY: Only this guard's hook is removed, on its installing thread.
+        unsafe {
+            let _ = UnhookWindowsHookEx(self.0);
+        }
+        HOOK_STATE.with(|slot| slot.set(std::ptr::null()));
+    }
 }
 
 fn current_request() -> Option<Request> {
@@ -112,13 +229,32 @@ fn explorer_process(window: usize) -> Result<bool> {
 fn target(request: Request) -> Result<Option<PathBuf>> {
     let current = current_request();
     if !matches!(current, Some(now) if now.window == request.window && now.focus == request.focus && now.sequence == request.sequence)
-        || !explorer_process(request.window)?
     {
+        println!("Context declined: window, focus, or clipboard sequence changed");
+        return Ok(None);
+    }
+    if !explorer_process(request.window)? {
+        println!("Context declined: foreground process is not Explorer");
         return Ok(None);
     }
     let snapshot = explorer::observe_foreground()?;
     if snapshot.foreground_window != request.window || snapshot.focus_window != request.focus {
+        println!("Context declined: Explorer snapshot no longer matches request");
         return Ok(None);
+    }
+    if snapshot.diagnostic_directory().is_none() {
+        println!(
+            "Context declined: foreground_stable={}, native_focus_stable={}, unresolved_views={}, focused_views={}, semantic_focus={:?}",
+            snapshot.foreground_unchanged,
+            snapshot.native_focus_unchanged,
+            snapshot.unresolved_entries,
+            snapshot
+                .observations
+                .iter()
+                .filter(|view| view.contains_focus)
+                .count(),
+            snapshot.semantic_focus
+        );
     }
     Ok(snapshot
         .diagnostic_directory()
@@ -132,15 +268,18 @@ fn save(
     approved_directory: &Path,
 ) -> std::result::Result<Option<PathBuf>, Box<dyn std::error::Error>> {
     if stopping.load(Ordering::Acquire) || Instant::now() >= deadline {
+        println!("Request declined: probe deadline reached");
         return Ok(None);
     }
     let Some(directory) = target(request)? else {
         return Ok(None);
     };
     if directory != approved_directory {
+        println!("Request declined: folder differs from approved destination");
         return Ok(None);
     }
     let Some(source) = clipboard::read_image(request.sequence)? else {
+        println!("Request declined: clipboard changed or has no eligible image format");
         return Ok(None);
     };
     let png = image::to_png(&source.bytes, source.is_png)?;
@@ -198,6 +337,7 @@ unsafe extern "system" fn window_proc(
             let state = GetWindowLongPtrW(window, GWLP_USERDATA) as *const State;
             if !state.is_null() {
                 let state = &*state;
+                increment(&state.counts.raw_messages);
                 let mut raw = RAWINPUT::default();
                 let mut size = size_of::<RAWINPUT>() as u32;
                 let read = GetRawInputData(
@@ -211,39 +351,19 @@ unsafe extern "system" fn window_proc(
                     && read as usize >= size_of::<RAWINPUTHEADER>() + size_of::<RAWKEYBOARD>()
                     && raw.header.dwType == RIM_TYPEKEYBOARD.0
                 {
+                    increment(&state.counts.raw_keyboard);
                     let key = raw.data.keyboard;
-                    let extended = key.Flags & 2 != 0;
-                    let code = match key.VKey {
-                        0x11 => {
-                            if extended {
-                                0xa3
-                            } else {
-                                0xa2
-                            }
-                        }
-                        0x12 => {
-                            if extended {
-                                0xa5
-                            } else {
-                                0xa4
-                            }
-                        }
-                        0x10 => {
-                            if key.MakeCode == 0x36 {
-                                0xa1
-                            } else {
-                                0xa0
-                            }
-                        }
-                        other => other,
-                    };
+                    let code = normalized_key(key.VKey, key.MakeCode, key.Flags & 2 != 0);
                     if let Ok(mut keys) = state.keys.try_borrow_mut() {
                         if keys.transition(code, key.Flags & 1 == 0) {
-                            if let Some(request) = current_request() {
-                                let _ = state.sender.try_send(request);
+                            increment(&state.counts.raw_chords);
+                            if !state.use_hook {
+                                state.enqueue();
                             }
                         }
                     }
+                } else {
+                    increment(&state.counts.raw_errors);
                 }
             }
         } else if message == WM_TIMER {
@@ -284,7 +404,7 @@ impl Drop for Window {
 
 /// Explicitly start a 1-30 second experiment. Calling this observes real keyboard
 /// input and may create screenshots; a desktop test must be authorized first.
-pub fn run(seconds: u32, approved_directory: &Path) -> Result<()> {
+pub fn run(seconds: u32, approved_directory: &Path, use_hook: bool) -> Result<()> {
     if !approved_directory.is_absolute() {
         return Err(Error::from_hresult(E_INVALIDARG));
     }
@@ -311,12 +431,12 @@ pub fn run(seconds: u32, approved_directory: &Path) -> Result<()> {
             "A paste probe is already running in this session",
         ));
     }
-    let result = run_inner(seconds, approved_directory);
+    let result = run_inner(seconds, approved_directory, use_hook);
     drop(instance);
     result
 }
 
-fn run_inner(seconds: u32, approved_directory: PathBuf) -> Result<()> {
+fn run_inner(seconds: u32, approved_directory: PathBuf, use_hook: bool) -> Result<()> {
     if !(1..=30).contains(&seconds) {
         return Err(Error::from_hresult(E_INVALIDARG));
     }
@@ -346,7 +466,10 @@ fn run_inner(seconds: u32, approved_directory: PathBuf) -> Result<()> {
         }
     }
     let state = Box::new(State {
+        hook_keys: RefCell::new(keys.clone()),
         keys: RefCell::new(keys),
+        use_hook,
+        counts: Counts::default(),
         sender,
     });
     // SAFETY: The class callback and stable State allocation outlive the window.
@@ -393,12 +516,31 @@ fn run_inner(seconds: u32, approved_directory: PathBuf) -> Result<()> {
                 }],
                 size_of::<RAWINPUTDEVICE>() as u32,
             )?;
+            // Install the comparison observer only when explicitly selected.
+            // Raw Input remains registered for aggregate comparison, but only
+            // one source may enqueue requests, preventing duplicate PNG writes.
+            let _hook = if use_hook {
+                HOOK_STATE.with(|slot| slot.set(&*state));
+                match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(instance), 0) {
+                    Ok(hook) => Some(Hook(hook)),
+                    Err(error) => {
+                        HOOK_STATE.with(|slot| slot.set(std::ptr::null()));
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            };
             if SetTimer(Some(handle), 1, seconds * 1000, None) == 0 {
                 return Err(Error::from_thread());
             }
             println!(
-                "Ready. Observing native Ctrl+V for {seconds} seconds; native paste remains enabled."
+                "Ready. Observing native Ctrl+V for {seconds} seconds; native paste remains enabled. Backend: {}.",
+                if use_hook { "hook" } else { "raw" }
             );
+            io::stdout()
+                .flush()
+                .map_err(|error| Error::new(E_INVALIDARG, error.to_string()))?;
             let mut message = MSG::default();
             loop {
                 match GetMessageW(&mut message, None, 0, 0).0 {
@@ -413,7 +555,38 @@ fn run_inner(seconds: u32, approved_directory: PathBuf) -> Result<()> {
         })()
     };
     stopping.store(true, Ordering::Release);
+    // Aggregate totals only: never persist key codes, text, or event history.
+    println!("Input summary: {:?}", state.counts);
     drop(state);
     let _ = worker.join();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_modifier_scancodes_preserve_chord_semantics() {
+        for extended in [false, true] {
+            let mut keys = PasteKeys::default();
+            let control = normalized_key(0x11, 0x1d, extended);
+            keys.transition(control, true);
+            assert!(keys.transition(normalized_key(0x56, 0x2f, false), true));
+            keys.transition(0x56, false);
+            keys.transition(control, false);
+            assert!(!keys.transition(0x56, true));
+        }
+        for (code, scan, extended) in [
+            (0x10, 0x2a, false),
+            (0x10, 0x36, false),
+            (0x12, 0x38, false),
+            (0x12, 0x38, true),
+        ] {
+            let mut keys = PasteKeys::default();
+            keys.transition(normalized_key(0x11, 0x1d, false), true);
+            keys.transition(normalized_key(code, scan, extended), true);
+            assert!(!keys.transition(0x56, true));
+        }
+    }
 }

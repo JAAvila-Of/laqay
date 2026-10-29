@@ -88,6 +88,16 @@ Input without suppressing legacy input. It never registers Ctrl+V as a global
 hotkey or simulates a paste. Modifier state is ephemeral and unrelated keys are
 not retained or logged. There is one instance per interactive session.
 
+The first desktop trial produced no paste requests despite a confirmed Ctrl+V.
+Input detection remains unverified. Aggregate counters now distinguish raw
+message receipt, parsing, chord recognition, missing context, and queue rejection.
+Pass `-InputBackend hook` to compare Raw Input with an optional passive
+`WH_KEYBOARD_LL` observer. The hook always calls `CallNextHookEx`; it neither
+blocks nor synthesizes input. In this mode both sources count events, but only
+the hook submits paste requests, avoiding duplicate writes. The hook is removed
+before shutdown. No event history, text, or clipboard contents enter these logs.
+Context rejection diagnostics include structural focus metadata and view counts.
+
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
 destination directory is eligible; other folders are declined before clipboard

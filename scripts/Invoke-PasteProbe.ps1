@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Destination,
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [ValidateSet('raw', 'hook')]
+    [string]$InputBackend = 'raw'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +26,7 @@ $destinationArgument = '"' + [regex]::Replace($destinationPath, '(\\+)$', '$1$1'
 $runId = [guid]::NewGuid().ToString('N')
 $stdout = Join-Path $outputPath "paste-probe-$runId.stdout.log"
 $stderr = Join-Path $outputPath "paste-probe-$runId.stderr.log"
-$probeProcess = Start-Process -FilePath $binary -ArgumentList @("$Seconds", $destinationArgument) `
+$probeProcess = Start-Process -FilePath $binary -ArgumentList @("$Seconds", $destinationArgument, $InputBackend) `
     -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 # Retain the owned process handle, including on Windows PowerShell 5.1.
