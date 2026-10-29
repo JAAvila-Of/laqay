@@ -4,7 +4,8 @@ This matrix has not been completed, and no image-paste scenario is verified
 as passing. An authorized input-only RDP trial detected Ctrl+V through both
 observers. A later image-paste trial reached the worker but declined static
 Text focus inside an Explorer List before reading the clipboard; no PNG was
-created. The updated ancestry policy requires another desktop trial.
+created. The first ancestry-policy trial also declined because that Text exposes
+Value. The updated read-only Value check requires another desktop trial.
 The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 

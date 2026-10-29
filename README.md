@@ -54,7 +54,11 @@ rename fields, search, tabs, and context changes is still pending for this polic
 An RDP image-paste trial reached a stable folder view but was declined because
 its focused element was Text inside the native List. The updated policy checks
 up to 32 raw UIA ancestors for static Text, requiring the exact native list root
-and no Value pattern, unknown controls, or disabled elements along the path.
+and no writable Value patterns, unknown controls, or disabled elements along the path.
+If Value is available, `CurrentIsReadOnly` must confirm read-only access; query
+failures decline. No control values are read or written. A follow-up trial
+showed that Explorer exposes Value on its focused Text; its read-only state
+has not yet been measured in a desktop trial.
 The path is checked before and after Shell inspection. This correction has not
 yet passed a desktop image-paste trial; editable fields remain excluded.
 

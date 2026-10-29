@@ -1,7 +1,7 @@
 //! Read-only Shell diagnostics. These observations do not authorize input suppression.
 
 use crate::context::{
-    ContextEvidence, FocusNode, FocusRole, ViewEvidence, select_focused_view,
+    ContextEvidence, FocusNode, FocusRole, ValueAccess, ViewEvidence, select_focused_view,
     static_text_in_folder_list,
 };
 use std::path::PathBuf;
@@ -18,11 +18,12 @@ use windows::{
         },
         UI::{
             Accessibility::{
-                CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Subtree,
-                UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_GroupControlTypeId,
-                UIA_HasKeyboardFocusPropertyId, UIA_IsValuePatternAvailablePropertyId,
-                UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_PaneControlTypeId,
-                UIA_TextControlTypeId,
+                CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
+                TreeScope_Subtree, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
+                UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
+                UIA_IsValuePatternAvailablePropertyId, UIA_ListControlTypeId,
+                UIA_ListItemControlTypeId, UIA_PaneControlTypeId, UIA_TextControlTypeId,
+                UIA_ValuePatternId,
             },
             Shell::{
                 IFolderView, IPersistFolder2, IShellBrowser, IShellItem, IShellWindows,
@@ -257,13 +258,32 @@ fn folder_text_path(
             let value =
                 current.GetCurrentPropertyValueEx(UIA_IsValuePatternAvailablePropertyId, true)?;
             let value_pattern = bool::try_from(&value)?;
-            path.push(FocusNode {
-                role,
-                value_pattern,
-            });
-            if role == FocusRole::Other || value_pattern || !current.CurrentIsEnabled()?.as_bool() {
+            let value_access = if value_pattern {
+                match current
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .and_then(|pattern| pattern.CurrentIsReadOnly())
+                {
+                    Ok(read_only) if read_only.as_bool() => ValueAccess::ReadOnly,
+                    Ok(_) => ValueAccess::Writable,
+                    Err(error) => {
+                        eprintln!("Static text focus: cannot determine value access: {error}");
+                        ValueAccess::Unknown
+                    }
+                }
+            } else {
+                ValueAccess::Absent
+            };
+            println!(
+                "Static text focus node: control_type={}, value_access={value_access:?}",
+                kind.0
+            );
+            path.push(FocusNode { role, value_access });
+            if role == FocusRole::Other
+                || matches!(value_access, ValueAccess::Writable | ValueAccess::Unknown)
+                || !current.CurrentIsEnabled()?.as_bool()
+            {
                 println!(
-                    "Static text focus declined: ancestor_type={}, value_pattern={value_pattern}",
+                    "Static text focus declined: ancestor_type={}, value_access={value_access:?}",
                     kind.0
                 );
                 return Ok(false);

@@ -33,7 +33,16 @@ pub(crate) enum FocusRole {
 #[cfg(any(windows, test))]
 pub(crate) struct FocusNode {
     pub role: FocusRole,
-    pub value_pattern: bool,
+    pub value_access: ValueAccess,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(windows, test))]
+pub(crate) enum ValueAccess {
+    Absent,
+    ReadOnly,
+    Writable,
+    Unknown,
 }
 
 /// Allow static text only along a bounded, non-editable path to the exact
@@ -47,9 +56,12 @@ pub(crate) fn static_text_in_folder_list(path: &[FocusNode], native_root_reached
             path[path.len() - 1].role,
             FocusRole::List | FocusRole::DataGrid
         )
-        && path
-            .iter()
-            .all(|node| !node.value_pattern && node.role != FocusRole::Other)
+        && path.iter().all(|node| {
+            matches!(
+                node.value_access,
+                ValueAccess::Absent | ValueAccess::ReadOnly
+            ) && node.role != FocusRole::Other
+        })
 }
 
 /// Select exactly one focused filesystem view, rejecting uncertainty.
@@ -80,7 +92,7 @@ mod tests {
     fn node(role: FocusRole) -> FocusNode {
         FocusNode {
             role,
-            value_pattern: false,
+            value_access: ValueAccess::Absent,
         }
     }
 
@@ -110,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_editors_unknown_ancestry_and_value_patterns() {
+    fn rejects_editors_unknown_ancestry_and_writable_values() {
         for path in [
             vec![node(FocusRole::Other), node(FocusRole::List)],
             vec![
@@ -121,7 +133,7 @@ mod tests {
             vec![
                 FocusNode {
                     role: FocusRole::Text,
-                    value_pattern: true,
+                    value_access: ValueAccess::Writable,
                 },
                 node(FocusRole::List),
             ],
@@ -129,7 +141,7 @@ mod tests {
                 node(FocusRole::Text),
                 FocusNode {
                     role: FocusRole::Pane,
-                    value_pattern: true,
+                    value_access: ValueAccess::Writable,
                 },
                 node(FocusRole::List),
             ],
@@ -143,6 +155,24 @@ mod tests {
             path[0] = node(FocusRole::Text);
             path[length - 1] = node(FocusRole::List);
             assert_eq!(static_text_in_folder_list(&path, true), length == 32);
+        }
+    }
+
+    #[test]
+    fn read_only_values_are_allowed_but_uncertain_access_is_not() {
+        for access in [
+            ValueAccess::ReadOnly,
+            ValueAccess::Writable,
+            ValueAccess::Unknown,
+        ] {
+            for index in 0..2 {
+                let mut path = [node(FocusRole::Text), node(FocusRole::List)];
+                path[index].value_access = access;
+                assert_eq!(
+                    static_text_in_folder_list(&path, true),
+                    access == ValueAccess::ReadOnly
+                );
+            }
         }
     }
 
