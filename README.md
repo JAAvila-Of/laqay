@@ -7,7 +7,9 @@ images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
 **Current status:** engineering validation. Running `laqay.exe` currently exits
 without registering input or changing system settings. An opt-in image-paste
-experiment is implemented separately; its desktop behavior is not verified yet.
+experiment is implemented separately. One authorized RDP trial saved two PNGs
+from a screenshot captured inside the remote session; broader desktop validation
+is pending.
 Tray controls and startup integration are not implemented.
 
 ## Requirements
@@ -56,11 +58,11 @@ its focused element was Text inside the native List. The updated policy checks
 up to 32 raw UIA ancestors for static Text, requiring the exact native list root
 and no writable Value patterns, unknown controls, or disabled elements along the path.
 If Value is available, `CurrentIsReadOnly` must confirm read-only access; query
-failures decline. No control values are read or written. A follow-up trial
-showed that Explorer exposes Value on its focused Text; its read-only state
-has not yet been measured in a desktop trial.
-The path is checked before and after Shell inspection. This correction has not
-yet passed a desktop image-paste trial; editable fields remain excluded.
+failures decline. No control values are read or written. A successful follow-up
+trial confirmed read-only Value on both the focused Text and its exact native
+List ancestor. The path is checked before and after Shell inspection and again
+before publishing. Editable fields remain excluded by policy; their desktop
+regression matrix is still pending.
 
 For coordinated desktop testing, run `explorer_probe --wait` instead of a delay.
 It announces readiness and waits for one line on stdin before taking a snapshot.
@@ -128,8 +130,12 @@ registration and after cleanup. Metadata failures are explicit. It never
 switches desktops or sessions. Readiness is announced from the message loop;
 the runner relays it and fails if readiness is absent after five seconds.
 Callback entry is counted independently of thread-local state. These diagnostics
-confirmed reception in one RDP trial; complete image pasting over RDP is not
-validated yet.
+confirmed reception in an RDP trial. A subsequent image-paste trial on Windows
+11 25H2 (build 26200.9711) saved two 613x572 RGBA PNGs in the approved folder,
+one per Ctrl+V, and exited cleanly. The tester confirmed correct images and no
+notices or sounds. Observed receipt-to-save times were 180 ms and 72 ms; two
+samples are not a performance benchmark. This covers a screenshot captured
+inside that RDP session, not client clipboard redirection or the full matrix.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
