@@ -1,7 +1,11 @@
 # Windows integration validation
 
-All image-paste scenarios below are **not run**. The current implementation is
-a read-only Shell diagnostic; compilation does not verify desktop behavior.
+This matrix has not been completed, and no image-paste scenario is verified
+as passing. An authorized input-only RDP trial detected Ctrl+V through both
+observers. A later image-paste trial reached the worker but declined static
+Text focus inside an Explorer List before reading the clipboard; no PNG was
+created. The updated ancestry policy requires another desktop trial.
+The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
 | ID | Scenario | Required result |
@@ -38,6 +42,10 @@ Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 | T30 | Clipboard changes during paste | No stale image write |
 | T31 | Virtual files with image formats | Native Shell transfer |
 | T32 | Disk full or share disconnected | No incomplete output |
+| T33 | Empty folder with focused static Text inside its native List | PNG created in that folder |
+| T34 | Text inside an editor or outside the native folder List | Native behavior, no image file |
+| T35 | Screenshot captured inside an RDP session | PNG created in the remote folder |
+| T36 | Client screenshot shared through RDP clipboard | PNG when image data is available; safe rejection otherwise |
 
 For the initial diagnostic, compare reported paths and focus against the real UI
 with multiple tabs, address/search fields, rename controls, and virtual folders.

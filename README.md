@@ -43,12 +43,20 @@ It does not install a hook, suppress input, read the
 clipboard, or create images. Output can contain the selected folder path.
 
 The diagnostic reports a directory only when a single filesystem view contains
-native focus, the semantic control is a list or item, and both forms of focus
+native focus, the semantic control is a list, item, or verified static text
+inside the native folder list, and both forms of focus
 and the foreground window remain stable across the observations. Unknown,
 editable, virtual, ambiguous, or unstable contexts produce no candidate.
 This is a diagnostic policy, not proof that suppressing input is safe. Native
 and semantic observations are not an atomic transaction. Desktop validation of
 rename fields, search, tabs, and context changes is still pending for this policy.
+
+An RDP image-paste trial reached a stable folder view but was declined because
+its focused element was Text inside the native List. The updated policy checks
+up to 32 raw UIA ancestors for static Text, requiring the exact native list root
+and no Value pattern, unknown controls, or disabled elements along the path.
+The path is checked before and after Shell inspection. This correction has not
+yet passed a desktop image-paste trial; editable fields remain excluded.
 
 For coordinated desktop testing, run `explorer_probe --wait` instead of a delay.
 It announces readiness and waits for one line on stdin before taking a snapshot.

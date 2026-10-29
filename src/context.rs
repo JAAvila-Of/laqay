@@ -16,6 +16,42 @@ pub struct ContextEvidence {
     pub unresolved_entries: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(windows, test))]
+pub(crate) enum FocusRole {
+    Text,
+    List,
+    ListItem,
+    DataGrid,
+    DataItem,
+    Pane,
+    Group,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg(any(windows, test))]
+pub(crate) struct FocusNode {
+    pub role: FocusRole,
+    pub value_pattern: bool,
+}
+
+/// Allow static text only along a bounded, non-editable path to the exact
+/// native folder-list element. A list elsewhere in the UI tree is insufficient.
+#[cfg(any(windows, test))]
+pub(crate) fn static_text_in_folder_list(path: &[FocusNode], native_root_reached: bool) -> bool {
+    native_root_reached
+        && (2..=32).contains(&path.len())
+        && path[0].role == FocusRole::Text
+        && matches!(
+            path[path.len() - 1].role,
+            FocusRole::List | FocusRole::DataGrid
+        )
+        && path
+            .iter()
+            .all(|node| !node.value_pattern && node.role != FocusRole::Other)
+}
+
 /// Select exactly one focused filesystem view, rejecting uncertainty.
 pub fn select_focused_view(views: &[ViewEvidence], context: ContextEvidence) -> Option<usize> {
     if !context.foreground_stable
@@ -40,6 +76,75 @@ pub fn select_focused_view(views: &[ViewEvidence], context: ContextEvidence) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node(role: FocusRole) -> FocusNode {
+        FocusNode {
+            role,
+            value_pattern: false,
+        }
+    }
+
+    #[test]
+    fn accepts_static_folder_text_only_under_the_native_list() {
+        for root in [FocusRole::List, FocusRole::DataGrid] {
+            assert!(static_text_in_folder_list(
+                &[node(FocusRole::Text), node(root)],
+                true
+            ));
+            for item in [FocusRole::ListItem, FocusRole::DataItem] {
+                assert!(static_text_in_folder_list(
+                    &[
+                        node(FocusRole::Text),
+                        node(FocusRole::Group),
+                        node(item),
+                        node(root)
+                    ],
+                    true
+                ));
+            }
+            assert!(!static_text_in_folder_list(
+                &[node(FocusRole::Text), node(root)],
+                false
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_editors_unknown_ancestry_and_value_patterns() {
+        for path in [
+            vec![node(FocusRole::Other), node(FocusRole::List)],
+            vec![
+                node(FocusRole::Text),
+                node(FocusRole::Other),
+                node(FocusRole::List),
+            ],
+            vec![
+                FocusNode {
+                    role: FocusRole::Text,
+                    value_pattern: true,
+                },
+                node(FocusRole::List),
+            ],
+            vec![
+                node(FocusRole::Text),
+                FocusNode {
+                    role: FocusRole::Pane,
+                    value_pattern: true,
+                },
+                node(FocusRole::List),
+            ],
+            vec![node(FocusRole::Text), node(FocusRole::Group)],
+        ] {
+            assert!(!static_text_in_folder_list(&path, true));
+        }
+        assert!(!static_text_in_folder_list(&[], true));
+        for length in [32, 33] {
+            let mut path = vec![node(FocusRole::Pane); length];
+            path[0] = node(FocusRole::Text);
+            path[length - 1] = node(FocusRole::List);
+            assert_eq!(static_text_in_folder_list(&path, true), length == 32);
+        }
+    }
 
     fn stable() -> ContextEvidence {
         ContextEvidence {
