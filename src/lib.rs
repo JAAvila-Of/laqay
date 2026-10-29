@@ -18,6 +18,9 @@ pub mod clipboard;
 #[cfg(windows)]
 pub mod paste_probe;
 
+#[cfg(windows)]
+mod probe_environment;
+
 /// Available clipboard representations, determined at the time of a paste request.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ClipboardFormats {

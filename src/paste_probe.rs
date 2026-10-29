@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
     time::{Duration, Instant},
@@ -55,7 +55,7 @@ struct State {
     hook_keys: RefCell<PasteKeys>,
     use_hook: bool,
     counts: Counts,
-    sender: SyncSender<Request>,
+    sender: Option<SyncSender<Request>>,
 }
 
 #[derive(Default, Debug)]
@@ -78,8 +78,11 @@ fn increment(counter: &Cell<u64>) {
 
 impl State {
     fn enqueue(&self) {
+        // Input-only mode has no sender or worker. Return before reading even
+        // clipboard sequence or foreground context, regardless of the chord.
+        let Some(sender) = &self.sender else { return };
         if let Some(request) = current_request() {
-            if self.sender.try_send(request).is_ok() {
+            if sender.try_send(request).is_ok() {
                 increment(&self.counts.queued);
             } else {
                 increment(&self.counts.queue_rejections);
@@ -121,7 +124,12 @@ thread_local! {
     static HOOK_STATE: Cell<*const State> = const { Cell::new(std::ptr::null()) };
 }
 
+// Count callback entry independently of thread-local state, so a missing State
+// cannot be mistaken for complete absence of hook dispatch.
+static HOOK_CALLBACKS: AtomicU64 = AtomicU64::new(0);
+
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    HOOK_CALLBACKS.fetch_add(1, Ordering::Relaxed);
     // SAFETY: Windows supplies a live KBDLLHOOKSTRUCT for actionable events.
     // The thread-local pointer exists only while the hook and State are alive.
     // The callback only updates aggregate counters and submits bounded work.
@@ -166,7 +174,10 @@ impl Drop for Hook {
     fn drop(&mut self) {
         // SAFETY: Only this guard's hook is removed, on its installing thread.
         unsafe {
-            let _ = UnhookWindowsHookEx(self.0);
+            match UnhookWindowsHookEx(self.0) {
+                Ok(()) => println!("Keyboard hook removed."),
+                Err(error) => eprintln!("Keyboard hook removal failed: {error}"),
+            }
         }
         HOOK_STATE.with(|slot| slot.set(std::ptr::null()));
     }
@@ -414,6 +425,16 @@ pub fn run(seconds: u32, approved_directory: &Path, use_hook: bool) -> Result<()
     if !approved_directory.is_dir() {
         return Err(Error::from_hresult(E_INVALIDARG));
     }
+    run_probe(seconds, Some(approved_directory), use_hook)
+}
+
+/// Observe aggregate input only: no clipboard or Shell queries and no images.
+/// This still observes live keyboard input and requires a desktop test window.
+pub fn run_input(seconds: u32) -> Result<()> {
+    run_probe(seconds, None, true)
+}
+
+fn run_probe(seconds: u32, approved_directory: Option<PathBuf>, use_hook: bool) -> Result<()> {
     struct Instance(HANDLE);
     impl Drop for Instance {
         fn drop(&mut self) {
@@ -436,27 +457,37 @@ pub fn run(seconds: u32, approved_directory: &Path, use_hook: bool) -> Result<()
     result
 }
 
-fn run_inner(seconds: u32, approved_directory: PathBuf, use_hook: bool) -> Result<()> {
+fn run_inner(seconds: u32, approved_directory: Option<PathBuf>, use_hook: bool) -> Result<()> {
     if !(1..=30).contains(&seconds) {
         return Err(Error::from_hresult(E_INVALIDARG));
     }
+    // Query WTS before installing callbacks so slow session metadata cannot
+    // delay hook dispatch or consume the observation interval.
+    crate::probe_environment::log_environment("starting");
+    HOOK_CALLBACKS.store(0, Ordering::Relaxed);
     let deadline = Instant::now() + Duration::from_secs(seconds.into());
     let stopping = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stopping);
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let worker = std::thread::spawn(move || {
-        while let Ok(request) = receiver.recv() {
-            match save(request, &worker_stop, deadline, &approved_directory) {
-                Ok(Some(path)) => println!(
-                    "Saved: {} ({} ms after request receipt)",
-                    path.display(),
-                    request.received.elapsed().as_millis()
-                ),
-                Ok(None) => println!("Declined: no stable supported image-paste context"),
-                Err(error) => eprintln!("Paste declined: {error}"),
+    let input_only = approved_directory.is_none();
+    let (sender, worker) = if let Some(approved_directory) = approved_directory {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            while let Ok(request) = receiver.recv() {
+                match save(request, &worker_stop, deadline, &approved_directory) {
+                    Ok(Some(path)) => println!(
+                        "Saved: {} ({} ms after request receipt)",
+                        path.display(),
+                        request.received.elapsed().as_millis()
+                    ),
+                    Ok(None) => println!("Declined: no stable supported image-paste context"),
+                    Err(error) => eprintln!("Paste declined: {error}"),
+                }
             }
-        }
-    });
+        });
+        (Some(sender), Some(worker))
+    } else {
+        (None, None)
+    };
     let mut keys = PasteKeys::default();
     // SAFETY: These initial modifier snapshots read state only. No keys, mouse
     // events, clipboard contents or activation messages are injected.
@@ -531,23 +562,30 @@ fn run_inner(seconds: u32, approved_directory: PathBuf, use_hook: bool) -> Resul
             } else {
                 None
             };
-            if SetTimer(Some(handle), 1, seconds * 1000, None) == 0 {
-                return Err(Error::from_thread());
-            }
-            println!(
-                "Ready. Observing native Ctrl+V for {seconds} seconds; native paste remains enabled. Backend: {}.",
-                if use_hook { "hook" } else { "raw" }
-            );
-            io::stdout()
-                .flush()
-                .map_err(|error| Error::new(E_INVALIDARG, error.to_string()))?;
+            // Announce readiness only after a queued message reaches the pump.
+            // The deadline timer starts there; no UI is shown or activated.
+            const READY: u32 = WM_APP + 1;
+            PostMessageW(Some(handle), READY, WPARAM(0), LPARAM(0))?;
             let mut message = MSG::default();
             loop {
                 match GetMessageW(&mut message, None, 0, 0).0 {
                     -1 => return Err(Error::from_thread()),
                     0 => break,
                     _ => {
-                        DispatchMessageW(&message);
+                        if message.hwnd == handle && message.message == READY {
+                            if SetTimer(Some(handle), 1, seconds * 1000, None) == 0 {
+                                return Err(Error::from_thread());
+                            }
+                            println!(
+                                "Ready. Observing native Ctrl+V for {seconds} seconds; native paste remains enabled. Backend: {}; input_only={input_only}.",
+                                if use_hook { "hook" } else { "raw" }
+                            );
+                            io::stdout()
+                                .flush()
+                                .map_err(|error| Error::new(E_INVALIDARG, error.to_string()))?;
+                        } else {
+                            DispatchMessageW(&message);
+                        }
                     }
                 }
             }
@@ -557,8 +595,15 @@ fn run_inner(seconds: u32, approved_directory: PathBuf, use_hook: bool) -> Resul
     stopping.store(true, Ordering::Release);
     // Aggregate totals only: never persist key codes, text, or event history.
     println!("Input summary: {:?}", state.counts);
+    println!(
+        "Hook callback entries: {}",
+        HOOK_CALLBACKS.load(Ordering::Relaxed)
+    );
     drop(state);
-    let _ = worker.join();
+    if let Some(worker) = worker {
+        let _ = worker.join();
+    }
+    crate::probe_environment::log_environment("stopped");
     result
 }
 

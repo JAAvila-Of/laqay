@@ -98,6 +98,22 @@ the hook submits paste requests, avoiding duplicate writes. The hook is removed
 before shutdown. No event history, text, or clipboard contents enter these logs.
 Context rejection diagnostics include structural focus metadata and view counts.
 
+To isolate input reception from clipboard and folder handling, use
+`scripts/Invoke-PasteProbe.ps1 -InputOnly -Seconds 30
+-OutputDirectory <private-log-directory>`. No destination or screenshot is
+needed. This mode counts both observers, has no paste worker, and does not query
+clipboard data, clipboard sequence, or Explorer context. Native Ctrl+V continues
+to reach the focused application. It still observes live keyboard input and
+requires an agreed desktop test window.
+
+The observer logs its own process/session IDs, station, thread/input desktop
+names, whether its desktop receives input, and the session protocol before
+registration and after cleanup. Metadata failures are explicit. It never
+switches desktops or sessions. Readiness is announced from the message loop;
+the runner relays it and fails if readiness is absent after five seconds.
+Callback entry is counted independently of thread-local state. These diagnostics
+are intended to investigate RDP reception; RDP support is not validated yet.
+
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
 destination directory is eligible; other folders are declined before clipboard

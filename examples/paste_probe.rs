@@ -1,5 +1,13 @@
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--input-only") {
+        let seconds = std::env::args()
+            .nth(2)
+            .unwrap_or_else(|| "30".into())
+            .parse()?;
+        laqay::paste_probe::run_input(seconds)?;
+        return Ok(());
+    }
     let seconds = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "30".into())
