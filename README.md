@@ -36,11 +36,23 @@ cargo run --locked --example explorer_probe -- 5
 Focus an Explorer folder during the five-second delay. The diagnostic takes one
 snapshot of the foreground window, focus, and Shell views. It uses `IShellWindows`,
 `IServiceProvider`, `IShellBrowser::QueryActiveShellView`, and `IFolderView` to
-inspect filesystem paths. It does not install a hook, suppress input, read the
+inspect filesystem paths. A separate, windowless MTA thread uses UI Automation
+to classify the focused control and compare it before and after Shell inspection.
+It does not install a hook, suppress input, read the
 clipboard, or create images. Output can contain the selected folder path.
 
-Visible views and focused descendants are observations, not proof of a safe
-paste target. Rename fields and Windows 11 tabs require additional validation.
+The diagnostic reports a directory only when a single filesystem view contains
+native focus, the semantic control is a list or item, and both forms of focus
+and the foreground window remain stable across the observations. Unknown,
+editable, virtual, ambiguous, or unstable contexts produce no candidate.
+This is a diagnostic policy, not proof that suppressing input is safe. Native
+and semantic observations are not an atomic transaction. Desktop validation of
+rename fields, search, tabs, and context changes is still pending for this policy.
+
+For coordinated desktop testing, run `explorer_probe --wait` instead of a delay.
+It announces readiness and waits for one line on stdin before taking a snapshot.
+EOF cancels the snapshot. This allows a test runner to finish build scheduling
+before a short foreground interaction begins.
 
 ## Intended behavior
 

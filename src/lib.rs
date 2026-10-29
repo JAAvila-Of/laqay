@@ -3,6 +3,8 @@
 #[cfg(windows)]
 pub mod explorer;
 
+pub mod context;
+
 /// Available clipboard representations, determined at the time of a paste request.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ClipboardFormats {

@@ -1,17 +1,23 @@
 //! Read-only Shell diagnostics. These observations do not authorize input suppression.
 
+use crate::context::{ContextEvidence, ViewEvidence, select_focused_view};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use windows::{
     Win32::{
         Foundation::HWND,
         System::{
             Com::{
-                CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-                CoTaskMemFree, CoUninitialize, IServiceProvider,
+                CLSCTX_ALL, COINIT, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
+                CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IServiceProvider,
             },
             Variant::VARIANT,
         },
         UI::{
+            Accessibility::{
+                CUIAutomation, IUIAutomation, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
+                UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+            },
             Shell::{
                 IFolderView, IPersistFolder2, IShellBrowser, IShellItem, IShellWindows,
                 IWebBrowserApp, SHCreateItemFromIDList, SID_STopLevelBrowser, SIGDN_FILESYSPATH,
@@ -29,9 +35,9 @@ use windows::{
 struct Apartment;
 
 impl Apartment {
-    fn new() -> Result<Self> {
+    fn new(model: COINIT) -> Result<Self> {
         // SAFETY: This thread initializes COM once; the guard balances every success.
-        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
+        unsafe { CoInitializeEx(None, model).ok()? };
         Ok(Self)
     }
 }
@@ -57,15 +63,119 @@ pub struct ExplorerSnapshot {
     pub foreground_window: usize,
     pub focus_window: usize,
     pub foreground_unchanged: bool,
+    pub native_focus_unchanged: bool,
+    pub semantic_focus: Option<FocusObservation>,
     pub observations: Vec<ShellObservation>,
     pub unresolved_entries: usize,
+}
+
+#[derive(Debug)]
+pub struct FocusObservation {
+    pub control_type: i32,
+    pub folder_items_focused: bool,
+    pub unchanged: bool,
+}
+
+impl ExplorerSnapshot {
+    /// Return an observed directory only; this is not permission to swallow input.
+    pub fn diagnostic_directory(&self) -> Option<&std::path::Path> {
+        let semantic = self.semantic_focus.as_ref()?;
+        let views: Vec<_> = self
+            .observations
+            .iter()
+            .map(|view| ViewEvidence {
+                contains_focus: view.contains_focus,
+                filesystem: view.directory.is_some(),
+            })
+            .collect();
+        let index = select_focused_view(
+            &views,
+            ContextEvidence {
+                foreground_stable: self.foreground_unchanged,
+                native_focus_stable: self.native_focus_unchanged,
+                semantic_focus_stable: semantic.unchanged,
+                folder_items_focused: semantic.folder_items_focused,
+                unresolved_entries: self.unresolved_entries,
+            },
+        )?;
+        self.observations[index].directory.as_deref()
+    }
+}
+
+fn observe_semantic_focus(
+    ready: mpsc::Sender<()>,
+    finish: mpsc::Receiver<()>,
+) -> Result<FocusObservation> {
+    let _apartment = Apartment::new(COINIT_MULTITHREADED)?;
+    // SAFETY: UI Automation objects are created, queried and released on this
+    // windowless MTA worker. No COM interfaces cross thread or apartment boundaries.
+    unsafe {
+        let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)?;
+        let focused = automation.GetFocusedElement()?;
+        let kind = focused.CurrentControlType()?;
+        let folder_items_focused = [
+            UIA_ListControlTypeId,
+            UIA_ListItemControlTypeId,
+            UIA_DataGridControlTypeId,
+            UIA_DataItemControlTypeId,
+        ]
+        .contains(&kind)
+            && focused.CurrentHasKeyboardFocus()?.as_bool()
+            && focused.CurrentIsEnabled()?.as_bool();
+        // Closing either channel cancels the handshake without retaining a worker.
+        if ready.send(()).is_err() || finish.recv().is_err() {
+            return Err(windows::core::Error::from_hresult(
+                windows::Win32::Foundation::E_ABORT,
+            ));
+        }
+        let after = automation.GetFocusedElement()?;
+        let unchanged = automation.CompareElements(&focused, &after)?.as_bool()
+            && after.CurrentControlType()? == kind
+            && after.CurrentHasKeyboardFocus()?.as_bool()
+            && after.CurrentIsEnabled()?.as_bool();
+        Ok(FocusObservation {
+            control_type: kind.0,
+            folder_items_focused,
+            unchanged,
+        })
+    }
 }
 
 /// Enumerate Shell views associated with the foreground window.
 /// A focused descendant can still be an editable control, including a rename box.
 /// Callers must not interpret this diagnostic snapshot as a safe paste target.
 pub fn observe_foreground() -> Result<ExplorerSnapshot> {
-    let _apartment = Apartment::new()?;
+    std::thread::scope(|scope| {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx));
+        let ready = ready_rx.recv().is_ok();
+        let result = observe_shell();
+        let _ = finish_tx.send(());
+        let semantic = worker.join().ok().and_then(Result::ok);
+        let mut snapshot = result?;
+        if ready {
+            snapshot.semantic_focus = semantic;
+        }
+        // SAFETY: These APIs only inspect existing windows; the out-parameter is
+        // initialized local storage. Invalid or vanished windows reject stability.
+        unsafe {
+            let foreground = GetForegroundWindow();
+            snapshot.foreground_unchanged &= foreground.0 as usize == snapshot.foreground_window;
+            let mut info = GUITHREADINFO {
+                cbSize: size_of::<GUITHREADINFO>() as u32,
+                ..Default::default()
+            };
+            snapshot.native_focus_unchanged &=
+                GetGUIThreadInfo(GetWindowThreadProcessId(foreground, None), &mut info).is_ok()
+                    && info.hwndFocus.0 as usize == snapshot.focus_window;
+        }
+        Ok(snapshot)
+    })
+}
+
+fn observe_shell() -> Result<ExplorerSnapshot> {
+    let _apartment = Apartment::new(COINIT_APARTMENTTHREADED)?;
     // SAFETY: All out-parameters point to initialized local storage. COM interfaces
     // stay on this STA thread and are dropped before the apartment guard. Allocated
     // PIDLs and display-name buffers are freed with the documented COM allocator.
@@ -120,10 +230,18 @@ pub fn observe_foreground() -> Result<ExplorerSnapshot> {
                 Err(_) => unresolved_entries += 1,
             }
         }
+        let mut after = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let native_focus_unchanged =
+            GetGUIThreadInfo(thread, &mut after).is_ok() && after.hwndFocus == info.hwndFocus;
         Ok(ExplorerSnapshot {
             foreground_window: foreground.0 as usize,
             focus_window: info.hwndFocus.0 as usize,
             foreground_unchanged: GetForegroundWindow() == foreground,
+            native_focus_unchanged,
+            semantic_focus: None,
             observations,
             unresolved_entries,
         })
