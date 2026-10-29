@@ -2,6 +2,15 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: Release operation
+        type: choice
+        required: true
+        default: prepare
+        options:
+          - prepare
+          - publish
 
 permissions:
   contents: read
@@ -21,7 +30,7 @@ jobs:
       - run: cargo test --locked
 
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'publish'
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -45,7 +54,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-pr:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.action == 'prepare'
     needs: validate
     runs-on: ubuntu-latest
     concurrency:

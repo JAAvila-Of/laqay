@@ -61,8 +61,9 @@ requests. Automatic startup will be disabled by default.
 ## Releases
 
 release-plz manages versions, changelogs, tags, and GitHub releases in git-only
-mode. The Release workflow is manually dispatched during initial validation;
-it prepares a release PR and publishes only commits associated with release PRs.
+mode. The Release workflow is manually dispatched during initial validation.
+Use `prepare` to open a release PR. After reviewing and merging it, use `publish`
+to publish the version. Only commits associated with release PRs are released.
 A Windows job builds release assets from its tagged commit. Release PRs
 must be reviewed before merging. No release is a claim of completed integration
 validation; see [the test matrix](docs/integration-tests.md).
