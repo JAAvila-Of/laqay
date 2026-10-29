@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      releases: ${{ steps.release.outputs.releases }}
+      created: ${{ steps.release.outputs.releases_created }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c
+        id: release
+        with:
+          command: release
+          version: '0.4.2'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-pr:
+    if: github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-pr-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c
+        with:
+          command: release-pr
+          version: '0.4.2'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  assets:
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        release: ${{ fromJSON(needs.release.outputs.releases) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.release.tag }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: Upload executable and checksum
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ matrix.release.tag }}
+        run: |
+          $binary = 'target/x86_64-pc-windows-msvc/release/laqay.exe'
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
+          "$digest  laqay.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
+          gh release upload $env:RELEASE_TAG $binary SHA256SUMS.txt
