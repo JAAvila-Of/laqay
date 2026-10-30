@@ -145,7 +145,9 @@ file: the destination matched the source SHA-256, no PNG was created, and the
 tester reported normal behavior. Another local trial preserved text paste in
 Notepad and Explorer's address bar: both image-handling requests were declined,
 the approved folder remained empty, and the tester confirmed correct text
-without unexpected notices or sounds. Other editable fields remain unverified.
+without unexpected notices or sounds. Text paste in a rename field was also
+preserved and cancelled with Esc; the original name and file hash remained
+unchanged. Search-field validation is still pending.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
