@@ -29,10 +29,15 @@ no disturbances. This covers deliberate two-tab selection in both directions,
 not rapid changes during a paste. Multiple/virtual files, other destinations,
 and the remaining matrix are still pending.
 These results predate the shared-engine and tray integration. The entry point
-now starts the real tray application. Its Enabled, Start with Windows, Exit,
-Explorer-restart recovery, and shared single-instance behavior are implemented
-but have not been validated on the desktop. T25-T28 and regression testing of
-earlier results remain pending. Unit tests cover generation cancellation and
+now starts the real tray application. A bounded local-console tray trial passed
+the basic T28 exit path: the tester toggled Enabled off and on, confirmed the
+icon changed blue/gray/blue, and selected Exit. Start with Windows was unavailable
+as required in trial mode. Hook removal and process exit were verified, with
+no runtime errors or watchdog termination. No paste was attempted, so T25's
+native-paste behavior remains unverified. Actual startup preferences, Explorer
+restart recovery, shared single-instance behavior, shutdown with pending work,
+and regression testing of earlier paste results remain pending.
+Unit tests cover generation cancellation and
 preference/command parsing; they do not exercise the real tray or registry.
 
 Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum

@@ -7,7 +7,9 @@ images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
 **Current status:** engineering validation. Running `laqay.exe` now starts the
 native tray application and observes Ctrl+V. Tray controls and per-user
-preferences are implemented; this new integration still needs desktop testing.
+preferences are implemented. A bounded desktop trial confirmed the icon's
+enabled/disabled states and Exit cleanup. Integrated paste handling and real
+preference persistence still need desktop testing.
 Earlier bounded local-console and RDP trials saved clipboard screenshots as
 PNGs and preserved basic native paste behavior. Those results predate the
 shared-engine refactor and do not validate the new tray application.
