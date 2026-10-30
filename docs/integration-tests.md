@@ -12,8 +12,10 @@ two presses saved two valid 1120x624 RGBA PNGs. The tester confirmed correct
 images without notices or sounds; hook removal and process exit were verified.
 A local T04 trial also passed for one regular file: native paste preserved its
 SHA-256, created no PNG, and produced no unexpected notices or sounds according
-to the tester. Multiple/virtual files, text, editable fields, tabs, and other
-destinations remain pending.
+to the tester. A local T07/T12 trial preserved text in Notepad and Explorer's
+address bar; the observer declined both contexts, created no files, and the
+tester confirmed correct text without disturbances. Multiple/virtual files,
+other editable fields, tabs, and other destinations remain pending.
 The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 

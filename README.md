@@ -142,7 +142,10 @@ PNGs, one per Ctrl+V. The tester confirmed correct images without notices or
 sounds, and hook removal and process exit were verified. Observed times were
 216 ms and 65 ms. A separate local trial preserved native paste of one regular
 file: the destination matched the source SHA-256, no PNG was created, and the
-tester reported normal behavior. Text-paste desktop regressions remain pending.
+tester reported normal behavior. Another local trial preserved text paste in
+Notepad and Explorer's address bar: both image-handling requests were declined,
+the approved folder remained empty, and the tester confirmed correct text
+without unexpected notices or sounds. Other editable fields remain unverified.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
