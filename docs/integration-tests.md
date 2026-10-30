@@ -28,7 +28,18 @@ the first folder's original file/hash stayed unchanged, and the tester reported
 no disturbances. This covers deliberate two-tab selection in both directions,
 not rapid changes during a paste. Multiple/virtual files, other destinations,
 and the remaining matrix are still pending.
-The application entry point remains inactive; experiments are opt-in.
+These results predate the shared-engine and tray integration. The entry point
+now starts the real tray application. Its Enabled, Start with Windows, Exit,
+Explorer-restart recovery, and shared single-instance behavior are implemented
+but have not been validated on the desktop. T25-T28 and regression testing of
+earlier results remain pending. Unit tests cover generation cancellation and
+preference/command parsing; they do not exercise the real tray or registry.
+
+Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum
+trial restricted to one approved folder. Trial Enabled changes are temporary,
+Start with Windows is unavailable, and preferences are never read or written.
+Actual preference persistence and login startup require separate normal-mode
+validation. Check icon disappearance and owned process exit after every block.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
 | ID | Scenario | Required result |

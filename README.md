@@ -5,18 +5,19 @@ Paste it. Save it.
 Laqay is a Windows utility under development. Its goal is to save clipboard
 images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
-**Current status:** engineering validation. Running `laqay.exe` currently exits
-without registering input or changing system settings. An opt-in image-paste
-experiment is implemented separately. Authorized local-console and RDP trials
-each saved two PNGs from clipboard screenshots; broader desktop validation
-is pending.
-Tray controls and startup integration are not implemented.
+**Current status:** engineering validation. Running `laqay.exe` now starts the
+native tray application and observes Ctrl+V. Tray controls and per-user
+preferences are implemented; this new integration still needs desktop testing.
+Earlier bounded local-console and RDP trials saved clipboard screenshots as
+PNGs and preserved basic native paste behavior. Those results predate the
+shared-engine refactor and do not validate the new tray application.
 
 ## Requirements
 
 - Planned support: Windows 10 and Windows 11, x86_64.
-- Development: stable Rust with the MSVC toolchain and Visual Studio C++ Build Tools.
-- No administrator privileges or external application runtime are intended.
+- Development: stable Rust with the MSVC toolchain, Visual Studio C++ Build Tools,
+  and the Windows SDK resource compiler.
+- The x86_64 MSVC build links the C runtime statically and requests no elevation.
 
 ## Build
 
@@ -29,6 +30,46 @@ cargo build --locked --release
 
 The Windows executable is `target/release/laqay.exe`. The executable uses the
 Windows GUI subsystem. The diagnostic example uses a console for explicit output.
+The build embeds enabled/disabled icons and a per-monitor DPI-aware manifest.
+The manifest version comes from Cargo package metadata, managed by release-plz.
+
+## Tray application
+
+Launch `laqay.exe`, capture an image, focus a physical Explorer folder, and press
+Ctrl+V. The notification icon has three menu items: **Enabled**, **Start with
+Windows**, and **Exit**. The icon becomes gray while disabled. No additional
+paste shortcut is required. The passive hook always forwards the original key.
+
+Enabled defaults to on. Toggling it saves `HKCU\Software\Laqay\Enabled` and
+invalidates queued requests. Disabling removes the hook on its dedicated input
+thread; enabling installs it again. A publication already past its final check
+may finish while the setting changes. UI and registry work run on another thread.
+
+Automatic startup defaults to off. An explicit menu action adds or removes only
+the `Laqay` value in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, with
+the executable's full path quoted. Launching the application does not write
+preferences. If you move the portable executable, turn startup off and on again
+to update its registered path. Windows can separately disable startup entries.
+
+There is one instance per interactive session, shared with the diagnostic paste
+experiments. Exit removes the icon and stops input handling. Shutdown waits
+briefly for the paste worker; a blocked external provider can cause the process
+to terminate before staging-file cleanup, leaving a `.tmp` file. Completed PNGs
+are published only after encoding and synchronization.
+
+For an agreed, bounded desktop test, build with
+`cargo build --locked --release --bins --examples`, then run:
+
+```powershell
+./scripts/Invoke-PasteProbe.ps1 -Tray -Seconds 30 -Destination <approved-folder> -OutputDirectory <private-log-directory>
+```
+
+This starts the actual tray application with a dedicated hook for at most 30
+seconds, restricted to the approved folder. Enabled changes apply only to that
+trial; Start with Windows is unavailable. Trial mode never reads or writes
+registry preferences. The runner verifies process exit and terminates only its
+own process if it exceeds the five-second shutdown grace period. Neither normal
+mode nor trial mode should be launched as an unattended build check.
 
 ## Explorer diagnostic
 
@@ -88,7 +129,7 @@ the destination folder and publish it with a non-replacing move after encoding
 and synchronization complete. Filename collisions, including simultaneous
 writers, use increasing suffixes. Encoding failure removes the staging file
 when possible; a disconnected or changed destination can leave a `.tmp` file.
-The bounded experiment below connects native PNG encoding to this module.
+The shared paste engine connects native PNG encoding to this module.
 
 ## Bounded Ctrl+V experiment
 
@@ -197,9 +238,11 @@ Copied files and virtual Shell files take priority over image conversion.
 
 ## Privacy
 
-The application will operate offline, with no accounts, telemetry, clipboard
-history, or keyboard history. Clipboard inspection will be limited to paste
-requests. Automatic startup will be disabled by default.
+The application operates offline, with no accounts, telemetry, clipboard
+history, or keyboard history. Clipboard inspection is limited to paste
+requests. Normal mode does not emit diagnostic logs. Bounded diagnostic modes
+can log structural context and destination paths, but never clipboard contents.
+Automatic startup is disabled by default.
 
 ## Releases
 

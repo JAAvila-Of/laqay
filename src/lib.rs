@@ -18,6 +18,17 @@ pub mod clipboard;
 #[cfg(windows)]
 pub mod paste_probe;
 
+#[cfg(any(windows, test))]
+mod activity;
+#[cfg(windows)]
+pub mod app;
+#[cfg(windows)]
+mod runtime;
+#[cfg(windows)]
+mod settings;
+#[cfg(windows)]
+mod tray;
+
 #[cfg(windows)]
 mod probe_environment;
 

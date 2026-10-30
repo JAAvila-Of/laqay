@@ -6,17 +6,19 @@ param(
     [string]$OutputDirectory,
     [ValidateSet('raw', 'hook')]
     [string]$InputBackend = 'raw',
-    [switch]$InputOnly
+    [switch]$InputOnly,
+    [switch]$Tray
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$binary = Join-Path $projectRoot 'target/release/examples/paste_probe.exe'
+$binary = Join-Path $projectRoot $(if ($Tray) { 'target/release/laqay.exe' } else { 'target/release/examples/paste_probe.exe' })
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
-    throw 'Build the release examples before running this experiment.'
+    throw 'Build the release binaries and examples before running this experiment.'
 }
 $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
 if ($InputOnly) {
+    if ($Tray) { throw 'Tray trials require an approved destination.' }
     $probeArguments = @('--input-only', "$Seconds")
 } else {
     if ([string]::IsNullOrWhiteSpace($Destination)) { throw 'An approved destination is required.' }
@@ -26,12 +28,18 @@ if ($InputOnly) {
     }
     # Double trailing backslashes before the quote in a literal Windows argument.
     $destinationArgument = '"' + [regex]::Replace($destinationPath, '(\\+)$', '$1$1') + '"'
-    $probeArguments = @("$Seconds", $destinationArgument, $InputBackend)
+    if ($Tray) {
+        if ($PSBoundParameters.ContainsKey('InputBackend')) { throw 'Tray trials use the dedicated hook observer.' }
+        $probeArguments = @('--trial', "$Seconds", $destinationArgument)
+    } else {
+        $probeArguments = @("$Seconds", $destinationArgument, $InputBackend)
+    }
 }
 [System.IO.Directory]::CreateDirectory($outputPath) | Out-Null
 $runId = [guid]::NewGuid().ToString('N')
-$stdout = Join-Path $outputPath "paste-probe-$runId.stdout.log"
-$stderr = Join-Path $outputPath "paste-probe-$runId.stderr.log"
+$logPrefix = if ($Tray) { 'tray-trial' } else { 'paste-probe' }
+$stdout = Join-Path $outputPath "$logPrefix-$runId.stdout.log"
+$stderr = Join-Path $outputPath "$logPrefix-$runId.stderr.log"
 $probeProcess = Start-Process -FilePath $binary -ArgumentList $probeArguments `
     -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr

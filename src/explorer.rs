@@ -172,6 +172,7 @@ impl ExplorerSnapshot {
 fn observe_semantic_focus(
     ready: mpsc::Sender<()>,
     finish: mpsc::Receiver<()>,
+    diagnostics: bool,
 ) -> Result<FocusObservation> {
     let _apartment = Apartment::new(COINIT_MULTITHREADED)?;
     // SAFETY: UI Automation objects are created, queried and released on this
@@ -199,7 +200,7 @@ fn observe_semantic_focus(
         ]
         .contains(&kind)
             || (kind == UIA_TextControlTypeId
-                && folder_text_path(&automation, &focused, info.hwndFocus)?))
+                && folder_text_path(&automation, &focused, info.hwndFocus, diagnostics)?))
             && focused.CurrentHasKeyboardFocus()?.as_bool()
             && focused.CurrentIsEnabled()?.as_bool();
         // Closing either channel cancels the handshake without retaining a worker.
@@ -214,7 +215,7 @@ fn observe_semantic_focus(
             && after.CurrentHasKeyboardFocus()?.as_bool()
             && after.CurrentIsEnabled()?.as_bool()
             && (kind != UIA_TextControlTypeId
-                || folder_text_path(&automation, &after, info.hwndFocus)?);
+                || folder_text_path(&automation, &after, info.hwndFocus, diagnostics)?);
         Ok(FocusObservation {
             control_type: kind.0,
             global_control_window,
@@ -229,6 +230,7 @@ fn folder_text_path(
     automation: &IUIAutomation,
     focused: &IUIAutomationElement,
     native: HWND,
+    diagnostics: bool,
 ) -> Result<bool> {
     if native.is_invalid() {
         return Ok(false);
@@ -266,26 +268,32 @@ fn folder_text_path(
                     Ok(read_only) if read_only.as_bool() => ValueAccess::ReadOnly,
                     Ok(_) => ValueAccess::Writable,
                     Err(error) => {
-                        eprintln!("Static text focus: cannot determine value access: {error}");
+                        if diagnostics {
+                            eprintln!("Static text focus: cannot determine value access: {error}");
+                        }
                         ValueAccess::Unknown
                     }
                 }
             } else {
                 ValueAccess::Absent
             };
-            println!(
-                "Static text focus node: control_type={}, value_access={value_access:?}",
-                kind.0
-            );
+            if diagnostics {
+                println!(
+                    "Static text focus node: control_type={}, value_access={value_access:?}",
+                    kind.0
+                );
+            }
             path.push(FocusNode { role, value_access });
             if role == FocusRole::Other
                 || matches!(value_access, ValueAccess::Writable | ValueAccess::Unknown)
                 || !current.CurrentIsEnabled()?.as_bool()
             {
-                println!(
-                    "Static text focus declined: ancestor_type={}, value_access={value_access:?}",
-                    kind.0
-                );
+                if diagnostics {
+                    println!(
+                        "Static text focus declined: ancestor_type={}, value_access={value_access:?}",
+                        kind.0
+                    );
+                }
                 return Ok(false);
             }
             if automation.CompareElements(&current, &root)?.as_bool() {
@@ -293,7 +301,9 @@ fn folder_text_path(
             }
             current = walker.GetParentElement(&current)?;
         }
-        println!("Static text focus declined: native list was not reached within 32 nodes");
+        if diagnostics {
+            println!("Static text focus declined: native list was not reached within 32 nodes");
+        }
         Ok(false)
     }
 }
@@ -302,21 +312,29 @@ fn folder_text_path(
 /// A focused descendant can still be an editable control, including a rename box.
 /// Callers must not interpret this diagnostic snapshot as a safe paste target.
 pub fn observe_foreground() -> Result<ExplorerSnapshot> {
+    observe_with_diagnostics(true)
+}
+
+pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnapshot> {
     std::thread::scope(|scope| {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (finish_tx, finish_rx) = mpsc::channel();
-        let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx));
+        let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx, diagnostics));
         let ready = ready_rx.recv().is_ok();
         let result = observe_shell();
         let _ = finish_tx.send(());
         let semantic = match worker.join() {
             Ok(Ok(observation)) => Some(observation),
             Ok(Err(error)) => {
-                eprintln!("Semantic focus declined: {error}");
+                if diagnostics {
+                    eprintln!("Semantic focus declined: {error}");
+                }
                 None
             }
             Err(_) => {
-                eprintln!("Semantic focus declined: observation worker failed");
+                if diagnostics {
+                    eprintln!("Semantic focus declined: observation worker failed");
+                }
                 None
             }
         };
