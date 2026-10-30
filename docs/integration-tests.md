@@ -7,6 +7,10 @@ confirmed correct images without notices or sounds. The initial folder was
 empty; its focused Text and exact native List ancestor both exposed read-only
 Value. The hook was removed and process exit was verified. This result is
 limited to that session and screenshot, not a pass for other matrix scenarios.
+A subsequent local-console trial (protocol 0) passed the basic T17/T33 path:
+two presses saved two valid 1120x624 RGBA PNGs. The tester confirmed correct
+images without notices or sounds; hook removal and process exit were verified.
+File/text paste, editable fields, tabs, and other destinations remain pending.
 The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 

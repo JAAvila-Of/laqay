@@ -7,8 +7,8 @@ images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
 **Current status:** engineering validation. Running `laqay.exe` currently exits
 without registering input or changing system settings. An opt-in image-paste
-experiment is implemented separately. One authorized RDP trial saved two PNGs
-from a screenshot captured inside the remote session; broader desktop validation
+experiment is implemented separately. Authorized local-console and RDP trials
+each saved two PNGs from clipboard screenshots; broader desktop validation
 is pending.
 Tray controls and startup integration are not implemented.
 
@@ -136,6 +136,11 @@ one per Ctrl+V, and exited cleanly. The tester confirmed correct images and no
 notices or sounds. Observed receipt-to-save times were 180 ms and 72 ms; two
 samples are not a performance benchmark. This covers a screenshot captured
 inside that RDP session, not client clipboard redirection or the full matrix.
+
+A later local-console trial (session protocol 0) saved two valid 1120x624 RGBA
+PNGs, one per Ctrl+V. The tester confirmed correct images without notices or
+sounds, and hook removal and process exit were verified. Observed times were
+216 ms and 65 ms. Regular-file and text-paste desktop regressions remain pending.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
