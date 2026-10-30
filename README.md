@@ -11,8 +11,9 @@ preferences are implemented. A bounded desktop trial confirmed the icon's
 enabled/disabled states and Exit cleanup. A subsequent trial of the integrated
 application saved a screenshot as a valid PNG without notices or sounds.
 A follow-up confirmed that disabling prevents image creation and re-enabling
-restores it without disturbances. Normal-mode preferences and broader
-regressions still need desktop testing.
+restores it without disturbances. A same-session duplicate-launch trial confirmed
+that the second copy exits without starting another observer. Normal-mode
+preferences and broader regressions still need desktop testing.
 Earlier bounded local-console and RDP trials saved clipboard screenshots as
 PNGs and preserved basic native paste behavior. Those results predate the
 shared-engine refactor and do not validate the new tray application.
@@ -75,6 +76,11 @@ trial; Start with Windows is unavailable. Trial mode never reads or writes
 registry preferences. The runner verifies process exit and terminates only its
 own process if it exceeds the five-second shutdown grace period. Neither normal
 mode nor trial mode should be launched as an unattended build check.
+
+Add `-CheckSecondInstance` to a tray trial lasting at least ten seconds to launch
+a second copy after the first is ready. The runner requires the duplicate to
+exit successfully within three seconds without engine output while the first
+remains active. It retains and cleans up both owned process handles.
 
 ## Explorer diagnostic
 

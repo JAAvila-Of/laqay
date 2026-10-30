@@ -34,8 +34,7 @@ the basic T28 exit path: the tester toggled Enabled off and on, confirmed the
 icon changed blue/gray/blue, and selected Exit. Start with Windows was unavailable
 as required in trial mode. Hook removal and process exit were verified, with
 no runtime errors or watchdog termination. No paste was attempted in that block.
-Actual startup preferences, Explorer
-restart recovery, shared single-instance behavior, shutdown with pending work,
+Actual startup preferences, Explorer restart recovery, shutdown with pending work,
 and regression testing of earlier paste results remain pending.
 Unit tests cover generation cancellation and
 preference/command parsing; they do not exercise the real tray or registry.
@@ -55,6 +54,15 @@ PNG, without notices or sounds. Only one request was queued. The new image was
 valid and byte-identical to the previous screenshot; the original was unchanged.
 Hook removal and process exit were verified without errors or watchdog use.
 This does not cover toggling during in-flight work or persistent preferences.
+
+A 15-second local tray trial passed the basic T26 path for two consecutive
+launches in the same interactive session. After the first announced readiness,
+the second exited with code 0 within three seconds, without entering the engine's
+startup diagnostics. The first remained active and later exited normally,
+removing its hook. Both owned processes were confirmed absent; no errors,
+watchdog termination, or new files occurred. This does not cover simultaneous
+startup or separate sessions. The runner can repeat this check with
+`-Tray -CheckSecondInstance` and a duration of at least ten seconds.
 
 Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum
 trial restricted to one approved folder. Trial Enabled changes are temporary,
