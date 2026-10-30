@@ -33,8 +33,8 @@ now starts the real tray application. A bounded local-console tray trial passed
 the basic T28 exit path: the tester toggled Enabled off and on, confirmed the
 icon changed blue/gray/blue, and selected Exit. Start with Windows was unavailable
 as required in trial mode. Hook removal and process exit were verified, with
-no runtime errors or watchdog termination. No paste was attempted, so T25's
-native-paste behavior remains unverified. Actual startup preferences, Explorer
+no runtime errors or watchdog termination. No paste was attempted in that block.
+Actual startup preferences, Explorer
 restart recovery, shared single-instance behavior, shutdown with pending work,
 and regression testing of earlier paste results remain pending.
 Unit tests cover generation cancellation and
@@ -46,8 +46,15 @@ approved folder. The tester confirmed the screenshot was correct without notices
 or sounds. The hook was removed and the process exited with code 0, without
 watchdog termination or runtime errors. The observed receipt-to-save time was
 222 ms, not a benchmark. This trial used temporary preferences and a restricted
-destination; it does not validate unrestricted normal mode, disabled paste,
+destination; it does not validate unrestricted normal mode,
 real preference persistence, or the remaining regression matrix.
+
+A third bounded local trial passed the basic T25 image case: the tester pasted
+while disabled with no new PNG, then re-enabled and pasted again to create one
+PNG, without notices or sounds. Only one request was queued. The new image was
+valid and byte-identical to the previous screenshot; the original was unchanged.
+Hook removal and process exit were verified without errors or watchdog use.
+This does not cover toggling during in-flight work or persistent preferences.
 
 Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum
 trial restricted to one approved folder. Trial Enabled changes are temporary,

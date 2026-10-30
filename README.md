@@ -10,8 +10,9 @@ native tray application and observes Ctrl+V. Tray controls and per-user
 preferences are implemented. A bounded desktop trial confirmed the icon's
 enabled/disabled states and Exit cleanup. A subsequent trial of the integrated
 application saved a screenshot as a valid PNG without notices or sounds.
-Disabled paste behavior, normal-mode preferences, and broader regressions
-still need desktop testing.
+A follow-up confirmed that disabling prevents image creation and re-enabling
+restores it without disturbances. Normal-mode preferences and broader
+regressions still need desktop testing.
 Earlier bounded local-console and RDP trials saved clipboard screenshots as
 PNGs and preserved basic native paste behavior. Those results predate the
 shared-engine refactor and do not validate the new tray application.
