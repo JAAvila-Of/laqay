@@ -40,6 +40,15 @@ and regression testing of earlier paste results remain pending.
 Unit tests cover generation cancellation and
 preference/command parsing; they do not exercise the real tray or registry.
 
+A subsequent bounded trial of the integrated tray application passed the basic
+local T17/T33 image path: one Ctrl+V produced one valid 1140x705 RGBA PNG in the
+approved folder. The tester confirmed the screenshot was correct without notices
+or sounds. The hook was removed and the process exited with code 0, without
+watchdog termination or runtime errors. The observed receipt-to-save time was
+222 ms, not a benchmark. This trial used temporary preferences and a restricted
+destination; it does not validate unrestricted normal mode, disabled paste,
+real preference persistence, or the remaining regression matrix.
+
 Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum
 trial restricted to one approved folder. Trial Enabled changes are temporary,
 Start with Windows is unavailable, and preferences are never read or written.
