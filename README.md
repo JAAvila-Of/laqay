@@ -50,8 +50,9 @@ inside the native folder list, and both forms of focus
 and the foreground window remain stable across the observations. Unknown,
 editable, virtual, ambiguous, or unstable contexts produce no candidate.
 This is a diagnostic policy, not proof that suppressing input is safe. Native
-and semantic observations are not an atomic transaction. Desktop validation of
-rename fields, search, tabs, and context changes is still pending for this policy.
+and semantic observations are not an atomic transaction. Basic local trials
+covered rename, address/search fields, and two-tab selection. Rapid context
+changes, virtual folders, and broader desktop regressions remain pending.
 
 An RDP image-paste trial reached a stable folder view but was declined because
 its focused element was Text inside the native List. The updated policy checks
@@ -154,7 +155,12 @@ tester confirmed correct text without disturbances.
 A first two-tab trial saved one valid PNG in the approved first folder and
 declined the paste after switching to the other folder, leaving it empty.
 The tester confirmed two tabs in one Explorer window and a correct image
-without disturbances. The reverse destination still requires validation.
+without disturbances. The reverse trial also passed: with only the second
+folder approved, it saved a valid 1103x642 RGBA PNG there and declined the
+first folder, whose original file and SHA-256 remained unchanged. The tester
+confirmed the new image without disturbances; hook removal and process exit
+were verified for both blocks. These trials used deliberate tab switches,
+not rapid changes during encoding or publication.
 
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
