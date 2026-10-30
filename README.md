@@ -151,6 +151,11 @@ unchanged. An isolated search-field trial also preserved text paste, identified
 the stable Edit control outside the folder view, and created no files; the
 tester confirmed correct text without disturbances.
 
+A first two-tab trial saved one valid PNG in the approved first folder and
+declined the paste after switching to the other folder, leaving it empty.
+The tester confirmed two tabs in one Explorer window and a correct image
+without disturbances. The reverse destination still requires validation.
+
 For a Ctrl+V request it checks the Explorer process, native and semantic focus,
 the physical Shell folder, and clipboard sequence. Only the explicitly approved
 destination directory is eligible; other folders are declined before clipboard

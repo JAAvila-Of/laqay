@@ -20,8 +20,10 @@ the original name/hash remained unchanged, and no PNG was created. The search
 part of that trial used an incorrect shortcut and did not validate T13. A
 separate T13 trial using Ctrl+F identified the search Edit control outside the
 folder view and declined before image access; no files were created, and the
-tester confirmed normal text paste. Multiple/virtual files, tabs, and other
-destinations remain pending.
+tester confirmed normal text paste. A first T16 two-tab trial saved a valid
+PNG only in the approved first folder and explicitly declined the other
+folder; the tester confirmed both tabs were in one window. The reverse tab
+destination, multiple/virtual files, and other destinations remain pending.
 The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
