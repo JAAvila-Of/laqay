@@ -17,8 +17,11 @@ address bar; the observer declined both contexts, created no files, and the
 tester confirmed correct text without disturbances. A basic local T14 trial
 also preserved text paste in a rename Edit control; Esc cancelled the edit,
 the original name/hash remained unchanged, and no PNG was created. The search
-part of that trial used an incorrect shortcut and does not validate T13.
-Multiple/virtual files, search, tabs, and other destinations remain pending.
+part of that trial used an incorrect shortcut and did not validate T13. A
+separate T13 trial using Ctrl+F identified the search Edit control outside the
+folder view and declined before image access; no files were created, and the
+tester confirmed normal text paste. Multiple/virtual files, tabs, and other
+destinations remain pending.
 The application entry point remains inactive; experiments are opt-in.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
