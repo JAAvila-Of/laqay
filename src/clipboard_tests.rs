@@ -146,7 +146,11 @@ impl Window {
         self.replace_with_bitmap(formats, None)
     }
 
-    fn replace_with_bitmap(&self, formats: &[(u32, &[u8])], bitmap: Option<crate::test_support::TestBitmap>) -> u32 {
+    fn replace_with_bitmap(
+        &self,
+        formats: &[(u32, &[u8])],
+        bitmap: Option<crate::test_support::TestBitmap>,
+    ) -> u32 {
         // SAFETY: Station::new has succeeded before this window exists. Only
         // this child's private clipboard receives these synthetic fixtures.
         unsafe {
@@ -259,7 +263,10 @@ fn child_exercises_private_clipboard() {
         assert!(!snapshot.is_png);
         assert_eq!(&snapshot.bytes[40..44], &[21, 73, 181, 255]);
         assert_eq!(GetClipboardData(2).unwrap(), original);
-        assert_eq!(copy_open_image(&open, 2, false).unwrap().bytes, snapshot.bytes);
+        assert_eq!(
+            copy_open_image(&open, 2, false).unwrap().bytes,
+            snapshot.bytes
+        );
         drop(open);
         let selected = read_image(sequence).unwrap().unwrap();
         assert!(!selected.is_png);

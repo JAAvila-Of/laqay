@@ -36,13 +36,16 @@ impl TestBitmap {
         let mut bits = std::ptr::null_mut();
         // SAFETY: The small, checked fixture owns its DIB section and pixel
         // storage. It is never selected into a DC or shared with another thread.
-        let handle = unsafe {
-            CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap()
-        };
+        let handle =
+            unsafe { CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap() };
         assert!(!bits.is_null());
         // SAFETY: The successfully created section has exactly size writable bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), bits.cast::<u8>(), size) };
-        Self { handle: Some(handle), bits: bits.cast(), size }
+        Self {
+            handle: Some(handle),
+            bits: bits.cast(),
+            size,
+        }
     }
 
     pub(crate) fn handle(&self) -> windows::Win32::Graphics::Gdi::HBITMAP {
@@ -64,8 +67,14 @@ impl Drop for TestBitmap {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             // SAFETY: Delete only the fixture's still-owned GDI object.
-            assert!(unsafe { windows::Win32::Graphics::Gdi::DeleteObject(
-                windows::Win32::Graphics::Gdi::HGDIOBJ(handle.0)) }.as_bool());
+            assert!(
+                unsafe {
+                    windows::Win32::Graphics::Gdi::DeleteObject(
+                        windows::Win32::Graphics::Gdi::HGDIOBJ(handle.0),
+                    )
+                }
+                .as_bool()
+            );
         }
     }
 }

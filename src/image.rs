@@ -4,7 +4,10 @@ use std::ptr::{null, null_mut};
 use windows::{
     Win32::{
         Foundation::{E_FAIL, E_INVALIDARG, HGLOBAL},
-        Graphics::{Gdi::{BITMAP, GetObjectType, GetObjectW, HBITMAP, HGDIOBJ, HPALETTE, OBJ_BITMAP}, Imaging::*},
+        Graphics::{
+            Gdi::{BITMAP, GetObjectType, GetObjectW, HBITMAP, HGDIOBJ, HPALETTE, OBJ_BITMAP},
+            Imaging::*,
+        },
         System::Com::{
             CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
             CoUninitialize, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
@@ -158,16 +161,21 @@ impl Drop for Apartment {
 }
 
 fn bitmap_layout(bitmap: &BITMAP) -> Result<(u32, u32, usize)> {
-    if bitmap.bmType != 0 || bitmap.bmPlanes != 1
+    if bitmap.bmType != 0
+        || bitmap.bmPlanes != 1
         || ![16, 24, 32].contains(&bitmap.bmBitsPixel)
-        || bitmap.bmWidth <= 0 || bitmap.bmHeight == i32::MIN
+        || bitmap.bmWidth <= 0
+        || bitmap.bmHeight == i32::MIN
     {
         return Err(invalid());
     }
     let width = bitmap.bmWidth as u32;
     let height = bitmap.bmHeight.unsigned_abs();
     let size = checked_rgba_size(width as usize, height as usize)?;
-    if size.checked_add(54).is_none_or(|total| total > MAX_IMAGE_BYTES) {
+    if size
+        .checked_add(54)
+        .is_none_or(|total| total > MAX_IMAGE_BYTES)
+    {
         return Err(invalid());
     }
     Ok((width, height, size))
@@ -182,8 +190,11 @@ pub(crate) fn bitmap_to_dib(bitmap: HBITMAP) -> Result<Vec<u8>> {
         let object = HGDIOBJ(bitmap.0);
         let mut metadata = BITMAP::default();
         if GetObjectType(object) != OBJ_BITMAP.0 as u32
-            || GetObjectW(object, size_of::<BITMAP>() as i32,
-                Some((&mut metadata as *mut BITMAP).cast())) != size_of::<BITMAP>() as i32
+            || GetObjectW(
+                object,
+                size_of::<BITMAP>() as i32,
+                Some((&mut metadata as *mut BITMAP).cast()),
+            ) != size_of::<BITMAP>() as i32
         {
             return Err(invalid());
         }
@@ -192,22 +203,33 @@ pub(crate) fn bitmap_to_dib(bitmap: HBITMAP) -> Result<Vec<u8>> {
         let _apartment = Apartment;
         let factory: IWICImagingFactory =
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
-        let source = factory.CreateBitmapFromHBITMAP(bitmap, HPALETTE::default(), WICBitmapIgnoreAlpha)?;
+        let source =
+            factory.CreateBitmapFromHBITMAP(bitmap, HPALETTE::default(), WICBitmapIgnoreAlpha)?;
         let (mut actual_width, mut actual_height) = (0, 0);
         source.GetSize(&mut actual_width, &mut actual_height)?;
         if (actual_width, actual_height) != (width, height) {
             return Err(invalid());
         }
         let converter = factory.CreateFormatConverter()?;
-        converter.Initialize(&source, &GUID_WICPixelFormat32bppBGRA,
-            WICBitmapDitherTypeNone, None::<&IWICPalette>, 0.0, WICBitmapPaletteTypeCustom)?;
+        converter.Initialize(
+            &source,
+            &GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone,
+            None::<&IWICPalette>,
+            0.0,
+            WICBitmapPaletteTypeCustom,
+        )?;
         let mut dib = vec![0; 40 + size];
         dib[0..4].copy_from_slice(&40u32.to_le_bytes());
         dib[4..8].copy_from_slice(&(width as i32).to_le_bytes());
         dib[8..12].copy_from_slice(&(-(height as i32)).to_le_bytes());
         dib[12..14].copy_from_slice(&1u16.to_le_bytes());
         dib[14..16].copy_from_slice(&32u16.to_le_bytes());
-        converter.CopyPixels(null(), width.checked_mul(4).ok_or_else(invalid)?, &mut dib[40..])?;
+        converter.CopyPixels(
+            null(),
+            width.checked_mul(4).ok_or_else(invalid)?,
+            &mut dib[40..],
+        )?;
         for pixel in dib[40..].chunks_exact_mut(4) {
             pixel[3] = 255;
         }
@@ -344,26 +366,58 @@ mod tests {
 
     #[test]
     fn bitmap_metadata_is_bounded_before_copying() {
-        let valid = BITMAP { bmWidth: 1, bmHeight: 1, bmPlanes: 1,
-            bmBitsPixel: 32, ..Default::default() };
+        let valid = BITMAP {
+            bmWidth: 1,
+            bmHeight: 1,
+            bmPlanes: 1,
+            bmBitsPixel: 32,
+            ..Default::default()
+        };
         assert_eq!(bitmap_layout(&valid).unwrap(), (1, 1, 4));
         for metadata in [
-            BITMAP { bmWidth: 0, ..valid },
-            BITMAP { bmHeight: 0, ..valid },
-            BITMAP { bmHeight: i32::MIN, ..valid },
-            BITMAP { bmWidth: i32::MAX, ..valid },
-            BITMAP { bmHeight: i32::MAX, ..valid },
-            BITMAP { bmWidth: (MAX_IMAGE_BYTES / 4) as i32, ..valid },
-            BITMAP { bmPlanes: 2, ..valid },
-            BITMAP { bmBitsPixel: 8, ..valid },
+            BITMAP {
+                bmWidth: 0,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: 0,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: i32::MIN,
+                ..valid
+            },
+            BITMAP {
+                bmWidth: i32::MAX,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: i32::MAX,
+                ..valid
+            },
+            BITMAP {
+                bmWidth: (MAX_IMAGE_BYTES / 4) as i32,
+                ..valid
+            },
+            BITMAP {
+                bmPlanes: 2,
+                ..valid
+            },
+            BITMAP {
+                bmBitsPixel: 8,
+                ..valid
+            },
             BITMAP { bmType: 1, ..valid },
         ] {
             assert!(bitmap_layout(&metadata).is_err());
         }
         assert!(bitmap_to_dib(HBITMAP::default()).is_err());
         // SAFETY: This stock brush is borrowed and is never modified or freed.
-        let brush = unsafe { windows::Win32::Graphics::Gdi::GetStockObject(
-            windows::Win32::Graphics::Gdi::BLACK_BRUSH) };
+        let brush = unsafe {
+            windows::Win32::Graphics::Gdi::GetStockObject(
+                windows::Win32::Graphics::Gdi::BLACK_BRUSH,
+            )
+        };
         assert!(bitmap_to_dib(HBITMAP(brush.0)).is_err());
     }
 
