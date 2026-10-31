@@ -66,8 +66,8 @@ impl TestBitmap {
 impl Drop for TestBitmap {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            // SAFETY: Delete only the fixture's still-owned GDI object.
             assert!(
+                // SAFETY: Delete only the fixture's still-owned GDI object.
                 unsafe {
                     windows::Win32::Graphics::Gdi::DeleteObject(
                         windows::Win32::Graphics::Gdi::HGDIOBJ(handle.0),
