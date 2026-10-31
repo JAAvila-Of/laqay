@@ -34,6 +34,26 @@ jobs:
           path: target/test-results.log
           if-no-files-found: ignore
       - run: cargo build --locked --release
+      - name: Check normal-mode preference persistence in the isolated VM
+        shell: pwsh
+        run: |
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) {
+            Start-Process explorer.exe -WindowStyle Hidden
+            Start-Sleep -Seconds 3
+          }
+          powershell -NoProfile -File scripts/Invoke-PreferencesProbe.ps1 -PrepareOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Preference helper preparation failed.' }
+          foreach ($scenario in @('Enabled', 'Startup')) {
+            powershell -NoProfile -File scripts/Invoke-PreferencesProbe.ps1 -Scenario $scenario -Automated -Seconds 30 -OutputDirectory target/preference-validation
+            if ($LASTEXITCODE -ne 0) { throw "Application preference check failed: $scenario" }
+          }
+      - name: Retain application preference reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: laqay-preference-validation
+          path: target/preference-validation/
+          if-no-files-found: ignore
       - name: Collect dependency notices
         shell: pwsh
         run: |

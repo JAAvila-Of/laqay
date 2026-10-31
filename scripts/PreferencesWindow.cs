@@ -8,6 +8,7 @@ public static class LaqayPreferencesWindow {
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr window, StringBuilder name, int count);
     [DllImport("user32.dll")] private static extern bool PostMessageW(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
+    [DllImport("user32.dll")] private static extern IntPtr SendMessageTimeoutW(IntPtr window, uint message, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out UIntPtr result);
     public static IntPtr Find(uint process) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((window, parameter) => {
@@ -26,5 +27,16 @@ public static class LaqayPreferencesWindow {
     public static bool Close(uint process) {
         IntPtr window = Find(process);
         return window != IntPtr.Zero && PostMessageW(window, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    }
+    public static bool Command(uint process, uint command) {
+        if (command != 1001 && command != 1002 && command != 1003) return false;
+        IntPtr window = Find(process);
+        if (window == IntPtr.Zero) return false;
+        if (command == 1003) return PostMessageW(window, 0x0111, new IntPtr(command), IntPtr.Zero);
+        UIntPtr result;
+        // Standard WM_COMMAND, exclusively to an owned Laqay window. Wait for
+        // completion; no key, mouse, or foreground activation is generated.
+        return SendMessageTimeoutW(window, 0x0111,
+            new IntPtr(command), IntPtr.Zero, 0x0023, 5000, out result) != IntPtr.Zero;
     }
 }

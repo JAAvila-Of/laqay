@@ -5,7 +5,8 @@ param(
     [int]$Seconds = 30,
     [string]$OutputDirectory,
     [switch]$InspectOnly,
-    [switch]$PrepareOnly
+    [switch]$PrepareOnly,
+    [switch]$Automated
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,6 +78,9 @@ if ($InspectOnly) {
     $before | ConvertTo-Json -Depth 5
     return
 }
+if ($Automated -and $env:GITHUB_ACTIONS -ne 'true') {
+    throw 'Automated normal-mode application checks require the isolated CI runner.'
+}
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { throw 'An output directory is required.' }
 if ($before[0].Exists -and ($before[0].Kind -ne 'DWord' -or $before[0].Data -notin @(0, 1))) {
     throw 'This trial requires an absent Enabled value or a valid 0/1 DWORD.'
@@ -113,6 +117,7 @@ $report = [ordered]@{
     Scenario = $Scenario; Seconds = $Seconds; Before = $before
     ObservedChange = $false; Restarted = $false; StartupRemoved = $false
     Passed = $false; Restored = $false; ForcedTermination = $false; Error = $null
+    Automated = [bool]$Automated; ApplicationRoundTrip = $false
 }
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -129,6 +134,7 @@ function Start-OwnedApp {
     while (-not $process.HasExited -and
         $clock.Elapsed.TotalSeconds -lt [Math]::Min($Seconds, $launchTime + 5)) {
         if ([LaqayPreferencesWindow]::Find([uint32]$process.Id) -ne [IntPtr]::Zero) {
+            if (-not $process.WaitForInputIdle(5000)) { throw 'The owned application did not become idle.' }
             return $process
         }
         Start-Sleep -Milliseconds 100
@@ -141,11 +147,23 @@ try {
     $desired = [int](-not $initialEnabled)
     $process = Start-OwnedApp
     Write-Output "Ready. Normal-mode preferences trial; process $($process.Id); scenario $Scenario; deadline $Seconds seconds."
+    if ($Automated) {
+        $command = if ($Scenario -eq 'Enabled') { 1001 } else { 1002 }
+        if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, $command)) {
+            throw 'The owned application did not complete the first command.'
+        }
+    }
     while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
         if ($Scenario -eq 'Enabled') {
             $value = Read-Value $preferencePath 'Enabled'
             if ($value.Exists -and $value.Kind -eq 'DWord' -and $value.Data -eq $desired) {
                 $report.ObservedChange = $true
+                if ($Automated -and -not $report.Restarted -and -not $process.HasExited) {
+                    if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, 1003)) {
+                        throw 'The first application did not accept Exit.'
+                    }
+                    if (-not $process.WaitForExit(4000)) { throw 'The first application did not exit.' }
+                }
             }
             if ($process.HasExited) {
                 if ($process.ExitCode -ne 0) { throw 'The application failed before restart.' }
@@ -155,6 +173,19 @@ try {
                 $report.Restarted = $true
                 $report.LoadedValueOnRestart = Read-Value $preferencePath 'Enabled'
                 Write-Output "Restarted as process $($process.Id). Expected Enabled=$desired; confirm the tray state."
+                if ($Automated) {
+                    if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, 1001)) {
+                        throw 'The restarted application did not accept Enabled.'
+                    }
+                    $roundTrip = Read-Value $preferencePath 'Enabled'
+                    if (-not $roundTrip.Exists -or $roundTrip.Data -ne [int]$initialEnabled) {
+                        throw 'The application did not restore its persisted Enabled state.'
+                    }
+                    $report.ApplicationRoundTrip = $true
+                    if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, 1003)) {
+                        throw 'The restarted application did not accept Exit.'
+                    }
+                }
             }
         } else {
             $value = Read-Value $startupPath 'Laqay'
@@ -164,6 +195,12 @@ try {
                 }
                 $report.ObservedChange = $true
                 $report.StartupCommand = $value.Data
+                if ($Automated -and -not $report.ApplicationRoundTrip) {
+                    if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, 1002)) {
+                        throw 'The application did not accept disabling startup.'
+                    }
+                    $report.ApplicationRoundTrip = $true
+                }
             } elseif ($report.ObservedChange) {
                 $report.StartupRemoved = $true
                 break
@@ -176,6 +213,7 @@ try {
         if (-not $report.Restarted -or -not $report.LoadedValueOnRestart.Exists -or
             $report.LoadedValueOnRestart.Data -ne $desired) { throw 'The persistence check was not completed.' }
     } elseif (-not $report.StartupRemoved) { throw 'The startup add/remove check was not completed.' }
+    if ($Automated -and -not $report.ApplicationRoundTrip) { throw 'The application round trip was not completed.' }
     $report.Passed = $true
 } catch {
     $report.Error = $_.Exception.Message
