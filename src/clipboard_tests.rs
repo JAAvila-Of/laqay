@@ -270,6 +270,7 @@ fn child_exercises_private_clipboard() {
         drop(open);
         let selected = read_image(sequence).unwrap().unwrap();
         assert!(!selected.is_png);
+        assert_eq!(selected.bytes, snapshot.bytes);
         let bmp = crate::image::dib_to_bmp(&selected.bytes).unwrap();
         let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap()) as usize;
         assert_eq!(&bmp[offset..offset + 3], &[21, 73, 181]);
@@ -280,6 +281,16 @@ fn child_exercises_private_clipboard() {
         let image = read_image(sequence).unwrap().unwrap();
         assert!(image.is_png);
         assert_eq!(image.bytes, png);
+
+        // An explicitly supplied DIB family still takes priority over a later
+        // bitmap representation with different pixels.
+        let different = crate::test_support::TestBitmap::new(-1, 32, &[255, 0, 0, 0]);
+        let sequence = window.replace_with_bitmap(&[(8, &bitmap)], Some(different));
+        let image = read_image(sequence).unwrap().unwrap();
+        assert!(!image.is_png);
+        let bmp = crate::image::dib_to_bmp(&image.bytes).unwrap();
+        let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap()) as usize;
+        assert_eq!(&bmp[offset..offset + 3], &[21, 73, 181]);
 
         let mut drop_files = vec![0u8; 20];
         drop_files[0..4].copy_from_slice(&20u32.to_le_bytes());

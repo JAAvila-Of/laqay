@@ -4,11 +4,11 @@ use crate::image::MAX_IMAGE_BYTES;
 use crate::{ClipboardFormats, ImageFormat};
 use windows::{
     Win32::{
-        Foundation::{E_INVALIDARG, HGLOBAL},
+        Foundation::{E_INVALIDARG, ERROR_SUCCESS, GetLastError, HGLOBAL, SetLastError},
         Graphics::Gdi::HBITMAP,
         System::{
             DataExchange::{
-                CloseClipboard, GetClipboardData, GetClipboardSequenceNumber,
+                CloseClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
                 IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
             },
             Memory::{GlobalLock, GlobalSize, GlobalUnlock},
@@ -88,7 +88,7 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
             bitmap: IsClipboardFormatAvailable(2).is_ok(),
             ..Default::default()
         };
-        let (format, is_png) = match available.preferred_image() {
+        let (mut format, is_png) = match available.preferred_image() {
             Some(ImageFormat::Png) => (png, true),
             Some(ImageFormat::DibV5) => (17, false),
             Some(ImageFormat::Dib) => (8, false),
@@ -110,11 +110,41 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
         {
             return Ok(None);
         }
+        if !is_png && available.bitmap && bitmap_precedes_dib(&_open)? {
+            format = 2;
+        }
         let image = copy_open_image(&_open, format, is_png)?;
         if GetClipboardSequenceNumber() != expected_sequence {
             return Ok(None);
         }
         Ok(Some(image))
+    }
+}
+
+fn bitmap_precedes_dib(_open: &Open) -> Result<bool> {
+    // SAFETY: Enumeration requires the caller's open clipboard guard. Windows
+    // enumerates a source before its synthesized conversions. Prefer that
+    // source family to avoid palette conversion when only HBITMAP was supplied.
+    unsafe {
+        let mut format = 0;
+        for _ in 0..256 {
+            SetLastError(ERROR_SUCCESS);
+            format = EnumClipboardFormats(format);
+            match format {
+                2 => return Ok(true),
+                8 | 17 => return Ok(false),
+                0 => {
+                    let error = GetLastError();
+                    return if error == ERROR_SUCCESS {
+                        Ok(false)
+                    } else {
+                        Err(Error::from_hresult(error.to_hresult()))
+                    };
+                }
+                _ => {}
+            }
+        }
+        Err(Error::from_hresult(E_INVALIDARG))
     }
 }
 

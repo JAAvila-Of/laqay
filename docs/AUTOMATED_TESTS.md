@@ -41,6 +41,8 @@ borrowed-handle ownership. It never obtains a screen DC. The isolated suite
 also transfers a genuine CF_BITMAP to its private clipboard, exercises its
 native copy path directly (Windows can synthesize higher-priority DIB formats),
 and verifies PNG/file priority and snapshot validity after clearing the source.
+It checks that bitmap sources bypass synthesized DIB conversion without changing
+colors, while an earlier DIB source keeps priority over a later bitmap.
 
 Creating a uniquely named station requires Windows station-creation permissions.
 An account without them will get a failing capability check before any clipboard

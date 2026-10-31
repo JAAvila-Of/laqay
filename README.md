@@ -232,7 +232,10 @@ at 128 MiB. Palettes, compressed DIB, unusual bit masks, and embedded DIB color
 profiles are currently rejected. A true-color CF_BITMAP (16/24/32-bit) fallback
 is copied into an owned DIB while the clipboard is open, then encoded after
 closing it. Its pixels are opaque because HBITMAP carries no declared alpha
-mask; PNG and supported DIBV5 retain priority and their declared alpha.
+mask. PNG retains priority. Within the native bitmap family, Windows' format
+enumeration identifies the source before synthesized conversions: a bitmap
+source is copied directly to avoid palette conversion; a DIB source retains
+DIBV5/DIB preference and its declared alpha.
 
 Before publishing the PNG it rechecks context and clipboard sequence. Those
 checks are not an atomic Windows transaction: context can still change between
