@@ -71,6 +71,46 @@ Actual preference persistence and login startup require separate normal-mode
 validation. Check icon disappearance and owned process exit after every block.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
+## Preparing real preference trials
+
+`scripts/Invoke-PreferencesProbe.ps1` prepares separate, consented normal-mode
+checks. Unlike `--trial`, these launch the real application with persistent
+preferences and no destination restriction. Do not paste during these checks.
+The runner observes only Laqay's Enabled and Run values, backs them up, closes
+its owned processes, restores both values, and verifies the restored state.
+An initially absent, newly created Laqay preference key is removed only if empty;
+the shared Run key is never deleted. Backup/report files belong in a private
+output directory. No login or restart of Windows is automated.
+
+Inspecting preferences and compiling the C# window-close helper do not launch
+Laqay or write registry preferences:
+
+```powershell
+powershell -NoProfile -File ./scripts/Invoke-PreferencesProbe.ps1 -InspectOnly
+powershell -NoProfile -File ./scripts/Invoke-PreferencesProbe.ps1 -PrepareOnly
+```
+
+Prepare the helper with the same PowerShell runtime as the live test. The helper
+cache is keyed by source hash and runtime. Compile it before acquiring any Rust
+runtime lease; the live script only loads the resulting assembly.
+
+After agreeing on a block of at most 30 seconds, run one scenario:
+
+```powershell
+powershell -NoProfile -File ./scripts/Invoke-PreferencesProbe.ps1 -Scenario Enabled -Seconds 30 -OutputDirectory <private-log-directory>
+```
+
+Toggle Enabled once and select Exit. The runner detects the saved DWORD,
+relaunches within the original deadline, and leaves time to confirm the persisted
+tray state. It then closes the application and restores the initial preferences.
+The registry/restart assertions do not replace the tester's visual confirmation.
+
+The separately agreed `-Scenario Startup` block requires an initially absent Run
+entry. Turn Start with Windows on, then off. The runner verifies the exact quoted
+executable and subsequent deletion, then closes the app and restores settings.
+Neither scenario proves actual execution at login. Both scenarios remain
+unvalidated until an authorized desktop run has completed.
+
 | ID | Scenario | Required result |
 | --- | --- | --- |
 | T01 | Region screenshot | PNG in active folder |
