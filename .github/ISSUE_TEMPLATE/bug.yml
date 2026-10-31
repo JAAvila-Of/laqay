@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a reproducible failure or unexpected behavior.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This report is public. Use synthetic data; do not attach real clipboard contents, private screenshots, secrets, personal paths, or unredacted logs.
+        Report vulnerabilities privately through [SECURITY.md](https://github.com/JAAvila-Of/laqay/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Laqay version or source commit
+      description: Release tag or commit used to build the executable. Do not run an unsupported version flag.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and build
+      placeholder: Windows 11, version and OS build from Settings > System > About
+    validations:
+      required: true
+  - type: dropdown
+    id: session
+    attributes:
+      label: Session type
+      options:
+        - Local console
+        - Windows Remote Desktop (RDP)
+        - Other remote access
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include clipboard format/source type, Explorer context, and whether Laqay was enabled. Use disposable data and sanitized folder names.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include any unexpected notices, sounds, files, or process left running.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics (optional)
+      description: Relevant error text only. No clipboard content or unredacted log files.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues.
+          required: true
+        - label: This report contains no private content or credentials.
+          required: true

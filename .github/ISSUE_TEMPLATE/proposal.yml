@@ -1,0 +1,39 @@
+name: Feature proposal
+description: Explain a problem and the behavior that would solve it.
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: This proposal is public. Use synthetic examples and exclude private clipboard contents, screenshots, paths, and secrets.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or missing capability
+      description: What are you trying to do, and where does the current behavior fall short?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Explain the user-visible result. Implementation details are optional.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround or alternatives
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Relevant tradeoffs
+      description: Consider native paste behavior, privacy, destination selection, and local/remote sessions.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues and read the current limitations.
+          required: true
+        - label: This proposal contains no private content or credentials.
+          required: true

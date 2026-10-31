@@ -1,0 +1,26 @@
+name: Usage question
+description: Ask about setup, behavior, or current limitations.
+labels: [question, triage]
+body:
+  - type: markdown
+    attributes:
+      value: This question is public. Do not include private screenshots, clipboard contents, paths, or secrets. Vulnerabilities belong in the private security channel.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Explain what you are trying to do and which documentation you checked.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Laqay tag or commit, Windows build, and local or remote session, if relevant.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and removed private content.
+          required: true
