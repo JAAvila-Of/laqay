@@ -363,21 +363,28 @@ mod tests {
         let directory = TestDirectory::new();
         let activity = crate::activity::Activity::new(true);
         let ticket = activity.ticket().unwrap();
-        let staged = std::sync::Barrier::new(2);
-        let resume = std::sync::Barrier::new(2);
+        let (staged_tx, staged_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let timeout = std::time::Duration::from_secs(5);
         let result = std::thread::scope(|scope| {
-            let writer = scope.spawn(|| {
+            let folder = &directory.0;
+            let gate = &activity;
+            let writer = scope.spawn(move || {
                 create_screenshot_checked(
-                    &directory.0,
+                    folder,
                     time(),
                     |file| {
                         file.write_all(b"complete staged data")?;
-                        staged.wait();
-                        resume.wait();
+                        staged_tx
+                            .send(())
+                            .map_err(|error| io::Error::other(error.to_string()))?;
+                        resume_rx.recv_timeout(timeout).map_err(|error| {
+                            io::Error::new(io::ErrorKind::TimedOut, error.to_string())
+                        })?;
                         Ok(())
                     },
                     || {
-                        if activity.valid(ticket) {
+                        if gate.valid(ticket) {
                             Ok(())
                         } else {
                             Err(io::Error::new(
@@ -388,10 +395,10 @@ mod tests {
                     },
                 )
             });
-            staged.wait();
+            staged_rx.recv_timeout(timeout).unwrap();
             activity.set_enabled(false);
             activity.set_enabled(true);
-            resume.wait();
+            resume_tx.send(()).unwrap();
             writer.join().unwrap()
         });
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
