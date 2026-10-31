@@ -38,6 +38,9 @@ application or a paste probe observes input and can create files. Agree on a
 short test window and disposable destination first; verify hook removal and
 process exit afterward. See the [integration matrix](docs/integration-tests.md).
 State exactly which scenarios were tested and which remain pending.
+The [automated validation guide](docs/AUTOMATED_TESTS.md) describes isolated
+registry tests and the native clipboard suite required in Windows CI. Regular
+local tests do not require clipboard access or station-creation privileges.
 
 Preserve ordinary file and text paste, editable-control exclusions, conservative
 folder selection, non-overwriting publication, and clipboard privacy. Do not

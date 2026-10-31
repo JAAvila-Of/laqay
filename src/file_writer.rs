@@ -357,4 +357,62 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
     }
+
+    #[test]
+    fn pause_and_resume_during_staging_cannot_revive_the_write() {
+        let directory = TestDirectory::new();
+        let activity = crate::activity::Activity::new(true);
+        let ticket = activity.ticket().unwrap();
+        let (staged_tx, staged_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let timeout = std::time::Duration::from_secs(5);
+        let result = std::thread::scope(|scope| {
+            let folder = &directory.0;
+            let gate = &activity;
+            let writer = scope.spawn(move || {
+                create_screenshot_checked(
+                    folder,
+                    time(),
+                    |file| {
+                        file.write_all(b"complete staged data")?;
+                        staged_tx
+                            .send(())
+                            .map_err(|error| io::Error::other(error.to_string()))?;
+                        resume_rx.recv_timeout(timeout).map_err(|error| {
+                            io::Error::new(io::ErrorKind::TimedOut, error.to_string())
+                        })?;
+                        Ok(())
+                    },
+                    || {
+                        if gate.valid(ticket) {
+                            Ok(())
+                        } else {
+                            Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Cancelled generation",
+                            ))
+                        }
+                    },
+                )
+            });
+            staged_rx.recv_timeout(timeout).unwrap();
+            activity.set_enabled(false);
+            activity.set_enabled(true);
+            resume_tx.send(()).unwrap();
+            writer.join().unwrap()
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_regular_file_destination_is_rejected_without_encoding_or_overwrite() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("original-file");
+        fs::write(&path, b"original").unwrap();
+        let result = create_screenshot(&path, time(), |_| panic!("must not encode"));
+        assert!(result.is_err());
+        assert_eq!(fs::read(path).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
 }

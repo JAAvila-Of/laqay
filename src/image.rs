@@ -322,6 +322,52 @@ mod tests {
     }
 
     #[test]
+    fn every_truncated_prefix_of_a_supported_image_is_rejected() {
+        let bitmap = dib(2);
+        for length in 0..bitmap.len() {
+            assert!(
+                dib_to_bmp(&bitmap[..length]).is_err(),
+                "DIB prefix {length}"
+            );
+        }
+        let png = to_png(&bitmap, false).unwrap();
+        for length in 0..png.len() {
+            assert!(to_png(&png[..length], true).is_err(), "PNG prefix {length}");
+        }
+    }
+
+    #[test]
+    fn malformed_png_chunk_lengths_and_end_checksums_are_rejected() {
+        let png = to_png(&dib(2), false).unwrap();
+        let mut excessive = png.clone();
+        excessive[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(to_png(&excessive, true).is_err());
+        let mut bad_end = png;
+        let end = bad_end.len();
+        bad_end[end - 4..].fill(0);
+        assert!(to_png(&bad_end, true).is_err());
+    }
+
+    #[test]
+    fn unsupported_bitmap_layouts_fail_before_native_decoding() {
+        for (offset, bytes) in [
+            (0, 41u32.to_le_bytes()),
+            (4, 0u32.to_le_bytes()),
+            (8, 0u32.to_le_bytes()),
+            (12, 0u32.to_le_bytes()),
+            (16, 1u32.to_le_bytes()),
+            (32, 1u32.to_le_bytes()),
+        ] {
+            let mut bitmap = dib(2);
+            bitmap[offset..offset + 4].copy_from_slice(&bytes);
+            assert!(
+                dib_to_bmp(&bitmap).is_err(),
+                "Invalid bitmap field {offset}"
+            );
+        }
+    }
+
+    #[test]
     fn handles_top_down_and_bottom_up_without_resizing() {
         for height in [-2, 2] {
             let encoded = to_png(&dib(height), false).unwrap();

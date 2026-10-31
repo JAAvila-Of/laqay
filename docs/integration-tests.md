@@ -34,10 +34,13 @@ the basic T28 exit path: the tester toggled Enabled off and on, confirmed the
 icon changed blue/gray/blue, and selected Exit. Start with Windows was unavailable
 as required in trial mode. Hook removal and process exit were verified, with
 no runtime errors or watchdog termination. No paste was attempted in that block.
-Actual startup preferences, Explorer restart recovery, shutdown with pending work,
+Execution at login, Explorer restart recovery, shutdown with pending work,
 and regression testing of earlier paste results remain pending.
-Unit tests cover generation cancellation and
-preference/command parsing; they do not exercise the real tray or registry.
+Automated tests cover generation cancellation and preference/command parsing,
+plus real registry persistence under an isolated test root. The all-features CI
+suite also tests a private native clipboard. They do not exercise the real tray
+or interactive Explorer. See [automated validation](AUTOMATED_TESTS.md) for scope,
+requirements, and the distinction from desktop integration results.
 
 A subsequent bounded trial of the integrated tray application passed the basic
 local T17/T33 image path: one Ctrl+V produced one valid 1140x705 RGBA PNG in the
@@ -67,11 +70,16 @@ startup or separate sessions. The runner can repeat this check with
 Use `Invoke-PasteProbe.ps1 -Tray` for a separately agreed, 30-second maximum
 trial restricted to one approved folder. Trial Enabled changes are temporary,
 Start with Windows is unavailable, and preferences are never read or written.
-Actual preference persistence and login startup require separate normal-mode
-validation. Check icon disappearance and owned process exit after every block.
+CI covers normal-mode persistence and startup registration with the actual app
+through native commands; executing it at login still needs separate validation.
+Check icon disappearance and owned process exit after every desktop block.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
 ## Preparing real preference trials
+
+For unattended validation, use the [automated suites](AUTOMATED_TESTS.md) first.
+The following optional trials specifically exercise the real tray and user
+preferences and still require an agreed desktop window.
 
 `scripts/Invoke-PreferencesProbe.ps1` prepares separate, consented normal-mode
 checks. Unlike `--trial`, these launch the real application with persistent
@@ -108,8 +116,9 @@ The registry/restart assertions do not replace the tester's visual confirmation.
 The separately agreed `-Scenario Startup` block requires an initially absent Run
 entry. Turn Start with Windows on, then off. The runner verifies the exact quoted
 executable and subsequent deletion, then closes the app and restores settings.
-Neither scenario proves actual execution at login. Both scenarios remain
-unvalidated until an authorized desktop run has completed.
+Neither scenario proves actual execution at login. Both application/controller
+scenarios are automated with `-Automated` in the isolated CI VM; visual menu
+checks and actual login behavior remain separate desktop validations.
 
 | ID | Scenario | Required result |
 | --- | --- | --- |

@@ -133,6 +133,21 @@ impl State {
         }
         Ok(())
     }
+
+    fn action_failed(&self, window: HWND) {
+        self.activity.set_enabled(false);
+        if let Ok(observer) = self.observer.try_borrow() {
+            if let Some(observer) = observer.as_ref() {
+                let _ = observer.refresh();
+            }
+        }
+        let _ = self.update_icon();
+        message(
+            window,
+            "Laqay could not complete this action. Clipboard handling has been disabled.",
+            MB_ICONWARNING,
+        );
+    }
 }
 
 unsafe extern "system" fn window_proc(
@@ -151,6 +166,17 @@ unsafe extern "system" fn window_proc(
         }
         let pointer = GetWindowLongPtrW(window, GWLP_USERDATA) as *const State;
         if let Some(state) = pointer.as_ref() {
+            // Route standard menu commands through the same actions as the
+            // notification menu. Control notifications and unknown IDs decline.
+            if event == WM_COMMAND && lparam.0 == 0 && wparam.0 >> 16 == 0 {
+                let command = wparam.0 as u32;
+                if [tray::ENABLED, tray::STARTUP, tray::EXIT].contains(&command) {
+                    if state.command(window, command).is_err() {
+                        state.action_failed(window);
+                    }
+                    return LRESULT(0);
+                }
+            }
             if event == tray::CALLBACK {
                 let activation = lparam.0 as u32 & 0xffff;
                 if [WM_CONTEXTMENU, NIN_SELECT, NIN_SELECT | NINF_KEY].contains(&activation) {
@@ -163,18 +189,7 @@ unsafe extern "system" fn window_proc(
                     )
                     .and_then(|command| state.command(window, command));
                     if result.is_err() {
-                        state.activity.set_enabled(false);
-                        if let Ok(observer) = state.observer.try_borrow() {
-                            if let Some(observer) = observer.as_ref() {
-                                let _ = observer.refresh();
-                            }
-                        }
-                        let _ = state.update_icon();
-                        message(
-                            window,
-                            "Laqay could not complete this action. Clipboard handling has been disabled.",
-                            MB_ICONWARNING,
-                        );
+                        state.action_failed(window);
                     }
                 }
                 return LRESULT(0);

@@ -29,6 +29,9 @@ mod settings;
 #[cfg(windows)]
 mod tray;
 
+#[cfg(all(test, windows))]
+mod test_support;
+
 #[cfg(windows)]
 mod probe_environment;
 

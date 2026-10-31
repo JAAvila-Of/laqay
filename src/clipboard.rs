@@ -20,6 +20,10 @@ pub struct ClipboardImage {
     pub is_png: bool,
 }
 
+#[cfg(all(test, feature = "isolated-clipboard-tests"))]
+#[path = "clipboard_tests.rs"]
+mod tests;
+
 struct Open;
 impl Drop for Open {
     fn drop(&mut self) {
