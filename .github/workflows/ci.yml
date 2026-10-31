@@ -12,18 +12,31 @@ jobs:
   windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked --release
-      - uses: actions/upload-artifact@v4
+      - name: Collect dependency notices
+        shell: pwsh
+        run: |
+          cargo metadata --locked --format-version 1 | Set-Content -Encoding utf8 target/metadata.json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          python scripts/collect-cargo-licenses.py target/metadata.json target/THIRD_PARTY_LICENSES.txt
+          if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
+      - name: Package executable and licenses
+        shell: pwsh
+        run: ./scripts/New-Distribution.ps1 -BinaryPath target/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: laqay-windows-x86_64
-          path: target/release/laqay.exe
+          path: |
+            target/release/laqay.exe
+            target/laqay-windows-x86_64.zip
           if-no-files-found: error

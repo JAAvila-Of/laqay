@@ -267,4 +267,18 @@ validation; see [the test matrix](docs/integration-tests.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE), [third-party notices](THIRD_PARTY_NOTICES.md), and
+[project identity](TRADEMARKS.md). Release archives carry the executable and
+license texts; an Actions artifact remains a development build.
+
+## Community
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Use the
+[issue forms](https://github.com/JAAvila-Of/laqay/issues/new/choose) for bugs,
+questions, and proposals. Do not publish private clipboard contents or unredacted
+diagnostics. Report vulnerabilities through the private channel in
+[SECURITY.md](SECURITY.md).
+
+[Governance](GOVERNANCE.md), [conduct](CODE_OF_CONDUCT.md),
+[support](SUPPORT.md), and the [release procedure](docs/RELEASING.md) describe
+how the project is maintained.

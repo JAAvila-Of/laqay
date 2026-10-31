@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/JAAvila-Of/laqay/security/advisories/new
+    about: Security reports must not disclose exploit details or private data in public issues.
+  - name: Current behavior and validation limits
+    url: https://github.com/JAAvila-Of/laqay/blob/main/README.md
+    about: Read the current status before reporting a planned or unsupported feature.

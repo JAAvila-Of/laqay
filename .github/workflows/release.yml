@@ -19,11 +19,12 @@ jobs:
   validate:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: clippy, rustfmt
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
@@ -31,7 +32,7 @@ jobs:
 
   release:
     if: github.ref == 'refs/heads/main' && inputs.action == 'publish'
-    needs: validate
+    needs: [validate, release-dependencies]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,11 +41,13 @@ jobs:
       releases: ${{ steps.release.outputs.releases }}
       created: ${{ steps.release.outputs.releases_created }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c
         id: release
         with:
@@ -55,7 +58,7 @@ jobs:
 
   release-pr:
     if: github.ref == 'refs/heads/main' && inputs.action == 'prepare'
-    needs: validate
+    needs: [validate, release-dependencies]
     runs-on: ubuntu-latest
     concurrency:
       group: release-pr-${{ github.ref }}
@@ -64,17 +67,29 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c
         with:
           command: release-pr
           version: '0.4.2'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          arguments: --all-features --locked
 
   assets:
     needs: release
@@ -86,12 +101,24 @@ jobs:
       matrix:
         release: ${{ fromJSON(needs.release.outputs.releases) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ matrix.release.tag }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: Collect dependency notices
+        shell: pwsh
+        run: |
+          cargo metadata --locked --format-version 1 | Set-Content -Encoding utf8 target/metadata.json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          python scripts/collect-cargo-licenses.py target/metadata.json target/THIRD_PARTY_LICENSES.txt
+          if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
+      - name: Package executable and licenses
+        shell: pwsh
+        run: ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
       - name: Upload executable and checksum
         shell: pwsh
         env:
@@ -99,6 +126,9 @@ jobs:
           RELEASE_TAG: ${{ matrix.release.tag }}
         run: |
           $binary = 'target/x86_64-pc-windows-msvc/release/laqay.exe'
-          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
-          "$digest  laqay.exe" | Set-Content -Encoding ascii SHA256SUMS.txt
-          gh release upload $env:RELEASE_TAG $binary SHA256SUMS.txt
+          $archive = 'target/laqay-windows-x86_64.zip'
+          @($binary, $archive) | ForEach-Object {
+            $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
+            "$digest  $(Split-Path -Leaf $_)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          gh release upload $env:RELEASE_TAG $binary $archive SHA256SUMS.txt
