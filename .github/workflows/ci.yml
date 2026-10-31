@@ -21,6 +21,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
+      - name: Check disposable desktop lab preparation without creating VMs
+        shell: powershell
+        run: ./scripts/lab/Test-LabPreparation.ps1
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Run automated native and policy tests
         shell: pwsh
