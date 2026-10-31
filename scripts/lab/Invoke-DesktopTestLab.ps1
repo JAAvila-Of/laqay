@@ -109,6 +109,7 @@ if ($Action -eq 'Provision') {
     Copy-Item -LiteralPath $archive -Destination (Join-Path $seedRoot 'Laqay.zip')
     $bootstrap = @'
 $ErrorActionPreference='Stop'
+if((Get-CimInstance Win32_ComputerSystem).Model -ne 'Virtual Machine'){throw 'Guest initialization requires a virtual machine.'}
 $source=@(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=5' | Where-Object VolumeName -eq '@@LABEL@@')
 if($source.Count -ne 1){throw 'Expected one lab seed DVD.'}
 $sourcePath=$source[0].DeviceID+'\'
