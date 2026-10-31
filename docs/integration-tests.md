@@ -36,8 +36,11 @@ as required in trial mode. Hook removal and process exit were verified, with
 no runtime errors or watchdog termination. No paste was attempted in that block.
 Actual startup preferences, Explorer restart recovery, shutdown with pending work,
 and regression testing of earlier paste results remain pending.
-Unit tests cover generation cancellation and
-preference/command parsing; they do not exercise the real tray or registry.
+Automated tests cover generation cancellation and preference/command parsing,
+plus real registry persistence under an isolated test root. The all-features CI
+suite also tests a private native clipboard. They do not exercise the real tray
+or interactive Explorer. See [automated validation](AUTOMATED_TESTS.md) for scope,
+requirements, and the distinction from desktop integration results.
 
 A subsequent bounded trial of the integrated tray application passed the basic
 local T17/T33 image path: one Ctrl+V produced one valid 1140x705 RGBA PNG in the
@@ -72,6 +75,10 @@ validation. Check icon disappearance and owned process exit after every block.
 Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
 
 ## Preparing real preference trials
+
+For unattended validation, use the [automated suites](AUTOMATED_TESTS.md) first.
+The following optional trials specifically exercise the real tray and user
+preferences and still require an agreed desktop window.
 
 `scripts/Invoke-PreferencesProbe.ps1` prepares separate, consented normal-mode
 checks. Unlike `--trial`, these launch the real application with persistent

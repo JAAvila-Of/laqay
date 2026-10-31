@@ -357,4 +357,55 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
     }
+
+    #[test]
+    fn pause_and_resume_during_staging_cannot_revive_the_write() {
+        let directory = TestDirectory::new();
+        let activity = crate::activity::Activity::new(true);
+        let ticket = activity.ticket().unwrap();
+        let staged = std::sync::Barrier::new(2);
+        let resume = std::sync::Barrier::new(2);
+        let result = std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                create_screenshot_checked(
+                    &directory.0,
+                    time(),
+                    |file| {
+                        file.write_all(b"complete staged data")?;
+                        staged.wait();
+                        resume.wait();
+                        Ok(())
+                    },
+                    || {
+                        if activity.valid(ticket) {
+                            Ok(())
+                        } else {
+                            Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Cancelled generation",
+                            ))
+                        }
+                    },
+                )
+            });
+            staged.wait();
+            activity.set_enabled(false);
+            activity.set_enabled(true);
+            resume.wait();
+            writer.join().unwrap()
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_regular_file_destination_is_rejected_without_encoding_or_overwrite() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("original-file");
+        fs::write(&path, b"original").unwrap();
+        let result = create_screenshot(&path, time(), |_| panic!("must not encode"));
+        assert!(result.is_err());
+        assert_eq!(fs::read(path).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
 }

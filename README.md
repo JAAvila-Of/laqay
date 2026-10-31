@@ -14,6 +14,11 @@ A follow-up confirmed that disabling prevents image creation and re-enabling
 restores it without disturbances. A same-session duplicate-launch trial confirmed
 that the second copy exits without starting another observer. Normal-mode
 preferences and broader regressions still need desktop testing.
+
+Repeatable native/API validation is automated; see the
+[test suites and coverage limits](docs/AUTOMATED_TESTS.md). Windows CI runs the
+isolated clipboard suite and retains a validation log. These tests do not start
+the application or inspect a person's clipboard.
 Earlier bounded local-console and RDP trials saved clipboard screenshots as
 PNGs and preserved basic native paste behavior. Those results predate the
 shared-engine refactor and do not validate the new tray application.
