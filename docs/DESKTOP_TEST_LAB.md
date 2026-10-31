@@ -27,8 +27,9 @@ Obtain a Windows 11 Enterprise Evaluation ISO from the
 [Microsoft Evaluation Center](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise).
 Observe the evaluation terms and expiry; evaluation media is not a perpetual
 Windows license. Keep the source URL, exact image size, and calculated SHA-256 in
-private evidence. A locally calculated hash records identity, not independent
-verification against a publisher-provided digest. Do not substitute a Server,
+private evidence, and compare against [Microsoft's published digest](https://aka.ms/VerifyWindowsISO).
+A locally calculated hash alone records identity, not independent verification
+against a publisher-provided digest. Do not substitute a Server,
 LTSC, or different Windows version and report it as ordinary Windows 10/11.
 
 ## Plan and provision
@@ -68,7 +69,10 @@ DPAPI. The restricted runtime root and seed media remain private and must be
 deleted with the lab. First-logon initialization uses RemoteSigned for its guest
 PowerShell process; it does not change the host's execution policy, disable UAC,
 or disable security software. The guest automatically logs into its temporary
-lab account for up to three logons. No personal Microsoft account is copied.
+lab account with `LogonCount=3`. Windows documents an
+[off-by-one behavior](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-autologon-logoncount)
+for this setting; do not treat it as an exact logon limit. No personal Microsoft
+account is copied.
 
 Status returns `TestsExecuted: false`; `Guest.Ready` means guest initialization
 finished, not that the Explorer matrix passed. The executable is unpacked in
