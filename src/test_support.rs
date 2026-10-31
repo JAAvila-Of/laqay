@@ -7,6 +7,78 @@ use std::{
 };
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
+/// Owned synthetic pixels; no screen DC, window, or clipboard access.
+pub(crate) struct TestBitmap {
+    handle: Option<windows::Win32::Graphics::Gdi::HBITMAP>,
+    bits: *mut u8,
+    size: usize,
+}
+
+impl TestBitmap {
+    pub(crate) fn new(height: i32, depth: u16, bytes: &[u8]) -> Self {
+        use windows::Win32::Graphics::Gdi::*;
+        assert!([16, 24, 32].contains(&depth));
+        assert!(height != 0 && height.unsigned_abs() <= 16);
+        let stride = (depth as usize).div_ceil(32) * 4;
+        let size = stride * height.unsigned_abs() as usize;
+        assert_eq!(bytes.len(), size);
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: 1,
+                biHeight: height,
+                biPlanes: 1,
+                biBitCount: depth,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        // SAFETY: The small, checked fixture owns its DIB section and pixel
+        // storage. It is never selected into a DC or shared with another thread.
+        let handle =
+            unsafe { CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap() };
+        assert!(!bits.is_null());
+        // SAFETY: The successfully created section has exactly size writable bytes.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), bits.cast::<u8>(), size) };
+        Self {
+            handle: Some(handle),
+            bits: bits.cast(),
+            size,
+        }
+    }
+
+    pub(crate) fn handle(&self) -> windows::Win32::Graphics::Gdi::HBITMAP {
+        self.handle.unwrap()
+    }
+
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        // SAFETY: The section is still owned by this fixture.
+        unsafe { std::slice::from_raw_parts(self.bits, self.size).to_vec() }
+    }
+
+    #[cfg(feature = "isolated-clipboard-tests")]
+    pub(crate) fn into_raw(mut self) -> windows::Win32::Graphics::Gdi::HBITMAP {
+        self.handle.take().unwrap()
+    }
+}
+
+impl Drop for TestBitmap {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            assert!(
+                // SAFETY: Delete only the fixture's still-owned GDI object.
+                unsafe {
+                    windows::Win32::Graphics::Gdi::DeleteObject(
+                        windows::Win32::Graphics::Gdi::HGDIOBJ(handle.0),
+                    )
+                }
+                .as_bool()
+            );
+        }
+    }
+}
+
 pub(crate) fn child_test(name: &str, environment: &[(&str, &str)]) -> Output {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .creation_flags(CREATE_NO_WINDOW.0)

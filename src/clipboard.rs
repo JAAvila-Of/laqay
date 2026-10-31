@@ -1,12 +1,14 @@
 //! Read an image only for an explicit paste request; never change clipboard data.
 
 use crate::image::MAX_IMAGE_BYTES;
+use crate::{ClipboardFormats, ImageFormat};
 use windows::{
     Win32::{
-        Foundation::{E_INVALIDARG, HGLOBAL},
+        Foundation::{E_INVALIDARG, ERROR_SUCCESS, GetLastError, HGLOBAL, SetLastError},
+        Graphics::Gdi::HBITMAP,
         System::{
             DataExchange::{
-                CloseClipboard, GetClipboardData, GetClipboardSequenceNumber,
+                CloseClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
                 IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
             },
             Memory::{GlobalLock, GlobalSize, GlobalUnlock},
@@ -79,14 +81,19 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
         if png == 0 {
             return Err(Error::from_thread());
         }
-        let (format, is_png) = if IsClipboardFormatAvailable(png).is_ok() {
-            (png, true)
-        } else if IsClipboardFormatAvailable(17).is_ok() {
-            (17, false)
-        } else if IsClipboardFormatAvailable(8).is_ok() {
-            (8, false)
-        } else {
-            return Ok(None);
+        let available = ClipboardFormats {
+            png: IsClipboardFormatAvailable(png).is_ok(),
+            dib_v5: IsClipboardFormatAvailable(17).is_ok(),
+            dib: IsClipboardFormatAvailable(8).is_ok(),
+            bitmap: IsClipboardFormatAvailable(2).is_ok(),
+            ..Default::default()
+        };
+        let (mut format, is_png) = match available.preferred_image() {
+            Some(ImageFormat::Png) => (png, true),
+            Some(ImageFormat::DibV5) => (17, false),
+            Some(ImageFormat::Dib) => (8, false),
+            Some(ImageFormat::Bitmap) => (2, false),
+            None => return Ok(None),
         };
         // Decline ordinary file/text pastes before acquiring the clipboard lock.
         // After opening an image candidate, recheck sequence and file priority.
@@ -103,7 +110,56 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
         {
             return Ok(None);
         }
-        let handle = HGLOBAL(GetClipboardData(format)?.0);
+        if !is_png && available.bitmap && bitmap_precedes_dib(&_open)? {
+            format = 2;
+        }
+        let image = copy_open_image(&_open, format, is_png)?;
+        if GetClipboardSequenceNumber() != expected_sequence {
+            return Ok(None);
+        }
+        Ok(Some(image))
+    }
+}
+
+fn bitmap_precedes_dib(_open: &Open) -> Result<bool> {
+    // SAFETY: Enumeration requires the caller's open clipboard guard. Windows
+    // enumerates a source before its synthesized conversions. Prefer that
+    // source family to avoid palette conversion when only HBITMAP was supplied.
+    unsafe {
+        let mut format = 0;
+        for _ in 0..256 {
+            SetLastError(ERROR_SUCCESS);
+            format = EnumClipboardFormats(format);
+            match format {
+                2 => return Ok(true),
+                8 | 17 => return Ok(false),
+                0 => {
+                    let error = GetLastError();
+                    return if error == ERROR_SUCCESS {
+                        Ok(false)
+                    } else {
+                        Err(Error::from_hresult(error.to_hresult()))
+                    };
+                }
+                _ => {}
+            }
+        }
+        Err(Error::from_hresult(E_INVALIDARG))
+    }
+}
+
+fn copy_open_image(_open: &Open, format: u32, is_png: bool) -> Result<ClipboardImage> {
+    // SAFETY: The guard keeps this thread's clipboard open until the owned copy
+    // is complete. CF_BITMAP is a borrowed GDI object, never an HGLOBAL.
+    unsafe {
+        let raw = GetClipboardData(format)?;
+        if format == 2 {
+            return Ok(ClipboardImage {
+                bytes: crate::image::bitmap_to_dib(HBITMAP(raw.0))?,
+                is_png: false,
+            });
+        }
+        let handle = HGLOBAL(raw.0);
         let size = GlobalSize(handle);
         if size == 0 || size > MAX_IMAGE_BYTES {
             return Err(Error::from_hresult(E_INVALIDARG));
@@ -114,9 +170,6 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
         }
         let _locked = Locked(handle);
         let bytes = std::slice::from_raw_parts(data.cast::<u8>(), size).to_vec();
-        if GetClipboardSequenceNumber() != expected_sequence {
-            return Ok(None);
-        }
-        Ok(Some(ClipboardImage { bytes, is_png }))
+        Ok(ClipboardImage { bytes, is_png })
     }
 }

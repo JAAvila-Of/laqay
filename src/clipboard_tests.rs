@@ -143,6 +143,14 @@ impl Window {
     }
 
     fn replace(&self, formats: &[(u32, &[u8])]) -> u32 {
+        self.replace_with_bitmap(formats, None)
+    }
+
+    fn replace_with_bitmap(
+        &self,
+        formats: &[(u32, &[u8])],
+        bitmap: Option<crate::test_support::TestBitmap>,
+    ) -> u32 {
         // SAFETY: Station::new has succeeded before this window exists. Only
         // this child's private clipboard receives these synthetic fixtures.
         unsafe {
@@ -165,6 +173,11 @@ impl Window {
                 drop(locked);
                 SetClipboardData(*format, Some(HANDLE(allocation.0.0))).unwrap();
                 std::mem::forget(allocation);
+            }
+            if let Some(bitmap) = bitmap {
+                SetClipboardData(2, Some(HANDLE(bitmap.handle().0))).unwrap();
+                // Ownership transfers only after the clipboard accepts it.
+                let _ = bitmap.into_raw();
             }
             drop(open);
             let sequence = GetClipboardSequenceNumber();
@@ -239,6 +252,46 @@ fn child_exercises_private_clipboard() {
         let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap()) as usize;
         assert_eq!(&bmp[offset..offset + 3], &[21, 73, 181]);
 
+        let native = || crate::test_support::TestBitmap::new(-1, 32, &[21, 73, 181, 0]);
+        let sequence = window.replace_with_bitmap(&[], Some(native()));
+        // Windows can synthesize DIB formats. Exercise the real HBITMAP copy
+        // directly as well as the public selection path, without a test override.
+        OpenClipboard(Some(window.0)).unwrap();
+        let open = Open;
+        let original = GetClipboardData(2).unwrap();
+        let snapshot = copy_open_image(&open, 2, false).unwrap();
+        assert!(!snapshot.is_png);
+        assert_eq!(&snapshot.bytes[40..44], &[21, 73, 181, 255]);
+        assert_eq!(GetClipboardData(2).unwrap(), original);
+        assert_eq!(
+            copy_open_image(&open, 2, false).unwrap().bytes,
+            snapshot.bytes
+        );
+        drop(open);
+        let selected = read_image(sequence).unwrap().unwrap();
+        assert!(!selected.is_png);
+        assert_eq!(selected.bytes, snapshot.bytes);
+        let bmp = crate::image::dib_to_bmp(&selected.bytes).unwrap();
+        let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap()) as usize;
+        assert_eq!(&bmp[offset..offset + 3], &[21, 73, 181]);
+        window.replace(&[]);
+        assert!(crate::image::to_png(&snapshot.bytes, false).is_ok());
+
+        let sequence = window.replace_with_bitmap(&[(png_format, &png)], Some(native()));
+        let image = read_image(sequence).unwrap().unwrap();
+        assert!(image.is_png);
+        assert_eq!(image.bytes, png);
+
+        // An explicitly supplied DIB family still takes priority over a later
+        // bitmap representation with different pixels.
+        let different = crate::test_support::TestBitmap::new(-1, 32, &[255, 0, 0, 0]);
+        let sequence = window.replace_with_bitmap(&[(8, &bitmap)], Some(different));
+        let image = read_image(sequence).unwrap().unwrap();
+        assert!(!image.is_png);
+        let bmp = crate::image::dib_to_bmp(&image.bytes).unwrap();
+        let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap()) as usize;
+        assert_eq!(&bmp[offset..offset + 3], &[21, 73, 181]);
+
         let mut drop_files = vec![0u8; 20];
         drop_files[0..4].copy_from_slice(&20u32.to_le_bytes());
         drop_files[16..20].copy_from_slice(&1u32.to_le_bytes());
@@ -246,6 +299,8 @@ fn child_exercises_private_clipboard() {
             drop_files.extend(unit.to_le_bytes());
         }
         let sequence = window.replace(&[(png_format, &png), (15, &drop_files)]);
+        assert!(read_image(sequence).unwrap().is_none());
+        let sequence = window.replace_with_bitmap(&[(15, &drop_files)], Some(native()));
         assert!(read_image(sequence).unwrap().is_none());
         let sequence = window.replace(&[
             (png_format, &png),

@@ -4,7 +4,10 @@ use std::ptr::{null, null_mut};
 use windows::{
     Win32::{
         Foundation::{E_FAIL, E_INVALIDARG, HGLOBAL},
-        Graphics::Imaging::*,
+        Graphics::{
+            Gdi::{BITMAP, GetObjectType, GetObjectW, HBITMAP, HGDIOBJ, HPALETTE, OBJ_BITMAP},
+            Imaging::*,
+        },
         System::Com::{
             CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
             CoUninitialize, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
@@ -157,6 +160,83 @@ impl Drop for Apartment {
     }
 }
 
+fn bitmap_layout(bitmap: &BITMAP) -> Result<(u32, u32, usize)> {
+    if bitmap.bmType != 0
+        || bitmap.bmPlanes != 1
+        || ![16, 24, 32].contains(&bitmap.bmBitsPixel)
+        || bitmap.bmWidth <= 0
+        || bitmap.bmHeight == i32::MIN
+    {
+        return Err(invalid());
+    }
+    let width = bitmap.bmWidth as u32;
+    let height = bitmap.bmHeight.unsigned_abs();
+    let size = checked_rgba_size(width as usize, height as usize)?;
+    if size
+        .checked_add(54)
+        .is_none_or(|total| total > MAX_IMAGE_BYTES)
+    {
+        return Err(invalid());
+    }
+    Ok((width, height, size))
+}
+
+/// Snapshot a borrowed true-color HBITMAP while its clipboard owner is locked.
+/// HBITMAP has no declared alpha mask, so the resulting DIB is opaque.
+pub(crate) fn bitmap_to_dib(bitmap: HBITMAP) -> Result<Vec<u8>> {
+    // SAFETY: The caller keeps the clipboard open for this entire snapshot.
+    // The borrowed GDI object is never selected, modified, or destroyed here.
+    unsafe {
+        let object = HGDIOBJ(bitmap.0);
+        let mut metadata = BITMAP::default();
+        if GetObjectType(object) != OBJ_BITMAP.0 as u32
+            || GetObjectW(
+                object,
+                size_of::<BITMAP>() as i32,
+                Some((&mut metadata as *mut BITMAP).cast()),
+            ) != size_of::<BITMAP>() as i32
+        {
+            return Err(invalid());
+        }
+        let (width, height, size) = bitmap_layout(&metadata)?;
+        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+        let _apartment = Apartment;
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+        let source =
+            factory.CreateBitmapFromHBITMAP(bitmap, HPALETTE::default(), WICBitmapIgnoreAlpha)?;
+        let (mut actual_width, mut actual_height) = (0, 0);
+        source.GetSize(&mut actual_width, &mut actual_height)?;
+        if (actual_width, actual_height) != (width, height) {
+            return Err(invalid());
+        }
+        let converter = factory.CreateFormatConverter()?;
+        converter.Initialize(
+            &source,
+            &GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone,
+            None::<&IWICPalette>,
+            0.0,
+            WICBitmapPaletteTypeCustom,
+        )?;
+        let mut dib = vec![0; 40 + size];
+        dib[0..4].copy_from_slice(&40u32.to_le_bytes());
+        dib[4..8].copy_from_slice(&(width as i32).to_le_bytes());
+        dib[8..12].copy_from_slice(&(-(height as i32)).to_le_bytes());
+        dib[12..14].copy_from_slice(&1u16.to_le_bytes());
+        dib[14..16].copy_from_slice(&32u16.to_le_bytes());
+        converter.CopyPixels(
+            null(),
+            width.checked_mul(4).ok_or_else(invalid)?,
+            &mut dib[40..],
+        )?;
+        for pixel in dib[40..].chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        Ok(dib)
+    }
+}
+
 /// Convert a PNG or supported DIB to PNG. Existing PNG bytes are kept verbatim
 /// after full pixel decoding validates the frame and its bounded dimensions.
 pub fn to_png(bytes: &[u8], is_png: bool) -> Result<Vec<u8>> {
@@ -253,6 +333,93 @@ pub fn to_png(bytes: &[u8], is_png: bool) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bitmap_snapshot_preserves_color_orientation_and_ownership() {
+        use crate::test_support::TestBitmap;
+        for height in [-2, 2] {
+            for depth in [16, 24, 32] {
+                let red = match depth {
+                    16 => [0, 0x7c, 0, 0],
+                    24 => [0, 0, 255, 0],
+                    _ => [0, 0, 255, 127],
+                };
+                let blue = match depth {
+                    16 => [0x1f, 0, 0, 0],
+                    _ => [255, 0, 0, 0],
+                };
+                let original = [red, blue].concat();
+                let bitmap = TestBitmap::new(height, depth, &original);
+                let dib = bitmap_to_dib(bitmap.handle()).unwrap();
+                assert_eq!(bitmap.bytes(), original);
+                // A second snapshot proves the borrowed handle remains valid.
+                assert_eq!(bitmap_to_dib(bitmap.handle()).unwrap(), dib);
+                drop(bitmap);
+                let decoded = pixels(&to_png(&dib, false).unwrap());
+                let red = [0, 0, 255, 255];
+                let blue = [255, 0, 0, 255];
+                let expected = if height < 0 { [red, blue] } else { [blue, red] };
+                assert_eq!(decoded, expected.concat());
+            }
+        }
+    }
+
+    #[test]
+    fn bitmap_metadata_is_bounded_before_copying() {
+        let valid = BITMAP {
+            bmWidth: 1,
+            bmHeight: 1,
+            bmPlanes: 1,
+            bmBitsPixel: 32,
+            ..Default::default()
+        };
+        assert_eq!(bitmap_layout(&valid).unwrap(), (1, 1, 4));
+        for metadata in [
+            BITMAP {
+                bmWidth: 0,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: 0,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: i32::MIN,
+                ..valid
+            },
+            BITMAP {
+                bmWidth: i32::MAX,
+                ..valid
+            },
+            BITMAP {
+                bmHeight: i32::MAX,
+                ..valid
+            },
+            BITMAP {
+                bmWidth: (MAX_IMAGE_BYTES / 4) as i32,
+                ..valid
+            },
+            BITMAP {
+                bmPlanes: 2,
+                ..valid
+            },
+            BITMAP {
+                bmBitsPixel: 8,
+                ..valid
+            },
+            BITMAP { bmType: 1, ..valid },
+        ] {
+            assert!(bitmap_layout(&metadata).is_err());
+        }
+        assert!(bitmap_to_dib(HBITMAP::default()).is_err());
+        // SAFETY: This stock brush is borrowed and is never modified or freed.
+        let brush = unsafe {
+            windows::Win32::Graphics::Gdi::GetStockObject(
+                windows::Win32::Graphics::Gdi::BLACK_BRUSH,
+            )
+        };
+        assert!(bitmap_to_dib(HBITMAP(brush.0)).is_err());
+    }
 
     fn dib(height: i32) -> Vec<u8> {
         let mut data = vec![0; 48];
