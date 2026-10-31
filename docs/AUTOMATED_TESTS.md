@@ -50,7 +50,8 @@ optional coverage in the all-features CI run.
 ## Coverage and limits
 
 The normal-mode application check uses `Invoke-PreferencesProbe.ps1 -Automated`
-for Enabled and Startup. That mode refuses to run outside GitHub Actions. It
+for Enabled and Startup. That mode requires a GitHub-hosted runner and refuses
+local or self-hosted execution. It
 sends standard WM_COMMAND messages to its owned Laqay window, using the same
 action handlers as the tray menu; it never clicks, types, or activates a window.
 Enabled is changed, the application exits and restarts, and another toggle must
@@ -75,7 +76,8 @@ through Windows login. The working computer's settings remain separate.
 The Windows CI artifact `laqay-validation-log` retains the test output, including
 on failure. Dependency/security and public-policy jobs remain required checks.
 
-These are component and native-API integration results. They do not prove real
+These are component, controller, and native-API integration results. They do not
+prove real
 Explorer focus/tab behavior, a physical keyboard gesture, RDP clipboard
 redirection, the tray's visual state, execution at login, Windows 10 desktop
 compatibility, writable UNC/OneDrive behavior, or real disk/share failure. Those

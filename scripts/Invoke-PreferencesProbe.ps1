@@ -78,8 +78,8 @@ if ($InspectOnly) {
     $before | ConvertTo-Json -Depth 5
     return
 }
-if ($Automated -and $env:GITHUB_ACTIONS -ne 'true') {
-    throw 'Automated normal-mode application checks require the isolated CI runner.'
+if ($Automated -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) {
+    throw 'Automated normal-mode application checks require a GitHub-hosted isolated runner.'
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { throw 'An output directory is required.' }
 if ($before[0].Exists -and ($before[0].Kind -ne 'DWord' -or $before[0].Data -notin @(0, 1))) {

@@ -12,8 +12,9 @@ enabled/disabled states and Exit cleanup. A subsequent trial of the integrated
 application saved a screenshot as a valid PNG without notices or sounds.
 A follow-up confirmed that disabling prevents image creation and re-enabling
 restores it without disturbances. A same-session duplicate-launch trial confirmed
-that the second copy exits without starting another observer. Normal-mode
-preferences and broader regressions still need desktop testing.
+that the second copy exits without starting another observer. CI also validates
+normal-mode preference round trips with the actual application in its isolated
+VM. Execution at login and broader Explorer regressions still need testing.
 
 Repeatable native/API validation is automated; see the
 [test suites and coverage limits](docs/AUTOMATED_TESTS.md). Windows CI runs the
