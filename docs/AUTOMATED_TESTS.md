@@ -35,6 +35,13 @@ noninteractive window station and desktop, verifies their isolation, and uses
 synthetic fixtures. No visible window, input hook, key simulation, or desktop
 activation is involved. The interactive clipboard is never a fallback.
 
+The regular suite creates small synthetic 16/24/32-bit DIB sections in memory
+and checks HBITMAP conversion, orientation, opaque alpha, metadata limits, and
+borrowed-handle ownership. It never obtains a screen DC. The isolated suite
+also transfers a genuine CF_BITMAP to its private clipboard, exercises its
+native copy path directly (Windows can synthesize higher-priority DIB formats),
+and verifies PNG/file priority and snapshot validity after clearing the source.
+
 Creating a uniquely named station requires Windows station-creation permissions.
 An account without them will get a failing capability check before any clipboard
 access; do not elevate a personal session just to run this suite. The mandatory
@@ -67,8 +74,8 @@ through Windows login. The working computer's settings remain separate.
 | Area | Automated evidence |
 | --- | --- |
 | Preferences | Defaults without creating keys, DWORD persistence across processes, Unicode/path quoting, startup add/remove, preserving other entries, malformed/empty/oversized values, error propagation; application-level round trips in the CI VM |
-| Clipboard | Empty/text rejection, PNG priority and preservation, native DIB retrieval, regular/virtual file priority, stale sequences, locked clipboard and recovery |
-| Images | Dimensions, channels, orientation, V5 alpha, malformed metadata/chunks, every truncated input prefix, allocation bounds, PNG padding removal |
+| Clipboard | Empty/text rejection, PNG priority and preservation, native DIB and HBITMAP retrieval, regular/virtual file priority, stale sequences, locked clipboard and recovery |
+| Images | Dimensions, channels, orientation, V5 alpha, opaque HBITMAP snapshots and ownership, malformed metadata/chunks, every truncated input prefix, allocation bounds, PNG padding removal |
 | Files | Collision preservation, concurrent writers, invalid destinations, failed encoding cleanup, cancellation during staging even after re-enabling |
 | Context and keys | Ambiguous/editable/virtual-context rejection, focus stability, modifier handling, key repeat, cancellation generations |
 | Public tooling | Conventional subjects, policy files/links, dependency license collection, missing-notice failures |
