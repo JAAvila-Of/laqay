@@ -19,6 +19,12 @@ public static class LaqayGuestDesktop {
     static readonly HashSet<IntPtr> windows = new HashSet<IntPtr>();
     static Process application;
     static IntPtr job;
+    static bool peerConnected;
+    const string PeerShare=@"\\10.77.166.11\LaqayLab";
+    [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+    struct NetResource { public uint scope,type,display,usage; public string local,remote,comment,provider; }
+    [DllImport("mpr.dll",CharSet=CharSet.Unicode)] static extern int WNetAddConnection2W(ref NetResource resource,IntPtr password,string user,uint flags);
+    [DllImport("mpr.dll",CharSet=CharSet.Unicode)] static extern int WNetCancelConnection2W(string name,uint flags,bool force);
     public static bool WasApplicationForced { get; private set; }
     public static int ApplicationExitCode { get; private set; }
     delegate bool EnumProc(IntPtr window, IntPtr parameter);
@@ -90,6 +96,25 @@ public static class LaqayGuestDesktop {
     static void Guard() {
         if(!armed || DateTime.UtcNow>=deadline || !InputDesktopAvailable())
             throw new InvalidOperationException("Guest desktop controls are not armed or have expired.");
+    }
+    public static void ConnectPeer(string user,System.Security.SecureString password) {
+        Guard();
+        if(peerConnected || !Regex.IsMatch(user,@"^LQW11-[A-Z0-9]{8}\\LaqayLab$") || password==null)
+            throw new InvalidOperationException("Unexpected peer credential or existing owned connection.");
+        var resource=new NetResource {type=1,remote=PeerShare};
+        IntPtr secret=Marshal.SecureStringToGlobalAllocUnicode(password);
+        try {
+            int result=WNetAddConnection2W(ref resource,secret,user,4);
+            if(result!=0) throw new System.ComponentModel.Win32Exception(result,"Temporary peer connection failed.");
+            peerConnected=true;
+        } finally {Marshal.ZeroFreeGlobalAllocUnicode(secret);}
+    }
+    public static void DisconnectPeer() {
+        // Cleanup is available after the input deadline and only for our connection.
+        if(!peerConnected) return;
+        int result=WNetCancelConnection2W(PeerShare,0,false);
+        if(result!=0 && result!=2250) throw new System.ComponentModel.Win32Exception(result,"Temporary peer disconnect failed.");
+        peerConnected=false;
     }
     static void Send(Input[] inputs) {
         Guard();
