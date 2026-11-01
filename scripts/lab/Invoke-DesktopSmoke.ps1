@@ -86,8 +86,9 @@ exit $LASTEXITCODE
     }while([DateTime]::UtcNow -lt $limit)
     if(-not $result.Report -or -not $result.Report.FinishedUtc){throw 'The guest smoke suite did not finish within its deadline.'}
     $guest=$result.Report
-    $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection')
+    $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     $names=@($guest.Cases | ForEach-Object Name)
+    if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
     $summary.GuestReport=$guest
     $summary.Passed=$true
@@ -110,4 +111,4 @@ exit $LASTEXITCODE
     $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'host-report.json') -Encoding UTF8
 }
 if(-not $summary.Passed){throw ('Guest smoke validation failed: '+$summary.Error+' '+($summary.CleanupErrors -join '; '))}
-Write-Output 'All nine guest Explorer smoke cases passed; the owned application exited and the guest task was removed.'
+Write-Output 'All thirteen guest Explorer smoke cases passed; the owned application exited and the guest task was removed.'

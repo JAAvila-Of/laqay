@@ -115,11 +115,14 @@ token, STA, and an unlocked Default input desktop before enabling controls.
 The helper does not operate the host clipboard or foreground window. Compile-only
 checks explicitly reject unarmed controls and invalid/unowned lab identities.
 
-Nine required cases exercise real Ctrl+V through guest SendInput and inspect
+Thirteen required cases exercise real Ctrl+V through guest SendInput and inspect
 observable results: exact 2x2 image colors/dimensions, preserving existing images,
 multiple-file paste with simultaneous bitmap data, text-plus-image clipboard
 exclusion in address/search/rename fields, disabled/re-enabled behavior, and
-active-tab selection in both directions within one Explorer window. Enabled uses
+active-tab selection in both directions within one Explorer window. Four further
+cases cover spaces and Unicode in destination paths, clipboard sequence and pixel
+preservation, A/B/A selection across distinct windows, and recovery from denied
+file creation. Enabled uses
 the normal application's owned menu command handler. Preferences are restored.
 The application runs with normal permissions in an owned KillOnJobClose process
 job. The suite has a five-minute input deadline, a seven-minute guest task limit,
@@ -129,7 +132,18 @@ The calling host operation must shut down the owned guest in its final cleanup.
 
 Successful transport, a started task, or a partial report cannot pass: the host
 requires every named case, clean application shutdown, restored preferences,
-no forced termination, no cleanup errors, and task result zero. These smoke
+restored fixture permissions, no forced termination, no cleanup errors, and task
+result zero. The denied-write case applies a non-inherited `CreateFiles` deny
+rule only to its newly created guest fixture folder for the current guest user.
+It verifies that file creation actually fails, checks that paste leaves no output
+or temporary files, and restores and compares the original access descriptor in
+`finally`. A subsequent paste into that same folder must produce a valid PNG.
+The clipboard case renders and validates the fixture before recording its
+[clipboard sequence](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber)
+so initial delayed rendering is not confused with a paste-time mutation.
+See the documented
+[file access rights](https://learn.microsoft.com/en-us/dotnet/api/system.security.accesscontrol.filesystemrights)
+for the fixture's permission boundary. These smoke
 cases do not cover audio, every notification, other applications, rapid tab or
 clipboard races, UNC failures, OneDrive, RDP, or actual Windows login startup.
 Record completed scenarios and OS builds without expanding their scope.

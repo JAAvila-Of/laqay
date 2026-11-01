@@ -29,6 +29,7 @@ public static class LaqayGuestDesktop {
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr window, int command);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr window,uint message,IntPtr wparam,IntPtr lparam);
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeoutW(IntPtr window,uint message,IntPtr wparam,IntPtr lparam,uint flags,uint timeout,out UIntPtr result);
@@ -163,6 +164,23 @@ public static class LaqayGuestDesktop {
         return bitmap;
     }
     public static void ImageClipboard() { Guard(); using(var bitmap=Fixture()) Clipboard.SetImage(bitmap); }
+    public static uint ClipboardSequence() {
+        Guard();
+        uint sequence=GetClipboardSequenceNumber();
+        if(sequence==0) throw new InvalidOperationException("Guest clipboard sequence is unavailable.");
+        return sequence;
+    }
+    public static bool ClipboardImageIsFixture() {
+        Guard();
+        using(var image=Clipboard.GetImage()) {
+            if(image==null || image.Width!=2 || image.Height!=2) return false;
+            using(var bitmap=new Bitmap(image)) using(var expected=Fixture()) {
+                for(int y=0;y<2;y++) for(int x=0;x<2;x++)
+                    if(bitmap.GetPixel(x,y).ToArgb()!=expected.GetPixel(x,y).ToArgb()) return false;
+            }
+        }
+        return true;
+    }
     public static void TextAndImageClipboard(string text) {
         Guard(); using(var bitmap=Fixture()) { var data=new DataObject(); data.SetData(DataFormats.UnicodeText,text); data.SetData(DataFormats.Bitmap,bitmap); Clipboard.SetDataObject(data,true); }
     }

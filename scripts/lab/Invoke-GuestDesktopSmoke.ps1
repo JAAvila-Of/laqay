@@ -18,6 +18,11 @@ if($PrepareOnly){
     $rejected=$false
     try{[LaqayGuestDesktop]::ImageClipboard()}catch{$rejected=$true}
     if(-not $rejected){throw 'Unarmed input controls were accepted.'}
+    foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()})){
+        $rejected=$false
+        try{& $operation}catch{$rejected=$true}
+        if(-not $rejected){throw 'Unarmed clipboard inspection was accepted.'}
+    }
     $rejected=$false
     try{[LaqayGuestDesktop]::Arm('invalid-id')}catch{$rejected=$true}
     if(-not $rejected){throw 'An invalid guest identity was accepted.'}
@@ -41,7 +46,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();CleanupErrors=@();PreferencesRestored=$false;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $shell=$null
 $applicationStarted=$false
 $preferencesTouched=$false
@@ -231,7 +236,73 @@ try{
         Assert-True (@(Get-ChildItem -LiteralPath $tabB -Filter '*.png').Count -eq 1 -and (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash -eq $bHash) 'Inactive tab received or lost output.'
         foreach($file in @(Get-ChildItem -LiteralPath $tabA,$tabB -Filter '*.png')){Check-Png $file.FullName}
     }
-    Assert-True ($report.Cases.Count -eq 9) 'Not all required smoke cases executed.'
+    Run-Case 'UnicodePathImagePaste' {
+        $path=New-CaseFolder ('spaces '+[char]0x00F1+[char]0x6D4B+' image folder')
+        $window=Open-Folder $path
+        Paste-Image $window $path 1
+        Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
+    }
+    Run-Case 'ClipboardPreservedAfterImagePaste' {
+        $path=New-CaseFolder 'clipboard-preservation'
+        $window=Open-Folder $path
+        [LaqayGuestDesktop]::ImageClipboard()
+        Assert-True ([LaqayGuestDesktop]::ClipboardImageIsFixture()) 'The initial guest clipboard fixture is incorrect.'
+        $sequence=[LaqayGuestDesktop]::ClipboardSequence()
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+        Wait-For { @(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq 1 } 'Clipboard preservation paste did not publish an image.'
+        Start-Sleep -Milliseconds 500
+        Assert-True ([LaqayGuestDesktop]::ClipboardSequence() -eq $sequence) 'Image paste changed the guest clipboard sequence.'
+        Assert-True ([LaqayGuestDesktop]::ClipboardImageIsFixture()) 'Image paste changed the guest clipboard pixels.'
+        Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
+    }
+    Run-Case 'ActiveWindowSelection' {
+        $pathA=New-CaseFolder 'window-a';$pathB=New-CaseFolder 'window-b'
+        $windowA=Open-Folder $pathA;$windowB=Open-Folder $pathB
+        Assert-True ($windowA.HWND -ne $windowB.HWND) 'Expected two distinct Explorer windows.'
+        Paste-Image $windowA $pathA 1
+        $original=(Get-ChildItem -LiteralPath $pathA -Filter '*.png')[0].FullName
+        $hash=(Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash
+        Assert-True (@(Get-ChildItem -LiteralPath $pathB -Filter '*.png').Count -eq 0) 'An inactive window received output.'
+        Paste-Image $windowB $pathB 1
+        $b=(Get-ChildItem -LiteralPath $pathB -Filter '*.png')[0].FullName
+        $bHash=(Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash
+        Assert-True (@(Get-ChildItem -LiteralPath $pathA -Filter '*.png').Count -eq 1) 'The previous window received output.'
+        Paste-Image $windowA $pathA 2
+        Assert-True ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -eq $hash) 'The original window image changed.'
+        Assert-True (@(Get-ChildItem -LiteralPath $pathB -Filter '*.png').Count -eq 1 -and (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash -eq $bHash) 'The inactive window image changed.'
+        foreach($file in @(Get-ChildItem -LiteralPath $pathA,$pathB -Filter '*.png')){Check-Png $file.FullName}
+    }
+    Run-Case 'DeniedWriteRecovery' {
+        $path=New-CaseFolder 'denied-write'
+        $window=Open-Folder $path
+        $originalAcl=Get-Acl -LiteralPath $path
+        $accessSection=[Security.AccessControl.AccessControlSections]::Access
+        $originalAccess=$originalAcl.GetSecurityDescriptorSddlForm($accessSection)
+        $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+        $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::CreateFiles,[Security.AccessControl.AccessControlType]::Deny)
+        $deniedAcl=Get-Acl -LiteralPath $path
+        $deniedAcl.AddAccessRule($rule)
+        $report.PermissionsRestored=$false
+        try{
+            Set-Acl -LiteralPath $path -AclObject $deniedAcl
+            $denied=$false
+            try{ $probe=[IO.File]::Open((Join-Path $path 'permission-probe.tmp'),[IO.FileMode]::CreateNew);$probe.Dispose() }catch [UnauthorizedAccessException]{$denied=$true}
+            Assert-True $denied 'The negative fixture did not actually deny file creation.'
+            [LaqayGuestDesktop]::ImageClipboard()
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+            Start-Sleep -Milliseconds 1500
+            Assert-True ([LaqayGuestDesktop]::ApplicationReady()) 'The application stopped after denied file creation.'
+            Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) 'Denied paste left output or temporary files.'
+        }finally{
+            Set-Acl -LiteralPath $path -AclObject $originalAcl
+            $report.PermissionsRestored=(Get-Acl -LiteralPath $path).GetSecurityDescriptorSddlForm($accessSection) -eq $originalAccess
+            Assert-True $report.PermissionsRestored 'The negative fixture permissions were not restored.'
+        }
+        Paste-Image $window $path 1
+        Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
+        Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
+    }
+    Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     if($applicationStarted){
