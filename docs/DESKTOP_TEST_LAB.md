@@ -336,6 +336,11 @@ required. Both unique tasks and the credential file are removed. Client input
 has the existing five-minute guest deadline; tasks are limited to seven minutes.
 The native control's interfaces and event DISPIDs are checked from its installed
 type library during preparation without constructing a control.
+Connection startup runs from the client's UI timer and reports each setup stage,
+connection state, and heartbeat. After a stalled or failed logon it may retain a
+diagnostic screenshot of Primary's disposable desktop in private output only;
+the same guest identity, role, and unlocked-desktop guards apply. No host desktop
+is captured. A diagnostic image is not evidence that a paste case passed.
 
 `Set-RdpLabTrust.ps1 -Action Cleanup` removes only trust added by this run and
 restores the exact original hosts bytes/hash and timestamp. Unexpected edits

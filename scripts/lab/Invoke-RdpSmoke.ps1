@@ -25,7 +25,7 @@ if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an RDP report.'}
 $guestRoot='C:\LaqayLab\Runs\'+$RunId
 $taskName='Laqay.Rdp.'+$RunId
 $sessions=@{};$credentials=@{};$registered=@{};$allocated=@{};$targetSessions=@{}
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@();
+$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@{};
     CredentialRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $expectedOperations=@('Paste','Image','Paste','Paste','Text','Paste')
 function Save-Report {$report | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $reportPath -Encoding UTF8}

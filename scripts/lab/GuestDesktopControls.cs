@@ -160,8 +160,9 @@ public static class LaqayGuestDesktop {
         readonly Guid eventsId=new Guid("336d5562-efa8-482e-8cb3-c5c0fc7a7db6");
         object client,settings;
         Action login; Action<int> disconnected,fatal;
-        bool loggedOn,closing,disconnectedClean; int sequence;
-        DateTime closeDeadline;
+        bool loggedOn,closing,disconnectedClean,connectAttempted,diagnosticCaptured; int sequence;
+        readonly DateTime started=DateTime.UtcNow;
+        DateTime closeDeadline,lastStatus;
         static object Get(object target,string name) {return target.GetType().InvokeMember(name,BindingFlags.GetProperty,null,target,null);}
         static void Set(object target,string name,object value) {target.GetType().InvokeMember(name,BindingFlags.SetProperty,null,target,new[] {value});}
         static void Call(object target,string name) {target.GetType().InvokeMember(name,BindingFlags.InvokeMethod,null,target,null);}
@@ -171,7 +172,7 @@ public static class LaqayGuestDesktop {
             report["LabId"]=labId;report["RunId"]=runId;report["LoggedOn"]=false;report["Passed"]=false;
             report["Error"]=null;report["AckSequence"]=0;report["Operations"]=operations;report["Disconnected"]=false;
             report["AuthenticationLevel"]=1;report["CredSsp"]=true;report["ClipboardRedirection"]=true;
-            report["SessionId"]=Process.GetCurrentProcess().SessionId;report["StartedUtc"]=DateTime.UtcNow.ToString("o");report["FinishedUtc"]=null;
+            report["SessionId"]=Process.GetCurrentProcess().SessionId;report["StartedUtc"]=DateTime.UtcNow.ToString("o");report["FinishedUtc"]=null;report["Stage"]="Created";
         }
         void Save() {
             string temporary=Path.Combine(root,"client-report.tmp");
@@ -179,7 +180,24 @@ public static class LaqayGuestDesktop {
             string destination=Path.Combine(root,"client-report.json");
             if(File.Exists(destination)) File.Replace(temporary,destination,null); else File.Move(temporary,destination);
         }
-        void Fail(Exception error) {error=error.GetBaseException();report["Error"]=error.GetType().Name+": "+error.Message;report["ErrorHResult"]=error.HResult;form.Close();}
+        void Stage(string stage) {report["Stage"]=stage;Save();}
+        void CaptureDiagnostic() {
+            if(diagnosticCaptured) return;
+            diagnosticCaptured=true;
+            try {
+                RequireRole("Primary");
+                var bounds=Screen.FromControl(form).Bounds;
+                using(var bitmap=new Bitmap(bounds.Width,bounds.Height)) using(var graphics=Graphics.FromImage(bitmap)) {
+                    graphics.CopyFromScreen(bounds.Location,Point.Empty,bounds.Size);
+                    bitmap.Save(Path.Combine(root,"client-desktop.png"),System.Drawing.Imaging.ImageFormat.Png);
+                }
+                report["DiagnosticImage"]="client-desktop.png";
+            } catch(Exception error) {report["DiagnosticError"]=error.GetBaseException().Message;}
+        }
+        void Fail(Exception error) {
+            error=error.GetBaseException();report["Error"]=error.GetType().Name+": "+error.Message;report["ErrorHResult"]=error.HResult;
+            CaptureDiagnostic();Stage("Failed");form.Close();
+        }
         void FocusClient() {
             RequireRole("Primary");
             ShowWindowAsync(form.Handle,3);
@@ -190,8 +208,17 @@ public static class LaqayGuestDesktop {
         void Tick() {
             try {
                 RequireRole("Primary");
+                if(!connectAttempted) {Connect();return;}
+                if(DateTime.UtcNow-lastStatus>=TimeSpan.FromSeconds(1)) {
+                    if(client!=null) report["ConnectedState"]=Convert.ToInt32(Get(client,"Connected"));
+                    report["HeartbeatUtc"]=DateTime.UtcNow.ToString("o");lastStatus=DateTime.UtcNow;Save();
+                }
                 if(closing) {if(disconnectedClean) form.Close();else if(DateTime.UtcNow>=closeDeadline) throw new TimeoutException("RDP disconnect did not complete.");return;}
-                if(!loggedOn) return;
+                if(!loggedOn) {
+                    if(DateTime.UtcNow-started>=TimeSpan.FromSeconds(30)) {CaptureDiagnostic();Save();}
+                    if(DateTime.UtcNow-started>=TimeSpan.FromSeconds(75)) throw new TimeoutException("The native RDP client did not complete logon within seventy-five seconds.");
+                    return;
+                }
                 string path=Path.Combine(root,String.Format("command-{0:0000}.json",sequence+1));
                 if(!File.Exists(path)) return;
                 var command=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
@@ -199,7 +226,7 @@ public static class LaqayGuestDesktop {
                     throw new InvalidOperationException("Unexpected RDP command identity.");
                 string operation=(string)command["Operation"];
                 if(operation=="Close") {
-                    closing=true;closeDeadline=DateTime.UtcNow.AddSeconds(10);Call(client,"Disconnect");
+                    closing=true;closeDeadline=DateTime.UtcNow.AddSeconds(10);Stage("Disconnecting");Call(client,"Disconnect");
                 } else {
                     FocusClient();
                     if(operation=="Image") {using(var bitmap=RedirectedFixture()) Clipboard.SetImage(bitmap);}
@@ -214,7 +241,8 @@ public static class LaqayGuestDesktop {
         }
         void Connect() {
             try {
-                RequireRole("Primary");client=host.Client;
+                connectAttempted=true;Stage("InitializingControl");RequireRole("Primary");client=host.Client;
+                Stage("ConfiguringConnection");
                 Set(client,"Server",peer);Set(client,"UserName","LaqayLab");Set(client,"Domain",peer);
                 Set(client,"DesktopWidth",1024);Set(client,"DesktopHeight",768);Set(client,"ColorDepth",32);
                 settings=Get(client,"AdvancedSettings8");
@@ -223,24 +251,25 @@ public static class LaqayGuestDesktop {
                 Set(settings,"AudioRedirectionMode",2);Set(settings,"AudioCaptureRedirectionMode",false);Set(settings,"EnableAutoReconnect",false);
                 if(Convert.ToInt32(Get(settings,"AuthenticationLevel"))!=1 || !Convert.ToBoolean(Get(settings,"EnableCredSspSupport")) || !Convert.ToBoolean(Get(settings,"RedirectClipboard")))
                     throw new InvalidOperationException("RDP authentication or clipboard settings did not apply.");
-                login=delegate {loggedOn=true;report["LoggedOn"]=true;Save();};
-                disconnected=delegate(int reason) {disconnectedClean=closing;report["Disconnected"]=true;report["DisconnectReason"]=reason;if(!closing) report["Error"]="Unexpected RDP disconnect: "+reason;Save();if(!closing) form.Close();};
+                login=delegate {loggedOn=true;report["LoggedOn"]=true;Stage("LoggedOn");};
+                disconnected=delegate(int reason) {disconnectedClean=closing;report["Disconnected"]=true;report["DisconnectReason"]=reason;if(!closing) {report["Error"]="Unexpected RDP disconnect: "+reason;CaptureDiagnostic();}Stage("Disconnected");if(!closing) form.Close();};
                 fatal=delegate(int code) {Fail(new InvalidOperationException("RDP fatal error: "+code));};
                 ComEventsHelper.Combine(client,eventsId,3,login);ComEventsHelper.Combine(client,eventsId,4,disconnected);ComEventsHelper.Combine(client,eventsId,10,fatal);
                 IntPtr clear=Marshal.SecureStringToGlobalAllocUnicode(password);
                 try {Set(settings,"ClearTextPassword",Marshal.PtrToStringUni(clear));} finally {Marshal.ZeroFreeGlobalAllocUnicode(clear);}
-                FocusClient();Call(client,"Connect");timer.Start();Save();
+                Stage("PreparingClientFocus");FocusClient();Stage("Connecting");Call(client,"Connect");Stage(loggedOn?"LoggedOn":"WaitingForLogon");
             } catch(Exception error) {Fail(error);}
         }
         public void Run() {
             form.Text="Laqay isolated RDP validation";form.WindowState=FormWindowState.Maximized;
             host.Dock=DockStyle.Fill;
             ((System.ComponentModel.ISupportInitialize)host).BeginInit();form.Controls.Add(host);((System.ComponentModel.ISupportInitialize)host).EndInit();
-            timer.Interval=200;timer.Tick+=delegate {Tick();};form.Shown+=delegate {Connect();};
-            Save();
+            // Connect from the UI message loop, independently of the form's Shown event.
+            timer.Interval=200;timer.Tick+=delegate {Tick();};timer.Start();Stage("MessageLoopReady");
             try {Application.Run(form);} finally {
                 timer.Stop();
                 report["Passed"]=loggedOn && closing && disconnectedClean && report["Error"]==null;
+                report["Stage"]=(bool)report["Passed"]?"Closed":"Failed";
                 report["FinishedUtc"]=DateTime.UtcNow.ToString("o");Save();
             }
             if(!(bool)report["Passed"]) throw new InvalidOperationException("The isolated RDP client failed. See its private report.");
