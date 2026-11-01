@@ -5,7 +5,8 @@ param(
     [ValidateSet('Primary','Peer')][string]$Role = 'Primary',
     [string]$WindowsIso,
     [string]$IsoSha256,
-    [string]$ApplicationArchive
+    [string]$ApplicationArchive,
+    [ValidateSet(1,2)][int]$MaximumRunningGuests=1
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -49,6 +50,7 @@ $plan = [ordered]@{
     HostMemoryReserveBytes=3GB; HostDiskReserveBytes=40GB; Network='Private'
     SwitchName=$switchName; HostDesktopControl=$false; HostReboot=$false
     Internet=$false; WindowsVersion='Windows 11 Enterprise Evaluation'; Role=$Role
+    MaximumRunningGuests=$MaximumRunningGuests;MinimumFreeMemoryForFullCapacityBytes=(3GB+4GB*$MaximumRunningGuests)
 }
 if ($Action -eq 'Plan') { $plan | ConvertTo-Json -Depth 5; return }
 $manifest = $null
@@ -191,10 +193,31 @@ if ($entry.Count -ne 1) { throw 'Expected exactly one owned guest for this role.
 $vm = Get-OwnedVM $entry[0]
 if (-not $vm) { throw 'The owned guest no longer exists.' }
 if ($Action -eq 'Start') {
-    if (@(Get-VM | Where-Object { $_.Notes -eq $owner -and $_.State -ne 'Off' }).Count) { throw 'Start one lab guest at a time until the two-guest memory budget is reviewed.' }
+    $running=@(Get-VM | Where-Object { $_.Notes -eq $owner -and $_.State -ne 'Off' })
+    if(@($running | Where-Object { $_.Id.ToString() -notin @($manifest.VMs.Id) }).Count){throw 'An unowned guest is using the lab ownership label.'}
+    if($vm.State -ne 'Off'){throw 'The requested owned guest must be off before starting.'}
+    if($MaximumRunningGuests -eq 2){
+        $roles=@($manifest.VMs.Role | Sort-Object)
+        if($roles.Count -ne 2 -or $roles[0] -ne 'Peer' -or $roles[1] -ne 'Primary' -or @($manifest.VMs.Id | Select-Object -Unique).Count -ne 2){throw 'Paired starts require exactly the owned Primary and Peer guests.'}
+    }
+    $switch=Get-VMSwitch -Id ([guid]$manifest.SwitchId)
+    if($switch.Name -ne $switchName -or $switch.SwitchType -ne 'Private' -or $switch.Notes -ne $owner){throw 'The owned lab switch is no longer private.'}
+    $foreign=@(Get-VM | Where-Object { $_.Id.ToString() -notin @($manifest.VMs.Id) } | Get-VMNetworkAdapter | Where-Object SwitchId -eq $switch.Id)
+    if($foreign.Count){throw 'An unowned guest is attached to the lab switch.'}
+    $checked=if($MaximumRunningGuests -eq 2){@($manifest.VMs)}else{@($entry[0])}
+    foreach($configuration in $checked){
+        $candidate=Get-OwnedVM $configuration
+        if(-not $candidate){throw 'An owned lab guest is missing.'}
+        $memory=Get-VMMemory -VM $candidate
+        if($memory.DynamicMemoryEnabled -or $memory.Startup -ne 4GB -or (Get-VMProcessor -VM $candidate).Count -ne 2){throw 'Lab guests must retain fixed 4 GiB RAM and 2 CPUs.'}
+        $adapters=@(Get-VMNetworkAdapter -VM $candidate)
+        if($adapters.Count -ne 1 -or $adapters[0].SwitchId -ne $switch.Id){throw 'Unexpected lab guest network attachment.'}
+        $ownedDrives=@(Get-VMHardDiskDrive -VM $candidate)
+        if($ownedDrives.Count -ne 1 -or $ownedDrives[0].Path -ne (Assert-OwnedPath $configuration.DiskPath)){throw 'Unexpected owned lab disk attachment.'}
+    }
     $free = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory * 1KB
-    if ($free -lt 7GB) { throw 'Starting this guest would leave less than 3 GiB of current host memory headroom.' }
-    if ((Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($root).Substring(0,1))).SizeRemaining -lt 40GB) { throw 'Insufficient host disk headroom.' }
+    $diskFree=(Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($root).Substring(0,1))).SizeRemaining
+    & (Join-Path $PSScriptRoot 'Get-LabStartBudget.ps1') -FreeMemoryBytes $free -FreeDiskBytes $diskFree -RunningGuestCount $running.Count -MaximumRunningGuests $MaximumRunningGuests | Out-Null
     $drives = @(Get-VMHardDiskDrive -VM $vm)
     if ($drives.Count -ne 1 -or $drives[0].Path -ne (Assert-OwnedPath $entry[0].DiskPath)) { throw 'Unexpected guest disk layout; do not boot unattended setup.' }
     $firstInstall = -not $entry[0].InstallStarted

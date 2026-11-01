@@ -15,6 +15,19 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $root)) 'Planning created a runtime directory.'
     Assert-True ($plan.CpuCount -eq 2 -and $plan.MemoryBytes -eq 4GB -and $plan.Network -eq 'Private') 'Unexpected resource/isolation plan.'
     Assert-True (-not $plan.HostDesktopControl -and -not $plan.HostReboot -and -not $plan.Internet) 'Planning permits host session changes.'
+    Assert-True ($plan.MaximumRunningGuests -eq 1 -and $plan.MinimumFreeMemoryForFullCapacityBytes -eq 7GB) 'Default lab concurrency changed.'
+    $pair=& $entry -Action Plan -LabId $labId -MaximumRunningGuests 2 | ConvertFrom-Json
+    Assert-True ($pair.MaximumRunningGuests -eq 2 -and $pair.MinimumFreeMemoryForFullCapacityBytes -eq 11GB) 'Unexpected pair capacity plan.'
+    $budget=Join-Path $PSScriptRoot 'Get-LabStartBudget.ps1'
+    foreach($case in @(@{Free=7GB;Running=0;Max=1},@{Free=11GB;Running=0;Max=2},@{Free=7GB;Running=1;Max=2})){
+        $admission=& $budget -FreeMemoryBytes $case.Free -FreeDiskBytes 40GB -RunningGuestCount $case.Running -MaximumRunningGuests $case.Max
+        Assert-True ($admission.Allowed -and $admission.HostMemoryReserveBytes -eq 3GB) 'A valid exact-boundary start was rejected.'
+    }
+    foreach($case in @(@{Free=7GB-1;Disk=40GB;Running=0;Max=1},@{Free=11GB-1;Disk=40GB;Running=0;Max=2},@{Free=7GB-1;Disk=40GB;Running=1;Max=2},@{Free=20GB;Disk=40GB;Running=1;Max=1},@{Free=20GB;Disk=40GB;Running=2;Max=2},@{Free=20GB;Disk=40GB-1;Running=0;Max=2})){
+        $rejected=$false
+        try{& $budget -FreeMemoryBytes $case.Free -FreeDiskBytes $case.Disk -RunningGuestCount $case.Running -MaximumRunningGuests $case.Max | Out-Null}catch{$rejected=$true}
+        Assert-True $rejected 'A reserve or concurrency violation was accepted.'
+    }
     $rejected = $false
     try { & $entry -Action Remove -LabId '../outside' } catch { $rejected = $true }
     Assert-True $rejected 'A traversal lab ID was accepted.'
