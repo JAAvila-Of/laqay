@@ -217,6 +217,16 @@ directory, in addition to its existing SMB share permission, and configures the
 guest Remote Desktop service for automatic startup. It does not change SMB signing, guest authentication,
 NLA, or host security settings. Each guest has its own generated credential.
 
+An unidentified guest network can use the Public profile after a reboot. The
+lab's two inbound rules therefore apply across guest profiles, while requiring
+the single lab interface, the exact role IP (10.77.166.10 or 10.77.166.11), and
+source 10.77.166.0/24. No machine-wide network category policy is changed.
+`Set-GuestLabFirewall.ps1` can create or migrate only those owned rules from its
+fixed `C:\LaqayLab` location after checking the marker, virtual machine, OS,
+administrator token, sole adapter, expected address, and absence of a default
+IPv4 route. Unexpected existing rules are refused. New seeds include this helper;
+existing guests need it copied and invoked through their guarded admin session.
+
 With both owned guests already running, `Test-PrivateLabNetwork.ps1` checks their
 markers, addresses, absence of an IPv4 default route, and private attachments.
 It probes Primary-to-Peer TCP 445/3389 and Peer-to-Primary TCP 445, then transfers

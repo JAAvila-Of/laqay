@@ -15,6 +15,9 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $root)) 'Planning created a runtime directory.'
     Assert-True ($plan.CpuCount -eq 2 -and $plan.MemoryBytes -eq 4GB -and $plan.Network -eq 'Private') 'Unexpected resource/isolation plan.'
     Assert-True (-not $plan.HostDesktopControl -and -not $plan.HostReboot -and -not $plan.Internet) 'Planning permits host session changes.'
+    $rejected=$false
+    try{& (Join-Path $PSScriptRoot 'Set-GuestLabFirewall.ps1') -LabId $labId -Role Primary | Out-Null}catch{$rejected=$true}
+    Assert-True $rejected 'Guest firewall configuration was accepted outside its fixed owned guest directory.'
     Assert-True ($plan.MaximumRunningGuests -eq 1 -and $plan.MinimumFreeMemoryForFullCapacityBytes -eq 7GB) 'Default lab concurrency changed.'
     $pair=& $entry -Action Plan -LabId $labId -MaximumRunningGuests 2 | ConvertFrom-Json
     Assert-True ($pair.MaximumRunningGuests -eq 2 -and $pair.MinimumFreeMemoryForFullCapacityBytes -eq 11GB) 'Unexpected pair capacity plan.'

@@ -108,6 +108,7 @@ if ($Action -eq 'Provision') {
     $label = 'LQ' + $LabId.Substring(0,12).ToUpperInvariant()
     [ordered]@{LabId=$LabId;Role=$Role;Temporary=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $seedRoot 'guest.json') -Encoding UTF8
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Initialize-Guest.ps1') -Destination $seedRoot
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Set-GuestLabFirewall.ps1') -Destination $seedRoot
     Copy-Item -LiteralPath $archive -Destination (Join-Path $seedRoot 'Laqay.zip')
     $bootstrap = @'
 $ErrorActionPreference='Stop'
@@ -119,7 +120,7 @@ $marker=Get-Content -LiteralPath ($sourcePath+'guest.json') -Raw | ConvertFrom-J
 if($marker.LabId -ne '@@LAB_ID@@' -or $marker.Role -ne '@@ROLE@@'){throw 'Unexpected lab seed.'}
 if(Test-Path -LiteralPath 'C:\LaqayLab'){throw 'Guest lab directory already exists.'}
 New-Item -ItemType Directory -Path 'C:\LaqayLab' | Out-Null
-foreach($file in @('guest.json','Initialize-Guest.ps1','Laqay.zip')){Copy-Item -LiteralPath ($sourcePath+$file) -Destination 'C:\LaqayLab'}
+foreach($file in @('guest.json','Initialize-Guest.ps1','Set-GuestLabFirewall.ps1','Laqay.zip')){Copy-Item -LiteralPath ($sourcePath+$file) -Destination 'C:\LaqayLab'}
 & 'C:\LaqayLab\Initialize-Guest.ps1' -LabId '@@LAB_ID@@' -Role '@@ROLE@@'
 '@
     $bootstrap = $bootstrap.Replace('@@LABEL@@',$label).Replace('@@LAB_ID@@',$LabId).Replace('@@ROLE@@',$Role)

@@ -23,9 +23,7 @@ $profile | Set-NetConnectionProfile -NetworkCategory Private
 Set-ItemProperty -LiteralPath 'HKLM:/SYSTEM/CurrentControlSet/Control/Terminal Server' -Name fDenyTSConnections -Value 0
 Set-Service -Name TermService -StartupType Automatic
 Start-Service -Name TermService
-foreach ($port in @(3389,445)) {
-    New-NetFirewallRule -Name "LaqayLab-$LabId-$port" -DisplayName "Laqay lab $port" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -RemoteAddress '10.77.166.0/24' -Profile Private | Out-Null
-}
+& (Join-Path $PSScriptRoot 'Set-GuestLabFirewall.ps1') -LabId $LabId -Role $Role | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $root 'Share') -Force | Out-Null
 $shareAcl=Get-Acl -LiteralPath (Join-Path $root 'Share')
 $shareAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(($env:COMPUTERNAME+'\LaqayLab'),'Modify','ContainerInherit,ObjectInherit','None','Allow'))

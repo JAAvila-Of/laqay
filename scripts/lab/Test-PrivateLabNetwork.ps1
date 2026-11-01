@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Path $output -Force | Out-Null
 $reportPath=Join-Path $output 'network-report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse a network report.'}
 $sessions=@{};$credentials=@{};$details=@{};$fixtureCreated=$false
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;TcpChecks=@();SmbRoundTrip=$false;Signed=$false;FixtureRemoved=$false;
+$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;GuestNetwork=@{};TcpChecks=@();SmbRoundTrip=$false;Signed=$false;FixtureRemoved=$false;
     TestsExplorerPaste=$false;TestsRdpLogon=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 try{
     foreach($entry in $manifest.VMs){
@@ -42,8 +42,11 @@ try{
             if($addresses.Count -ne 1 -or @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue).Count){throw 'Guest addresses or default routes changed.'}
             $share=Get-SmbShare -Name LaqayLab
             if($share.Path -ne 'C:\LaqayLab\Share' -or ((Get-Item -LiteralPath $share.Path).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $env:COMPUTERNAME -notmatch '^[A-Za-z0-9-]{1,15}$'){throw 'Unexpected guest share or computer name.'}
-            [pscustomobject]@{ComputerName=$env:COMPUTERNAME;Address=$expected;Build=$ready.Build}
+            [pscustomobject]@{ComputerName=$env:COMPUTERNAME;Address=$expected;Build=$ready.Build;
+                Profiles=@(Get-NetConnectionProfile | Select-Object InterfaceAlias,@{n='Category';e={$_.NetworkCategory.ToString()}});
+                Listeners=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in @(445,3389) | Select-Object LocalAddress,LocalPort)}
         }
+        $report.GuestNetwork[$entry.Role]=$details[$entry.Role]
     }
     foreach($check in @(@{From='Primary';To='Peer';Port=445},@{From='Primary';To='Peer';Port=3389},@{From='Peer';To='Primary';Port=445})){
         $result=Invoke-Command -Session $sessions[$check.From] -ArgumentList $details[$check.To].Address,$check.Port -ScriptBlock {
