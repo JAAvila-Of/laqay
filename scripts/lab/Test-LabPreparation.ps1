@@ -5,6 +5,7 @@ $root = Join-Path $env:LOCALAPPDATA ('LaqayTestLab/' + $labId)
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('Laqay.Lab.Media.' + $labId)
 function Assert-True($value,[string]$message) { if (-not $value) { throw $message } }
 try {
+    & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     foreach ($script in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1')) {
         $tokens = $null; $errors = $null
         [Management.Automation.Language.Parser]::ParseFile($script.FullName,[ref]$tokens,[ref]$errors) | Out-Null
