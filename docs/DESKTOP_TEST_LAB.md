@@ -284,7 +284,7 @@ server restart, offline files, OneDrive, or an RDP logon/clipboard transfer.
 
 ## Isolated RDP and clipboard validation
 
-`Invoke-RdpSmoke.ps1` runs the native Windows RDP ActiveX client in Primary's
+`Invoke-RdpSmoke.ps1` runs the native Windows `mstsc.exe` client in Primary's
 limited console session and the application suite in Peer's limited RDP session.
 Both owned guests must already be running on the private switch. Invoke the
 transport through RustWork with `--family rust`. It does not elevate itself,
@@ -303,17 +303,24 @@ trust was added. An existing name mapping, reparse point, ambiguous certificate,
 or unexpected listener certificate is refused. Run these configuration actions
 outside the Rust lease and only against the explicitly owned running role.
 
-The client requires
-[server authentication](https://learn.microsoft.com/en-us/windows/win32/termserv/imsrdpclientadvancedsettings4-authenticationlevel)
-at level 1 and enables CredSSP. It does not accept certificate warnings, disable
-NLA, or store a persistent credential. The distinct peer password is transported
-through PowerShell Direct and guest-user DPAPI, imported by the limited client,
-and removed before output collection. Clipboard redirection is enabled; audio,
+An owned RDP file requires server authentication at level 1 and enables CredSSP.
+The client does not accept certificate warnings or disable NLA. The distinct
+peer password is transported through PowerShell Direct and guest-user DPAPI,
+then placed in the guest user's credential set with
+[session-only persistence](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)
+for the exact `TERMSRV/<peer>` target. Existing credentials are refused. The
+owned entry is deleted during cleanup; it also expires at guest logoff. Neither
+the RDP file nor command-line arguments contain a password. The DPAPI transport
+file is removed before output collection. Clipboard redirection is enabled; audio,
 microphone, drives, printers, ports, smart cards, and automatic reconnect are
 disabled for this bounded connection. No RDP client or clipboard operation runs
 in the host's interactive session.
 
-The client must report a completed native logon. The peer task then requires
+A visible client window is insufficient: the server must expose a new active
+RDP session for the expected account and private client address, and Primary
+must have an established TCP 3389 connection owned by the exact native client
+process, executable path, account, and console session. This bounded server
+proof enables the client command loop. The peer task then requires
 session protocol 2, client address 10.77.166.10, an unlocked guest desktop, and a
 non-elevated token.
 The task launcher selects the unique active guest console/RDP session using
@@ -332,12 +339,14 @@ that remote session, then four cases using Ctrl+V sent through the actual client
 
 The fixed client command order, all seventeen case names/results, image pixels,
 normal application exit, settings restoration, and clean client disconnect are
-required. Both unique tasks and the credential file are removed. Client input
+required. After all cases, the controller disconnects only the pinned Peer RDP
+session, checks its disconnected state, and requires the owned client to exit
+with code 0 without forced termination. Both unique tasks, the transport file,
+and the session credential are removed. Client input
 has the existing five-minute guest deadline; tasks are limited to seven minutes.
-The native control's interfaces and event DISPIDs are checked from its installed
-type library during preparation without constructing a control.
-Connection startup runs from the client's UI timer and reports each setup stage,
-connection state, and heartbeat. After a stalled or failed logon it may retain a
+Preparation checks that the native client exists and compiles the guarded input
+and read-only session helpers without launching it. The command loop reports
+setup stage, native process/window state, and heartbeat. After a failed logon it may retain a
 diagnostic screenshot of Primary's disposable desktop in private output only;
 the same guest identity, role, and unlocked-desktop guards apply. No host desktop
 is captured. A diagnostic image is not evidence that a paste case passed.

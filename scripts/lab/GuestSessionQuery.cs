@@ -12,7 +12,7 @@ public static class LaqayGuestSessionQuery {
     static object Query(int session,int info) {
         IntPtr value;int bytes;
         if(!WTSQuerySessionInformationW(IntPtr.Zero,session,info,out value,out bytes)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        try {if(info==16) {if(bytes<2) throw new InvalidOperationException("Missing protocol.");return (int)Marshal.ReadInt16(value);}return Marshal.PtrToStringUni(value);}
+        try {if(info==16) {if(bytes<2) throw new InvalidOperationException("Missing protocol.");return (int)Marshal.ReadInt16(value);}if(info==8) {if(bytes<4) throw new InvalidOperationException("Missing session state.");return Marshal.ReadInt32(value);}return Marshal.PtrToStringUni(value);}
         finally {WTSFreeMemory(value);}
     }
     public static int[] FindActive(int protocol,string user,string domain) {
@@ -30,5 +30,14 @@ public static class LaqayGuestSessionQuery {
             }
         } finally {WTSFreeMemory(sessions);}
         return result.ToArray();
+    }
+    public static int State(int session) {return (int)Query(session,8);}
+    public static string ClientAddress(int session) {
+        IntPtr value;int bytes;
+        if(!WTSQuerySessionInformationW(IntPtr.Zero,session,14,out value,out bytes)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            if(bytes<24 || Marshal.ReadInt32(value)!=2) throw new InvalidOperationException("Expected an IPv4 client address.");
+            return String.Format("{0}.{1}.{2}.{3}",Marshal.ReadByte(value,6),Marshal.ReadByte(value,7),Marshal.ReadByte(value,8),Marshal.ReadByte(value,9));
+        } finally {WTSFreeMemory(value);}
     }
 }

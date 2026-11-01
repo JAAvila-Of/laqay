@@ -25,7 +25,7 @@ if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an RDP report.'}
 $guestRoot='C:\LaqayLab\Runs\'+$RunId
 $taskName='Laqay.Rdp.'+$RunId
 $sessions=@{};$credentials=@{};$registered=@{};$allocated=@{};$targetSessions=@{}
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@{};
+$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@{};ServerSessionId=$null;ServerDisconnected=$false;
     CredentialRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $expectedOperations=@('Paste','Image','Paste','Paste','Text','Paste')
 function Save-Report {$report | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
@@ -56,6 +56,32 @@ function Write-ClientCommand([int]$sequence,[string]$operation){
         if(Test-Path -LiteralPath $path){throw 'Refusing to repeat a client command.'}
         $temporary=$path+'.tmp'
         [pscustomobject]@{LabId=$labId;RunId=$runId;Sequence=$sequence;Operation=$operation} | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding UTF8
+        Move-Item -LiteralPath $temporary -Destination $path
+    }
+}
+function Find-PeerSession {
+    Invoke-Command -Session $sessions.Peer -ArgumentList $guestRoot -ScriptBlock {
+        param($runRoot)
+        $ErrorActionPreference='Stop'
+        if(-not ('LaqayGuestSessionQuery' -as [type])){Add-Type -Path (Join-Path $runRoot 'GuestSessionQuery.cs')}
+        $ids=@([LaqayGuestSessionQuery]::FindActive(2,'LaqayLab',$env:COMPUTERNAME))
+        if($ids.Count -gt 1){throw 'Multiple active owned RDP sessions are ambiguous.'}
+        if($ids.Count -eq 1){
+            $address=[LaqayGuestSessionQuery]::ClientAddress($ids[0])
+            if($address -ne '10.77.166.10'){throw 'The peer session comes from an unexpected client.'}
+            [pscustomobject]@{SessionId=$ids[0];ClientAddress=$address;PeerName=$env:COMPUTERNAME}
+        }
+    }
+}
+function Write-ServerProof([string]$name,[int]$serverId,[int]$clientPid,[string]$peerName,[int]$state){
+    Invoke-Command -Session $sessions.Primary -ArgumentList $LabId,$RunId,$guestRoot,$name,$serverId,$clientPid,$peerName,$state -ScriptBlock {
+        param($labId,$runId,$runRoot,$name,$serverId,$clientPid,$peerName,$state)
+        $ErrorActionPreference='Stop'
+        if($name -notin @('server-session.json','server-disconnected.json')){throw 'Unexpected server proof file.'}
+        $path=Join-Path $runRoot $name
+        if(Test-Path -LiteralPath $path){throw 'Refusing a repeated server proof.'}
+        $temporary=$path+'.tmp'
+        [pscustomobject]@{LabId=$labId;RunId=$runId;PeerName=$peerName;PeerSessionId=$serverId;ClientProcessId=$clientPid;Protocol=2;ClientAddress='10.77.166.10';State=$state} | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding UTF8
         Move-Item -LiteralPath $temporary -Destination $path
     }
 }
@@ -149,16 +175,39 @@ exit $LASTEXITCODE
         $ErrorActionPreference='Stop'
         $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
     }
+    if(Find-PeerSession){throw 'Refusing an already active RDP session before starting the owned client.'}
     Start-GuestTask Primary
+    $sessionVerified=$false
     $until=[DateTime]::UtcNow.AddSeconds(90)
     do{
         $client=Read-Task Primary;Assert-Task $client Primary
         $report.Client=$client.Report;Save-Report
+        if(-not $sessionVerified -and $client.Report.ClientProcessId -gt 0){
+            $remote=Find-PeerSession
+            if($remote){
+                $connected=[bool](Invoke-Command -Session $sessions.Primary -ArgumentList $client.Report.ClientProcessId,$targetSessions.Primary -ScriptBlock {
+                    param($clientPid,$sessionId)
+                    $ErrorActionPreference='Stop'
+                    $process=Get-Process -Id $clientPid
+                    if($process.SessionId -ne $sessionId -or $process.MainModule.FileName -ne (Join-Path $env:SystemRoot 'System32/mstsc.exe')){throw 'Unexpected client process identity.'}
+                    $owner=Invoke-CimMethod -InputObject (Get-CimInstance Win32_Process -Filter ('ProcessId='+$clientPid)) -MethodName GetOwner
+                    if($owner.ReturnValue -ne 0 -or $owner.User -ne 'LaqayLab' -or $owner.Domain -ne $env:COMPUTERNAME){throw 'Unexpected client process owner.'}
+                    @(Get-NetTCPConnection -State Established -RemoteAddress '10.77.166.11' -RemotePort 3389 -ErrorAction SilentlyContinue | Where-Object {$_.OwningProcess -eq $clientPid -and $_.LocalAddress -eq '10.77.166.10'}).Count -gt 0
+                })
+                if($connected){
+                    $report.ServerSessionId=[int]$remote.SessionId
+                    $ownedClientPid=[int]$client.Report.ClientProcessId
+                    $peerName=$remote.PeerName
+                    Write-ServerProof 'server-session.json' $report.ServerSessionId $ownedClientPid $peerName 0
+                    $sessionVerified=$true
+                }
+            }
+        }
         if($client.Report.LoggedOn){break}
         if($client.Report.FinishedUtc){throw 'The RDP client finished without a successful logon.'}
         Start-Sleep -Milliseconds 500
     }while([DateTime]::UtcNow -lt $until)
-    if(-not $client.Report.LoggedOn){throw 'RDP logon did not complete within ninety seconds.'}
+    if(-not $sessionVerified -or -not $client.Report.LoggedOn){throw 'The server and owned client did not confirm RDP logon within ninety seconds.'}
     Start-GuestTask Peer
     $until=[DateTime]::UtcNow.AddMinutes(5);$handled=0;$pending=$null
     do{
@@ -190,9 +239,29 @@ exit $LASTEXITCODE
     }while([DateTime]::UtcNow -lt $until)
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery','RdpSessionImagePaste','RdpRedirectedImagePaste','RdpNativeFilePaste','RdpRedirectedTextPaste')
     $guest=$peer.Report
-    if($guest.SessionId -ne $targetSessions.Peer -or $client.Report.SessionId -ne $targetSessions.Primary){throw 'A task ran in a different guest session than requested.'}
+    if($guest.SessionId -ne $targetSessions.Peer -or $guest.SessionId -ne $report.ServerSessionId -or $client.Report.SessionId -ne $targetSessions.Primary){throw 'A task ran in a different guest session than requested.'}
     if(-not $guest.FinishedUtc -or -not $guest.Passed -or -not $guest.IncludeRdp -or $guest.SessionProtocol -ne 2 -or $guest.RdpClientAddress -ne '10.77.166.10' -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.Cases.Count -ne 17 -or @(Compare-Object $required @($guest.Cases.Name)).Count -or @($guest.Cases | Where-Object {-not $_.Passed}).Count -or -not $guest.ApplicationClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ForcedTermination -or -not $guest.PreferencesRestored -or -not $guest.PermissionsRestored -or @($guest.CleanupErrors).Count -or $peer.LastResult -ne 0 -or $handled -ne 6 -or $pending){throw 'The complete limited RDP suite did not pass.'}
     Write-ClientCommand 7 Close
+    $ackLimit=[DateTime]::UtcNow.AddSeconds(10)
+    do{
+        $client=Read-Task Primary;Assert-Task $client Primary
+        if($client.Report.AckSequence -eq 7){break};Start-Sleep -Milliseconds 200
+    }while([DateTime]::UtcNow -lt $ackLimit)
+    if($client.Report.AckSequence -ne 7){throw 'The native client did not enter its controlled disconnect phase.'}
+    Invoke-Command -Session $sessions.Peer -ArgumentList $LabId,$RunId,$report.ServerSessionId -ScriptBlock {
+        param($labId,$runId,$sessionId)
+        $ErrorActionPreference='Stop'
+        $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
+        $ids=@([LaqayGuestSessionQuery]::FindActive(2,'LaqayLab',$env:COMPUTERNAME))
+        if($ready.LabId -ne $labId -or $ready.Role -ne 'Peer' -or -not $ready.Ready -or $sessionId -le 0 -or $ids.Count -ne 1 -or $ids[0] -ne $sessionId -or [LaqayGuestSessionQuery]::ClientAddress($sessionId) -ne '10.77.166.10'){throw 'Refusing to disconnect an unowned or changed remote session.'}
+        & (Join-Path $env:SystemRoot 'System32/tsdiscon.exe') ([string]$sessionId)
+        if($LASTEXITCODE -ne 0){throw 'The owned peer session did not disconnect.'}
+        $until=[DateTime]::UtcNow.AddSeconds(10)
+        do{if([LaqayGuestSessionQuery]::State($sessionId) -eq 4){return};Start-Sleep -Milliseconds 200}while([DateTime]::UtcNow -lt $until)
+        throw 'The owned peer session did not reach the disconnected state.'
+    }
+    $report.ServerDisconnected=$true
+    Write-ServerProof 'server-disconnected.json' $report.ServerSessionId $ownedClientPid $peerName 4
     $until=[DateTime]::UtcNow.AddSeconds(30)
     do{
         $client=Read-Task Primary;Assert-Task $client Primary
@@ -201,7 +270,7 @@ exit $LASTEXITCODE
         Start-Sleep -Milliseconds 200
     }while([DateTime]::UtcNow -lt $until)
     $expectedAll=@($expectedOperations)+@('Close')
-    if(-not $client.Report.FinishedUtc -or -not $client.Report.Passed -or -not $client.Report.LoggedOn -or -not $client.Report.Disconnected -or $client.Report.AuthenticationLevel -ne 1 -or -not $client.Report.CredSsp -or -not $client.Report.ClipboardRedirection -or $client.Report.SessionId -le 0 -or $client.Report.AckSequence -ne 7 -or @($client.Report.Operations).Count -ne 7 -or ([string]::Join(',',@($client.Report.Operations))) -ne ([string]::Join(',',$expectedAll)) -or $client.LastResult -ne 0){throw 'The RDP client did not complete its exact command sequence and clean disconnect.'}
+    if(-not $client.Report.FinishedUtc -or -not $client.Report.Passed -or -not $client.Report.LoggedOn -or -not $client.Report.Disconnected -or -not $client.Report.CredentialRemoved -or $client.Report.ForcedTermination -or $client.Report.ClientExitCode -ne 0 -or $client.Report.AuthenticationLevel -ne 1 -or -not $client.Report.CredSsp -or -not $client.Report.ClipboardRedirection -or $client.Report.SessionId -le 0 -or $client.Report.AckSequence -ne 7 -or @($client.Report.Operations).Count -ne 7 -or ([string]::Join(',',@($client.Report.Operations))) -ne ([string]::Join(',',$expectedAll)) -or $client.LastResult -ne 0){throw 'The RDP client did not complete its exact command sequence and clean disconnect.'}
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     foreach($role in @('Peer','Primary')){
