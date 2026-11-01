@@ -172,6 +172,8 @@ it is never printed, passed on a command line, or included in reports.
 3. Shut down and boot the guest again. Require its Run value to remain absent
    and observe no Laqay process for 180 seconds in the interactive guest session.
    Restore Enabled and verify the original preference and absence of Run.
+4. Run all thirteen Explorer regression cases through the default transport in
+   that same guest session, then restore its preferences again.
 
 Each runtime phase gets its own RustWork lease and unique interactive task;
 boot/shutdown and guest logon configuration stay outside those leases. The

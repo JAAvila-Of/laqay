@@ -111,6 +111,10 @@ try{
     Save-Cycle 'Booting with startup disabled';Stop-Guest;Start-Guest
     Invoke-Phase 'Absent'
     $report.SettingsRestored=$true
+    # Exercise the default transport after the startup phases changed it.
+    $report.SettingsRestored=$false
+    Invoke-Phase 'Explorer'
+    $report.SettingsRestored=$true
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     if($vmTouched){
