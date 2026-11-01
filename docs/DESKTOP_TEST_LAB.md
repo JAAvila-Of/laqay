@@ -316,6 +316,9 @@ in the host's interactive session.
 The client must report a completed native logon. The peer task then requires
 session protocol 2, client address 10.77.166.10, an unlocked guest desktop, and a
 non-elevated token. It runs the thirteen existing cases with guest input inside
+The task launcher selects the unique active guest console/RDP session using
+read-only WTS metadata and binds the task to that exact session with RunEx.
+Reports from a different session are refused. It runs the thirteen cases inside
 that remote session, then four cases using Ctrl+V sent through the actual client:
 
 - `RdpSessionImagePaste`: a 2x2 image created in Peer, pasted through client input.

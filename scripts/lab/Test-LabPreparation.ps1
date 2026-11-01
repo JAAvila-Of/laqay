@@ -7,6 +7,7 @@ function Assert-True($value,[string]$message) { if (-not $value) { throw $messag
 try {
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     & (Join-Path $PSScriptRoot 'Test-RdpControlMetadata.ps1')
+    Add-Type -Path (Join-Path $PSScriptRoot 'GuestSessionQuery.cs')
     foreach ($script in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1')) {
         $tokens = $null; $errors = $null
         [Management.Automation.Language.Parser]::ParseFile($script.FullName,[ref]$tokens,[ref]$errors) | Out-Null

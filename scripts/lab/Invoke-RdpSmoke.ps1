@@ -24,7 +24,7 @@ $reportPath=Join-Path $output 'rdp-report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an RDP report.'}
 $guestRoot='C:\LaqayLab\Runs\'+$RunId
 $taskName='Laqay.Rdp.'+$RunId
-$sessions=@{};$credentials=@{};$registered=@{};$allocated=@{}
+$sessions=@{};$credentials=@{};$registered=@{};$allocated=@{};$targetSessions=@{}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@();
     CredentialRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $expectedOperations=@('Paste','Image','Paste','Paste','Text','Paste')
@@ -64,6 +64,31 @@ function Assert-Task($task,[string]$role){
     if($task.Report.Error){throw ($role+' failed: '+$task.Report.Error)}
     if($task.State -ne 'Running' -and $task.LastResult -notin @(0,267009,267011)){throw ($role+' task failed: '+$task.LastResult)}
 }
+function Start-GuestTask([string]$role){
+    $target=Invoke-Command -Session $sessions[$role] -ArgumentList $guestRoot,$taskName,$role -ScriptBlock {
+        param($runRoot,$taskName,$role)
+        $ErrorActionPreference='Stop'
+        if(-not ('LaqayGuestSessionQuery' -as [type])){Add-Type -Path (Join-Path $runRoot 'GuestSessionQuery.cs')}
+        $protocol=if($role -eq 'Primary'){0}else{2}
+        $until=[DateTime]::UtcNow.AddSeconds(30)
+        do{
+            $ids=@([LaqayGuestSessionQuery]::FindActive($protocol,'LaqayLab',$env:COMPUTERNAME))
+            if($ids.Count){break};Start-Sleep -Milliseconds 500
+        }while([DateTime]::UtcNow -lt $until)
+        if($ids.Count -ne 1){throw 'Expected exactly one active owned guest session of the required protocol.'}
+        $scheduler=New-Object -ComObject Schedule.Service
+        $folder=$null;$task=$null;$running=$null
+        try{
+            $scheduler.Connect();$folder=$scheduler.GetFolder('\');$task=$folder.GetTask($taskName)
+            # TASK_RUN_USE_SESSION_ID binds input to this exact console/RDP logon.
+            $running=$task.RunEx($null,4,$ids[0],$null)
+            [int]$ids[0]
+        }finally{
+            foreach($instance in @($running,$task,$folder,$scheduler)){if($instance){[void][Runtime.InteropServices.Marshal]::ReleaseComObject($instance)}}
+        }
+    }
+    $targetSessions[$role]=[int]$target
+}
 try{
     Save-Report
     foreach($entry in $manifest.VMs){
@@ -98,7 +123,7 @@ try{
         }
         $allocated[$role]=$true
         $credentials[$role]=[PSCredential]::new(($name+'\LaqayLab'),$credentials[$role].Password)
-        foreach($file in @('GuestDesktopControls.cs','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestRdpClient.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $sessions[$role]}
+        foreach($file in @('GuestDesktopControls.cs','GuestSessionQuery.cs','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestRdpClient.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $sessions[$role]}
         Invoke-Command -Session $sessions[$role] -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$role -ScriptBlock {
             param($labId,$runId,$sha,$runRoot,$taskName,$role)
             $ErrorActionPreference='Stop'
@@ -124,7 +149,7 @@ exit $LASTEXITCODE
         $ErrorActionPreference='Stop'
         $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
     }
-    Invoke-Command -Session $sessions.Primary -ArgumentList $taskName -ScriptBlock {param($taskName) Start-ScheduledTask -TaskName $taskName}
+    Start-GuestTask Primary
     $until=[DateTime]::UtcNow.AddSeconds(90)
     do{
         $client=Read-Task Primary;Assert-Task $client Primary
@@ -134,7 +159,7 @@ exit $LASTEXITCODE
         Start-Sleep -Milliseconds 500
     }while([DateTime]::UtcNow -lt $until)
     if(-not $client.Report.LoggedOn){throw 'RDP logon did not complete within ninety seconds.'}
-    Invoke-Command -Session $sessions.Peer -ArgumentList $taskName -ScriptBlock {param($taskName) Start-ScheduledTask -TaskName $taskName}
+    Start-GuestTask Peer
     $until=[DateTime]::UtcNow.AddMinutes(5);$handled=0;$pending=$null
     do{
         $client=Read-Task Primary;$peer=Read-Task Peer
@@ -165,6 +190,7 @@ exit $LASTEXITCODE
     }while([DateTime]::UtcNow -lt $until)
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery','RdpSessionImagePaste','RdpRedirectedImagePaste','RdpNativeFilePaste','RdpRedirectedTextPaste')
     $guest=$peer.Report
+    if($guest.SessionId -ne $targetSessions.Peer -or $client.Report.SessionId -ne $targetSessions.Primary){throw 'A task ran in a different guest session than requested.'}
     if(-not $guest.FinishedUtc -or -not $guest.Passed -or -not $guest.IncludeRdp -or $guest.SessionProtocol -ne 2 -or $guest.RdpClientAddress -ne '10.77.166.10' -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.Cases.Count -ne 17 -or @(Compare-Object $required @($guest.Cases.Name)).Count -or @($guest.Cases | Where-Object {-not $_.Passed}).Count -or -not $guest.ApplicationClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ForcedTermination -or -not $guest.PreferencesRestored -or -not $guest.PermissionsRestored -or @($guest.CleanupErrors).Count -or $peer.LastResult -ne 0 -or $handled -ne 6 -or $pending){throw 'The complete limited RDP suite did not pass.'}
     Write-ClientCommand 7 Close
     $until=[DateTime]::UtcNow.AddSeconds(30)
