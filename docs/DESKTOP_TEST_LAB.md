@@ -281,3 +281,98 @@ content, removes the task and credential file, and requires normal application
 exit. A partial case list, server mismatch, or cleanup error fails the run.
 This covers a healthy authenticated UNC share; it does not simulate network loss,
 server restart, offline files, OneDrive, or an RDP logon/clipboard transfer.
+
+## Isolated RDP and clipboard validation
+
+`Invoke-RdpSmoke.ps1` runs the native Windows `mstsc.exe` client in Primary's
+limited console session and the application suite in Peer's limited RDP session.
+Both owned guests must already be running on the private switch. Invoke the
+transport through RustWork with `--family rust`. It does not elevate itself,
+boot guests, change trust, or configure automatic logon. A calling operation
+must prepare the guest session, restore temporary configuration, and stop both
+guests in final cleanup. This suite is prepared; type checks and compilation
+alone do not constitute a successful RDP run.
+
+Before the runtime phase, `Set-RdpLabTrust.ps1 -Action ExportPeer` reads Peer's
+existing public Remote Desktop certificate and requires its existing NLA/TLS
+configuration. It does not export a private key or change the listener.
+`-Action PreparePrimary` temporarily trusts exactly that certificate in Primary's
+machine root store and adds the single peer name/address to Primary's hosts
+file. The owned state records original bytes/hash, prepared hash, and whether
+trust was added. An existing name mapping, reparse point, ambiguous certificate,
+or unexpected listener certificate is refused. Run these configuration actions
+outside the Rust lease and only against the explicitly owned running role.
+
+An owned RDP file requires server authentication at level 1 and enables CredSSP.
+The client does not accept certificate warnings or disable NLA. The distinct
+peer password is transported through PowerShell Direct and guest-user DPAPI,
+then placed in the guest user's credential set with
+[session-only persistence](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)
+for the exact `TERMSRV/<peer>` target. Existing credentials are refused. The
+owned entry is deleted during cleanup; it also expires at guest logoff. Neither
+the RDP file nor command-line arguments contain a password. The DPAPI transport
+file is removed before output collection. Clipboard redirection is enabled; audio,
+microphone, drives, printers, ports, smart cards, and automatic reconnect are
+disabled for this bounded connection. No RDP client or clipboard operation runs
+in the host's interactive session.
+
+A visible client window is insufficient: the server must expose a new active
+RDP session for the expected account and private client address, and Primary
+must have an established TCP 3389 connection owned by the exact native client
+process, executable path, account, and console session. This bounded server
+proof enables the client command loop. The peer task then requires
+session protocol 2, client address 10.77.166.10, an unlocked guest desktop, and a
+non-elevated token.
+The task launcher selects the unique active guest console/RDP session using
+read-only WTS metadata and binds the task to that exact session with RunEx.
+Reports from a different session are refused. It runs the thirteen cases inside
+that remote session, then four cases using Ctrl+V sent through the actual client:
+
+- `RdpSessionImagePaste`: a 2x2 image created in Peer, pasted through client input.
+- `RdpRedirectedImagePaste`: a distinct 3x2 image created only in Primary must
+  appear in Peer's clipboard before client Ctrl+V creates its exact PNG. The
+  controller relays command metadata and acknowledgements, never image pixels.
+- `RdpNativeFilePaste`: a local Peer file retains native paste priority when a
+  bitmap is also present; its contents remain intact and no extra PNG appears.
+- `RdpRedirectedTextPaste`: client text crosses the clipboard channel and reaches
+  Peer's native Explorer search control without creating output.
+
+The fixed client command order, all seventeen case names/results, image pixels,
+normal application exit, settings restoration, and clean client disconnect are
+required. After all cases, the controller disconnects only the pinned Peer RDP
+session, checks its disconnected state, and requires the owned client to exit
+with code 0 without forced termination. Both unique tasks, the transport file,
+and the session credential are removed. Client input
+has the existing five-minute guest deadline; tasks are limited to seven minutes.
+Preparation checks that the native client exists and compiles the guarded input
+and read-only session helpers without launching it. The command loop reports
+setup stage, native process/window state, and heartbeat. After a failed logon it may retain a
+diagnostic screenshot of Primary's disposable desktop in private output only;
+the same guest identity, role, and unlocked-desktop guards apply. No host desktop
+is captured. A diagnostic image is not evidence that a paste case passed.
+
+`Set-RdpLabTrust.ps1 -Action Cleanup` removes only trust added by this run and
+restores the exact original hosts bytes/hash and timestamp. Unexpected edits
+prevent overwrite and fail cleanup. A calling cycle must also remove its own
+temporary Primary auto-logon password/count, confirm both guests off, and retain
+private evidence. Preparation can run one guest at a time; queue the paired
+runtime with both guests off, then apply the same 11/7 GiB admission limits.
+This does not test client-to-server file transfer, disconnection/reconnection,
+clipboard policy restrictions, Windows 10, or arbitrary RDP client versions.
+
+### Explicit consent for the owned guest RDP file
+
+Windows can require a first-use account acknowledgement and per-connection
+resource consent when opening RDP files. With separate, explicit permission,
+`-AllowGuestRdpFileConsent` recognizes only the owned native client dialogs,
+checks that the locally generated RDP file is unchanged and the peer name
+matches, acknowledges first use, and selects only Clipboard. Other resource
+checkboxes remain off. It does not accept certificate warnings or revert
+Windows security dialog policies. See the
+[Windows dialog description](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/understanding-security-warnings).
+
+The first-use acknowledgement remains only in the disposable LaqayLab guest
+account until the VM is removed; disclose this when obtaining permission.
+Without the switch, no consent is accepted automatically. Setup also records
+current OS/client versions and evaluation licensing status as read-only private
+diagnostics; it never changes activation, clocks, license keys, or network access.

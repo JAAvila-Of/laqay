@@ -4,6 +4,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [switch]$IncludeUnc,
+    [switch]$IncludeRdp,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -19,7 +20,9 @@ if($PrepareOnly){
     $rejected=$false
     try{[LaqayGuestDesktop]::ImageClipboard()}catch{$rejected=$true}
     if(-not $rejected){throw 'Unarmed input controls were accepted.'}
-    foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()})){
+    foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
+        {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},
+        {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
         if(-not $rejected){throw 'Unarmed clipboard inspection was accepted.'}
@@ -37,6 +40,7 @@ if($PrepareOnly){
     return
 }
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256){throw 'A lab identity, run identity, and executable SHA-256 are required.'}
+if($IncludeRdp -and $IncludeUnc){throw 'RDP and UNC scenarios use separate transports.'}
 $armLimit=[DateTime]::UtcNow.AddSeconds(30)
 while($true){
     try{[LaqayGuestDesktop]::Arm($LabId);break}catch{
@@ -51,7 +55,8 @@ if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing gues
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
-    UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
+    IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
 $applicationStarted=$false
@@ -72,6 +77,16 @@ function Run-Case([string]$name,[scriptblock]$body){
     try{& $body;$case.Passed=$true}catch{$case.Error=$_.Exception.Message;throw}finally{
         $case.FinishedUtc=[DateTime]::UtcNow.ToString('o');$report.Cases+=@([pscustomobject]$case);Save-Report
     }
+}
+function Request-Client([string]$operation){
+    $report.ClientCommands++
+    $sequence=$report.ClientCommands
+    $report.ClientRequest=[pscustomobject]@{LabId=$LabId;RunId=$RunId;Sequence=$sequence;Operation=$operation}
+    Save-Report
+    $ackPath=Join-Path $root ('client-ack-'+$sequence+'.json')
+    Wait-For {Test-Path -LiteralPath $ackPath} 'The isolated RDP client did not acknowledge its command.' 20
+    $ack=Get-Content -LiteralPath $ackPath -Raw | ConvertFrom-Json
+    Assert-True ($ack.LabId -eq $LabId -and $ack.RunId -eq $RunId -and $ack.Sequence -eq $sequence -and $ack.Operation -eq $operation -and $ack.Passed) 'Unexpected RDP client acknowledgement.'
 }
 function New-CaseFolder([string]$name){
     $path=Join-Path $root ('data/'+$name)
@@ -121,6 +136,12 @@ function Navigate-Tab([IntPtr]$window,[string]$path){
 }
 try{
     Save-Report
+    if($IncludeRdp){
+        [LaqayGuestDesktop]::RequireRole('Peer')
+        $report.SessionProtocol=[LaqayGuestDesktop]::SessionProtocol()
+        $report.RdpClientAddress=[LaqayGuestDesktop]::RdpClientAddress()
+        Assert-True ($report.SessionProtocol -eq 2 -and $report.RdpClientAddress -eq '10.77.166.10') 'Expected a real RDP session from the isolated Primary guest.'
+    }
     $executables=@(Get-ChildItem -LiteralPath 'C:/LaqayLab/App' -Filter laqay.exe -File -Recurse)
     Assert-True ($executables.Count -eq 1) 'Expected one validated guest executable.'
     $executable=$executables[0].FullName
@@ -309,6 +330,64 @@ try{
         Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
     }
     Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
+    if($IncludeRdp){
+        Run-Case 'RdpSessionImagePaste' {
+            $script:rdpImages=New-CaseFolder 'rdp-images'
+            $script:rdpWindow=Open-Folder $script:rdpImages
+            [LaqayGuestDesktop]::ImageClipboard()
+            Request-Client 'Paste'
+            Wait-For {@(Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png').Count -eq 1} 'RDP client Ctrl+V did not publish the remote image.' 20
+            Check-Png (Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png')[0].FullName
+            Assert-True ([LaqayGuestDesktop]::ClipboardImageIsFixture()) 'The remote source image changed.'
+        }
+        Run-Case 'RdpRedirectedImagePaste' {
+            [LaqayGuestDesktop]::Activate([IntPtr]$script:rdpWindow.HWND)
+            [LaqayGuestDesktop]::FocusFolder([IntPtr]$script:rdpWindow.HWND)
+            [LaqayGuestDesktop]::TextClipboard('RemoteBeforeRedirect-'+$RunId)
+            Assert-True (-not [LaqayGuestDesktop]::ClipboardIsRedirectedFixture()) 'The client image was already present before redirection.'
+            Request-Client 'Image'
+            Wait-For {try{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()}catch{$false}} 'The distinct client image did not cross the RDP clipboard channel.' 30
+            Request-Client 'Paste'
+            Wait-For {@(Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png').Count -eq 2} 'The redirected image was not published.' 20
+            $files=@(Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png')
+            $clientImages=0
+            foreach($file in $files){
+                Assert-True ($file.Name -match '^Screenshot_\d{8}_\d{6}(_\d{3,})?\.png$') 'Unexpected redirected screenshot name.'
+                $image=[Drawing.Bitmap]::new($file.FullName)
+                try{
+                    if($image.Width -eq 3 -and $image.Height -eq 2){
+                        $clientImages++
+                        $colors=@([Drawing.Color]::Magenta,[Drawing.Color]::Cyan,[Drawing.Color]::Yellow,[Drawing.Color]::Black,[Drawing.Color]::Orange,[Drawing.Color]::Purple)
+                        for($y=0;$y -lt 2;$y++){for($x=0;$x -lt 3;$x++){Assert-True ($image.GetPixel($x,$y).ToArgb() -eq $colors[$y*3+$x].ToArgb()) 'A redirected pixel changed.'}}
+                    }else{Check-Png $file.FullName}
+                }finally{$image.Dispose()}
+            }
+            Assert-True ($clientImages -eq 1 -and @(Get-ChildItem -LiteralPath $script:rdpImages -Force).Count -eq 2) 'Unexpected redirected output or temporary files.'
+        }
+        Run-Case 'RdpNativeFilePaste' {
+            $destination=New-CaseFolder 'rdp-native-files'
+            $window=Open-Folder $destination
+            $source=Join-Path $root 'data/sources/two.bin'
+            [LaqayGuestDesktop]::FilesAndImageClipboard([string[]]@($source))
+            Request-Client 'Paste'
+            Wait-For {Test-Path -LiteralPath (Join-Path $destination 'two.bin')} 'Native file paste through RDP client input failed.' 20
+            Assert-True ((Get-FileHash -LiteralPath (Join-Path $destination 'two.bin')).Hash -eq (Get-FileHash -LiteralPath $source).Hash) 'The native RDP file changed.'
+            Start-Sleep -Milliseconds 500
+            Assert-True (@(Get-ChildItem -LiteralPath $destination -Force).Count -eq 1) 'RDP native file paste created unexpected output.'
+        }
+        Run-Case 'RdpRedirectedTextPaste' {
+            $path=New-CaseFolder 'rdp-native-text'
+            $window=Open-Folder $path
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,70))
+            [LaqayGuestDesktop]::TextClipboard('RemoteTextBeforeRedirect-'+$RunId)
+            Request-Client 'Text'
+            Wait-For {try{[LaqayGuestDesktop]::ClipboardTextEquals('LaqayRdp-'+$RunId)}catch{$false}} 'Client text did not cross the RDP clipboard channel.' 20
+            Request-Client 'Paste'
+            Wait-For {[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayRdp-'+$RunId)} 'Redirected text did not reach native Explorer search.'
+            Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) 'Redirected text created output.'
+        }
+        Assert-True ($report.Cases.Count -eq 17 -and $report.ClientCommands -eq 6) 'The RDP cases or client commands did not complete.'
+    }
     if($IncludeUnc){
         $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
         Assert-True ($ready.Role -eq 'Primary') 'UNC paste requires the primary guest.'
