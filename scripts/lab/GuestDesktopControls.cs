@@ -306,7 +306,7 @@ public static class LaqayGuestDesktop {
                 Stage("PreparingSessionCredential");WriteCredential();
                 string file=Path.Combine(root,"connection.rdp");
                 if(File.Exists(file)) throw new InvalidOperationException("Refusing an existing RDP file.");
-                string configuration="full address:s:"+peer+":3389\r\nusername:s:"+peer+"\\LaqayLab\r\n"+
+                string configuration="full address:s:"+peer+"\r\nusername:s:"+peer+"\\LaqayLab\r\n"+
                     "authentication level:i:1\r\nenablecredsspsupport:i:1\r\nprompt for credentials:i:0\r\n"+
                     "screen mode id:i:1\r\ndesktopwidth:i:1024\r\ndesktopheight:i:768\r\nsession bpp:i:32\r\n"+
                     "redirectclipboard:i:1\r\naudiomode:i:2\r\naudiocapturemode:i:0\r\nredirectdrives:i:0\r\ndrivestoredirect:s:\r\n"+
