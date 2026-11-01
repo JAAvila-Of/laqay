@@ -43,6 +43,8 @@ public static class LaqayGuestDesktop {
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr handle,int type,ref JobLimits value,uint size);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr handle,IntPtr process);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
+    [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(IntPtr token,int type,out int value,int size,out int needed);
     [StructLayout(LayoutKind.Sequential)] struct Key { public ushort vk,scan; public uint flags,time; public UIntPtr extra; }
     [StructLayout(LayoutKind.Sequential)] struct Mouse { public int x,y; public uint data,flags,time; public UIntPtr extra; }
     [StructLayout(LayoutKind.Explicit)] struct Union { [FieldOffset(0)] public Key key; [FieldOffset(0)] public Mouse mouse; }
@@ -201,6 +203,35 @@ public static class LaqayGuestDesktop {
             return application.Id;
         } catch { CloseHandle(job); job=IntPtr.Zero; throw; }
     }
+    public static int AdoptStartupApplication(string path,DateTime bootUtc) {
+        Guard();
+        if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Unexpected startup application path or instance.");
+        var candidates=Process.GetProcessesByName("laqay");
+        if(candidates.Length!=1) { foreach(var process in candidates) process.Dispose(); throw new InvalidOperationException("Exactly one startup application is required."); }
+        var candidate=candidates[0];
+        try {
+            if(candidate.SessionId!=Process.GetCurrentProcess().SessionId || candidate.StartTime.ToUniversalTime()<bootUtc.ToUniversalTime() ||
+                !String.Equals(Path.GetFullPath(candidate.MainModule.FileName),Path.GetFullPath(path),StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The startup application does not belong to this guest logon and executable.");
+            IntPtr token;
+            if(!OpenProcessToken(candidate.Handle,8,out token)) throw new InvalidOperationException("Cannot inspect the startup application token.");
+            try {
+                int elevated,needed;
+                if(!GetTokenInformation(token,20,out elevated,4,out needed) || elevated!=0)
+                    throw new InvalidOperationException("The startup application must not be elevated.");
+                using(var identity=new WindowsIdentity(token))
+                    if(!identity.User.Equals(WindowsIdentity.GetCurrent().User)) throw new InvalidOperationException("Unexpected startup application owner.");
+            } finally { CloseHandle(token); }
+            job=CreateJobObjectW(IntPtr.Zero,null);
+            if(job==IntPtr.Zero) throw new InvalidOperationException("Cannot create the startup application job.");
+            var limits=new JobLimits(); limits.basic.flags=0x2000;
+            if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits))) || !AssignProcessToJobObject(job,candidate.Handle))
+                throw new InvalidOperationException("Cannot contain the startup application.");
+            application=candidate;
+            return application.Id;
+        } catch { candidate.Dispose(); if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;} throw; }
+    }
     static IntPtr AppWindow() {
         if(application==null || application.HasExited) return IntPtr.Zero;
         IntPtr found=IntPtr.Zero;
@@ -212,6 +243,11 @@ public static class LaqayGuestDesktop {
         Guard(); IntPtr window=AppWindow(); UIntPtr result;
         if(window==IntPtr.Zero || SendMessageTimeoutW(window,0x111,new IntPtr(1001),IntPtr.Zero,0x23,3000,out result)==IntPtr.Zero)
             throw new InvalidOperationException("The owned Laqay command failed.");
+    }
+    public static void ToggleStartup() {
+        Guard(); IntPtr window=AppWindow(); UIntPtr result;
+        if(window==IntPtr.Zero || SendMessageTimeoutW(window,0x111,new IntPtr(1002),IntPtr.Zero,0x23,3000,out result)==IntPtr.Zero)
+            throw new InvalidOperationException("The owned startup command failed.");
     }
     public static bool CloseApplication() {
         // Cleanup remains available after the input deadline, for this process only.

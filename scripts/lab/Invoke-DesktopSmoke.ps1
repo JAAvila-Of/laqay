@@ -4,12 +4,17 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [string]$OutputDirectory,
+    [ValidateSet('Explorer','Enable','Verify','Absent','Cleanup')][string]$StartupPhase='Explorer',
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
+    [switch]$StartGuestForStartup,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;return}
+if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;return}
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
+if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
+if($StartGuestForStartup -and $StartupPhase -notin @('Verify','Absent')){throw 'Only a real startup verification phase may boot its guest inside the runtime lease.'}
 if(-not $env:RUST_WORK_JOB){throw 'Run the Rust application suite through the shared RustWork coordinator with --family rust.'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'An authorized administrator process is required for PowerShell Direct.'}
@@ -22,7 +27,8 @@ $entry=$entry[0]
 $expectedDisk=Join-Path $root 'vms/Primary/system.vhdx'
 if([IO.Path]::GetFullPath($entry.DiskPath) -ne [IO.Path]::GetFullPath($expectedDisk)){throw 'Unexpected primary disk path.'}
 $vm=Get-VM -Id ([guid]$entry.Id)
-if($vm.State -ne 'Running' -or $vm.Name -ne $entry.Name -or $vm.Notes -ne ('Laqay disposable desktop lab '+$LabId)){throw 'The owned lab guest must already be running.'}
+$expectedState=if($StartGuestForStartup){'Off'}else{'Running'}
+if($vm.State.ToString() -ne $expectedState -or $vm.Name -ne $entry.Name -or $vm.Notes -ne ('Laqay disposable desktop lab '+$LabId)){throw ('The owned lab guest must be '+$expectedState+'.')}
 $drives=@(Get-VMHardDiskDrive -VM $vm)
 if($drives.Count -ne 1 -or $drives[0].Path -ne $entry.DiskPath){throw 'Unexpected primary guest disk attachment.'}
 $credential=Import-Clixml -LiteralPath (Join-Path (Split-Path $entry.DiskPath) 'credential.xml')
@@ -30,14 +36,25 @@ $guestRoot='C:\LaqayLab\Runs\'+$RunId
 $taskName='Laqay.Smoke.'+$RunId
 $session=$null
 $registered=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
 try{
+    if($StartGuestForStartup){
+        $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
+        & $control -Action Start -LabId $LabId | Out-Null
+        $bootLimit=[DateTime]::UtcNow.AddMinutes(5)
+        do{
+            $status=& $control -Action Status -LabId $LabId | ConvertFrom-Json
+            if($status.Guest -and $status.Guest.Ready){break}
+            Start-Sleep -Seconds 2
+        }while([DateTime]::UtcNow -lt $bootLimit)
+        if(-not $status.Guest -or -not $status.Guest.Ready){throw 'The startup guest did not become ready within five minutes.'}
+    }
     $session=New-PSSession -VMId $vm.Id -Credential $credential
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot -ScriptBlock {
-        param($labId,$runId,$runRoot)
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$StartupPhase -ScriptBlock {
+        param($labId,$runId,$runRoot,$startupPhase)
         $ErrorActionPreference='Stop'
         $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
         if($ready.LabId -ne $labId -or $ready.Role -ne 'Primary' -or -not $ready.Ready){throw 'Guest readiness/identity mismatch.'}
@@ -46,17 +63,27 @@ try{
         $acl=Get-Acl -LiteralPath $runRoot
         $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(($env:COMPUTERNAME+'\LaqayLab'),'Modify','ContainerInherit,ObjectInherit','None','Allow'))
         Set-Acl -LiteralPath $runRoot -AclObject $acl
+        if($startupPhase -eq 'Enable'){
+            $startupRoot='C:\LaqayLab\Startup'
+            New-Item -ItemType Directory -Path $startupRoot -Force | Out-Null
+            $acl=Get-Acl -LiteralPath $startupRoot
+            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(($env:COMPUTERNAME+'\LaqayLab'),'Modify','ContainerInherit,ObjectInherit','None','Allow'))
+            Set-Acl -LiteralPath $startupRoot -AclObject $acl
+        }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','GuestDesktopControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName)
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId)
         $ErrorActionPreference='Stop'
         $launcher=@'
 $ErrorActionPreference='Stop'
-& (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy RemoteSigned -File '@@ROOT@@\Invoke-GuestDesktopSmoke.ps1' -LabId '@@LAB@@' -RunId '@@RUN@@' -ExpectedExecutableSha256 '@@SHA@@' *> '@@ROOT@@\console.log'
+& (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy RemoteSigned -File '@@ROOT@@\@@DRIVER@@' -LabId '@@LAB@@' -RunId '@@RUN@@' -ExpectedExecutableSha256 '@@SHA@@' @@EXTRA@@ *> '@@ROOT@@\console.log'
 exit $LASTEXITCODE
 '@
         $launcher=$launcher.Replace('@@ROOT@@',$runRoot).Replace('@@LAB@@',$labId).Replace('@@RUN@@',$runId).Replace('@@SHA@@',$sha)
+        $driver='Invoke-GuestDesktopSmoke.ps1';$extra=''
+        if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
+        $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
         if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}
         $action=New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument ('-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "'+$runRoot+'\Launch.ps1"')
@@ -86,10 +113,24 @@ exit $LASTEXITCODE
     }while([DateTime]::UtcNow -lt $limit)
     if(-not $result.Report -or -not $result.Report.FinishedUtc){throw 'The guest smoke suite did not finish within its deadline.'}
     $guest=$result.Report
+    if($StartupPhase -ne 'Explorer'){
+        $required=switch($StartupPhase){
+            Enable {@('StartupRegistered')}
+            Verify {@('LaunchedAtLogin','StartupImagePaste','StartupDisabled')}
+            Absent {@('NoStartupWithinObservationWindow','SettingsRestored')}
+            Cleanup {@('SettingsRestored')}
+        }
+        $names=@($guest.Cases | ForEach-Object Name)
+        if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or $guest.CycleId -ne $CycleId -or $guest.Phase -ne $StartupPhase -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.Passed -or -not $guest.ApplicationClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ForcedTermination -or $guest.SessionId -le 0 -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne @($required).Count -or @(Compare-Object @($required) $names).Count -ne 0 -or @($guest.Cases | Where-Object {-not $_.Passed}).Count -ne 0 -or $result.LastResult -ne 0){throw ('Startup validation failed: '+$guest.Error)}
+        if($StartupPhase -in @('Enable','Verify') -and -not $guest.ApplicationStarted){throw 'The startup phase did not own its application.'}
+        if($StartupPhase -in @('Absent','Cleanup') -and -not $guest.SettingsRestored){throw 'Startup settings were not restored.'}
+        if($StartupPhase -eq 'Absent' -and $guest.ObservationSeconds -lt 180){throw 'The disabled observation window was incomplete.'}
+    }else{
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
+    }
     $summary.GuestReport=$guest
     $summary.Passed=$true
 }catch{$summary.Error=$_.Exception.Message}finally{
@@ -111,4 +152,4 @@ exit $LASTEXITCODE
     $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'host-report.json') -Encoding UTF8
 }
 if(-not $summary.Passed){throw ('Guest smoke validation failed: '+$summary.Error+' '+($summary.CleanupErrors -join '; '))}
-Write-Output 'All thirteen guest Explorer smoke cases passed; the owned application exited and the guest task was removed.'
+Write-Output ('Guest suite passed: '+$StartupPhase+'. Owned applications exited and the guest task was removed.')
