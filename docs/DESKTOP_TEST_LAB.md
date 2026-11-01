@@ -257,7 +257,11 @@ imported by the same user, and deleted before result collection. Passwords are
 never command-line arguments or report fields. The native helper creates only
 this fixed, temporary, deviceless connection using
 [WNetAddConnection2](https://learn.microsoft.com/en-us/windows/win32/api/winnetwk/nf-winnetwk-wnetaddconnection2w).
-An existing interactive connection to the peer is refused. Cleanup disconnects
+The administrative transport refuses existing peer connections before starting
+the interactive task. Once Explorer opens the UNC folder, a bounded handshake
+lets that transport verify the actual connection's signed state, local user,
+and distinct peer credential. The limited task does not call administrative SMB
+cmdlets, and neither Explorer nor Laqay is elevated. Cleanup disconnects
 only the connection it created, without forcing open handles closed.
 
 The host reserves a new `Paste-<RunId>` directory on Peer. Explorer opens its

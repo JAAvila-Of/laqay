@@ -51,7 +51,7 @@ if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing gues
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
-    UncFiles=@();SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
 $applicationStarted=$false
@@ -312,7 +312,6 @@ try{
     if($IncludeUnc){
         $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
         Assert-True ($ready.Role -eq 'Primary') 'UNC paste requires the primary guest.'
-        Assert-True (@(Get-SmbConnection | Where-Object ServerName -eq '10.77.166.11').Count -eq 0) 'The interactive session already has a peer connection.'
         $peerCredential=Import-Clixml -LiteralPath $credentialPath
         try{[LaqayGuestDesktop]::ConnectPeer($peerCredential.UserName,$peerCredential.Password)}finally{
             $peerCredential=$null
@@ -324,6 +323,13 @@ try{
         $uncImages=Join-Path $unc 'images'
         New-Item -ItemType Directory -Path $uncImages | Out-Null
         $uncWindow=Open-Folder $uncImages
+        # The admin transport queries connection metadata; Explorer and Laqay stay limited.
+        $report.UncConnectionReady=$true;Save-Report
+        $proofPath=Join-Path $root 'smb-proof.json'
+        Wait-For {Test-Path -LiteralPath $proofPath} 'The controller did not verify the interactive SMB connection.' 30
+        $proof=Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
+        Assert-True ($proof.LabId -eq $LabId -and $proof.RunId -eq $RunId -and $proof.Signed -eq $true) 'The SMB verification identity or signature is invalid.'
+        $report.SmbSigned=$true
         Run-Case 'UncImagePaste' {
             [LaqayGuestDesktop]::ImageClipboard()
             $sequence=[LaqayGuestDesktop]::ClipboardSequence()
@@ -331,9 +337,6 @@ try{
             Wait-For {@(Get-ChildItem -LiteralPath $uncImages -Filter '*.png').Count -eq 1} 'UNC image paste did not publish a PNG.' 20
             Check-Png (Get-ChildItem -LiteralPath $uncImages -Filter '*.png')[0].FullName
             Assert-True ([LaqayGuestDesktop]::ClipboardSequence() -eq $sequence -and [LaqayGuestDesktop]::ClipboardImageIsFixture()) 'UNC image paste changed the clipboard.'
-            $connection=@(Get-SmbConnection | Where-Object {$_.ServerName -eq '10.77.166.11' -and $_.ShareName -eq 'LaqayLab'})
-            Assert-True ($connection.Count -eq 1 -and $connection[0].Signed) 'The interactive SMB connection is not signed.'
-            $report.SmbSigned=$true
         }
         Run-Case 'UncExistingImagePreserved' {
             $first=(Get-ChildItem -LiteralPath $uncImages -Filter '*.png')[0].FullName
@@ -362,7 +365,7 @@ try{
         Assert-True ($report.Cases.Count -eq 16 -and $report.UncFiles.Count -eq 3) 'The UNC suite did not complete all cases and files.'
     }
     $report.Passed=$true
-}catch{$report.Error=$_.Exception.Message}finally{
+}catch{$report.Error=$_.Exception.Message;$report.ErrorDetail=[pscustomobject]@{Id=$_.FullyQualifiedErrorId;Position=$_.InvocationInfo.PositionMessage;Stack=$_.ScriptStackTrace}}finally{
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     }

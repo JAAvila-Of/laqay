@@ -41,8 +41,9 @@ $registered=$false
 $peerSession=$null
 $peerCredential=$null
 $peerFixtureReserved=$false
+$smbVerified=$false
 $summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;
-    IncludeUnc=[bool]$IncludeUnc;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
@@ -109,6 +110,8 @@ try{
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
+            $ErrorActionPreference='Stop'
+            if(@(Get-SmbConnection | Where-Object ServerName -eq '10.77.166.11').Count){throw 'Refusing an existing peer connection before the interactive task.'}
             # Encrypt on the guest for the same user that owns the limited interactive task.
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
@@ -149,6 +152,22 @@ exit $LASTEXITCODE
             [pscustomobject]@{State=$task.State.ToString();LastResult=$info.LastTaskResult;Report=$report}
         }
         $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'progress.json') -Encoding UTF8
+        if($IncludeUnc -and $result.Report.UncConnectionReady -and -not $smbVerified){
+            $summary.SmbConnection=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$peerCredential.UserName -ScriptBlock {
+                param($labId,$runId,$runRoot,$peerUser)
+                $ErrorActionPreference='Stop'
+                $connections=@(Get-SmbConnection | Where-Object {$_.ServerName -eq '10.77.166.11' -and $_.ShareName -eq 'LaqayLab'})
+                if($connections.Count -ne 1 -or -not $connections[0].Signed -or $connections[0].UserName -ne ($env:COMPUTERNAME+'\LaqayLab') -or $connections[0].Credential -ne $peerUser){throw 'The limited user does not have the expected signed, authenticated peer connection.'}
+                $proof=[pscustomobject]@{LabId=$labId;RunId=$runId;Signed=$true;UserName=$connections[0].UserName;Credential=$connections[0].Credential;Dialect=[string]$connections[0].Dialect}
+                $proofPath=Join-Path $runRoot 'smb-proof.json'
+                if(Test-Path -LiteralPath $proofPath){throw 'Refusing an existing SMB verification file.'}
+                $temporary=Join-Path $runRoot 'smb-proof.tmp'
+                $proof | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding UTF8
+                Move-Item -LiteralPath $temporary -Destination $proofPath
+                $proof
+            }
+            $smbVerified=$true
+        }
         if($result.Report -and $result.Report.FinishedUtc -and $result.State -ne 'Running'){break}
         if($result.State -eq 'Ready' -and $result.LastResult -ne 267009 -and $result.LastResult -ne 267011 -and $result.LastResult -ne 0){throw ('Guest task failed before completing its report: '+$result.LastResult)}
         Start-Sleep -Seconds 1
@@ -175,7 +194,7 @@ exit $LASTEXITCODE
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
     }
     if($IncludeUnc){
-        if(-not $guest.IncludeUnc -or -not $guest.SmbSigned -or -not $guest.PeerDisconnected -or -not $guest.CredentialRemoved -or $guest.UncFiles.Count -ne 3 -or $guest.ApplicationExitCode -ne 0){throw 'UNC cleanup, signed connection, or application exit validation failed.'}
+        if(-not $smbVerified -or -not $guest.IncludeUnc -or -not $guest.SmbSigned -or -not $guest.PeerDisconnected -or -not $guest.CredentialRemoved -or $guest.UncFiles.Count -ne 3 -or $guest.ApplicationExitCode -ne 0){throw 'UNC cleanup, signed connection, or application exit validation failed.'}
         $verified=Invoke-Command -Session $peerSession -ArgumentList $RunId,@($guest.UncFiles) -ScriptBlock {
             param($runId,$files)
             $ErrorActionPreference='Stop'
