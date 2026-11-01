@@ -221,9 +221,11 @@ public static class LaqayGuestDesktop {
         void FocusClient() {
             RequireRole("Primary");IntPtr window=ClientWindow();
             if(window==IntPtr.Zero) throw new InvalidOperationException("The owned native RDP window is missing.");
-            ShowWindowAsync(window,3);
-            Send(new[] {new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
-            SetForegroundWindow(window);
+            if(GetForegroundWindow()!=window) {
+                // Do not send an activation Alt into the already focused remote desktop.
+                Send(new[] {new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
+                ShowWindowAsync(window,3);SetForegroundWindow(window);
+            }
             if(GetForegroundWindow()!=window) throw new InvalidOperationException("The owned RDP client lost foreground.");
         }
         void CaptureDiagnostic() {
