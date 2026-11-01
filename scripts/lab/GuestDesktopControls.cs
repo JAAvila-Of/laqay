@@ -122,7 +122,9 @@ public static class LaqayGuestDesktop {
         var root=AutomationElement.FromHandle(window);
         var controls=root.FindAll(TreeScope.Descendants,new OrCondition(
             new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.List),
-            new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.DataGrid)));
+            new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.DataGrid),
+            new PropertyCondition(AutomationElement.ClassNameProperty,"UIItemsView"),
+            new PropertyCondition(AutomationElement.AutomationIdProperty,"ItemsView")));
         foreach(AutomationElement element in controls) {
             var info=element.Current;
             if(info.IsOffscreen || !(info.ClassName=="UIItemsView" || info.AutomationId=="ItemsView" || info.Name=="Items View" || info.Name=="Folder View")) continue;
@@ -133,6 +135,15 @@ public static class LaqayGuestDesktop {
             Thread.Sleep(100); return;
         }
         throw new InvalidOperationException("A visible guest folder Items View was not found.");
+    }
+    public static string SelectedTabName(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        var items=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem));
+        foreach(AutomationElement item in items) {
+            object pattern;
+            if(item.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pattern) && ((SelectionItemPattern)pattern).Current.IsSelected) return item.Current.Name;
+        }
+        return "";
     }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);

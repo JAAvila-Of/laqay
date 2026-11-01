@@ -77,12 +77,12 @@ function Open-Folder([string]$path){
     $window=Find-Folder $path
     [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
     Start-Sleep -Milliseconds 250
-    [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+    Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
     return $window
 }
 function Paste-Image($window,[string]$path,[int]$count){
     [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
-    [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+    Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
     [LaqayGuestDesktop]::ImageClipboard()
     [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[ushort[]]@(17,86))
     Wait-For { @(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq $count } 'The expected image was not published in the active guest folder.'
@@ -215,11 +215,12 @@ try{
         Navigate-Tab ([IntPtr]$window.HWND) $tabB
         $windowB=Find-Folder $tabB
         Assert-True ($windowB.HWND -eq $window.HWND) 'The second folder is not a tab of the same window.'
+        Wait-For { [LaqayGuestDesktop]::SelectedTabName([IntPtr]$window.HWND).Contains('tab-b') } 'The second guest tab did not become selected.'
         Paste-Image $windowB $tabB 1
         $b=(Get-ChildItem -LiteralPath $tabB -Filter '*.png')[0].FullName
         $bHash=(Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[ushort[]]@(17,16,9))
-        Start-Sleep -Milliseconds 300
+        Wait-For { [LaqayGuestDesktop]::SelectedTabName([IntPtr]$window.HWND).Contains('tab-a') } 'The original guest tab did not become selected.'
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[ushort[]]@(17,76))
         Assert-True ([LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND) -eq $tabA) 'The original guest tab is not active.'
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[ushort[]]@(27))
