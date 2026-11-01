@@ -384,8 +384,8 @@ try{
         try{
             if(Test-Path -LiteralPath $credentialPath){Remove-Item -LiteralPath $credentialPath}
             $report.CredentialRemoved=-not (Test-Path -LiteralPath $credentialPath)
-            Start-Sleep -Milliseconds 500
-            [LaqayGuestDesktop]::DisconnectPeer();$report.PeerDisconnected=$true
+            Wait-For {try{[LaqayGuestDesktop]::DisconnectPeer();$true}catch{$false}} 'The owned SMB connection did not close after Explorer cleanup.'
+            $report.PeerDisconnected=$true
         }catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     }
     $report.FinishedUtc=[DateTime]::UtcNow.ToString('o')

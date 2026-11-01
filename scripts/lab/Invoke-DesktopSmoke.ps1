@@ -180,7 +180,11 @@ exit $LASTEXITCODE
             param($runId,$files)
             $ErrorActionPreference='Stop'
             $fixture='C:\LaqayLab\Share\Paste-'+$runId
-            $all=@(Get-ChildItem -LiteralPath $fixture -Recurse -Force)
+            if(((Get-Item -LiteralPath $fixture).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unexpected server fixture reparse point.'}
+            $directories=@(Get-ChildItem -LiteralPath $fixture -Force)
+            if($directories.Count -ne 2 -or @($directories | Where-Object {-not $_.PSIsContainer -or $_.Name -notin @('images','files') -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}).Count){throw 'Unexpected server fixture directories.'}
+            $all=@($directories)
+            foreach($directory in $directories){$all+=@(Get-ChildItem -LiteralPath $directory.FullName -Force)}
             if($all.Count -ne 5 -or @($all | Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count -or @($all | Where-Object {-not $_.PSIsContainer}).Count -ne 3){throw 'Unexpected server fixture contents.'}
             $names=@($files.RelativePath)
             if(@($names | Select-Object -Unique).Count -ne 3 -or @($names | Where-Object {$_ -notmatch '^(images\\Screenshot_\d{8}_\d{6}(_\d{3,})?\.png|files\\two\.bin)$'}).Count -or @($names | Where-Object {$_ -like 'images\*'}).Count -ne 2 -or $names -notcontains 'files\two.bin'){throw 'Unexpected server fixture paths.'}
@@ -228,7 +232,15 @@ exit $LASTEXITCODE
                 $ErrorActionPreference='Stop'
                 $fixture='C:\LaqayLab\Share\Paste-'+$runId
                 if(Test-Path -LiteralPath $fixture){
-                    $all=@(Get-ChildItem -LiteralPath $fixture -Force -Recurse)
+                    if(((Get-Item -LiteralPath $fixture).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Refusing a server fixture reparse point.'}
+                    $directories=@(Get-ChildItem -LiteralPath $fixture -Force)
+                    if(@($directories | Where-Object {-not $_.PSIsContainer -or $_.Name -notin @('images','files') -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}).Count){throw 'Refusing unexpected server directories.'}
+                    $all=@($directories)
+                    foreach($directory in $directories){
+                        $children=@(Get-ChildItem -LiteralPath $directory.FullName -Force)
+                        if(@($children | Where-Object {$_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}).Count){throw 'Refusing nested server directories or reparse points.'}
+                        $all+=@($children)
+                    }
                     foreach($item in @((Get-Item -LiteralPath $fixture))+$all){
                         $relative=$item.FullName.Substring($fixture.Length)
                         if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($relative -and $relative -notmatch '^\\(images|files)(\\(Screenshot_\d{8}_\d{6}(_\d{3,})?\.png|two\.bin))?$')){throw 'Refusing to delete unexpected server contents.'}
