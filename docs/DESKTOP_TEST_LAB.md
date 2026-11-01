@@ -147,3 +147,48 @@ for the fixture's permission boundary. These smoke
 cases do not cover audio, every notification, other applications, rapid tab or
 clipboard races, UNC failures, OneDrive, RDP, or actual Windows login startup.
 Record completed scenarios and OS builds without expanding their scope.
+
+## Real login startup cycle
+
+`Invoke-StartupCycle.ps1` validates startup across actual boots and logons of the
+owned primary guest. It requires that guest to start off, an explicitly authorized
+administrator process, private output storage, the expected application SHA-256,
+and explicit Python/RustWork paths. It never elevates itself or restarts, signs
+out, locks, or sends input to the host.
+
+The cycle boots the guest to configure its temporary local lab account for three
+automatic logons, then reboots that guest to establish the initial test session.
+Only the guest Winlogon configuration receives the temporary lab credential;
+it is never printed, passed on a command line, or included in reports.
+
+1. Enable startup through the normal tray application's command handler. Require
+   the exact quoted executable in its own HKCU Run value and a clean app exit.
+   Existing startup registrations are refused, not replaced. Snapshot Enabled.
+2. Shut down and boot the guest. The verifier never starts the application:
+   it waits for Windows, then checks the single process's executable, start time
+   after this boot, session, user, and non-elevated token before adopting it into
+   an owned KillOnJobClose job. Require actual Ctrl+V in Explorer to produce the
+   correct synthetic PNG. Disable startup through that same application and exit.
+3. Shut down and boot the guest again. Require its Run value to remain absent
+   and observe no Laqay process for 180 seconds in the interactive guest session.
+   Restore Enabled and verify the original preference and absence of Run.
+
+Each runtime phase gets its own RustWork lease and unique interactive task;
+boot/shutdown and guest logon configuration stay outside those leases. The
+existing desktop guard and five/seven/eight-minute input/task/host deadlines
+apply. Reports include boot/start times, PID, session, parent PID, exact named
+cases, exit status, restoration, and the observation duration. A changed boot
+time is required between phases; re-running a task in the same boot cannot pass.
+
+Windows [does not guarantee prompt execution of Run entries](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
+The enabled wait and disabled observation are each bounded at 180 seconds;
+failure to start within that interval fails this test, and an absent process
+only proves absence during the recorded interval. This does not cover startup
+disabled externally in Task Manager, arbitrary policies, or every Windows build.
+
+On failure, the cycle attempts a separate guest cleanup task. Final cleanup
+disables the guest's temporary auto-logon, deletes its Winlogon password/count
+values, and shuts down only the owned VM. The report cannot pass without app
+settings restored, auto-logon disabled, tasks removed, normal application exits,
+and the VM confirmed off. The lab credential remains in its protected temporary
+provisioning storage until teardown. Future cycles explicitly re-arm guest logon.
