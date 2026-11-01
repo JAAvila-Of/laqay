@@ -21,6 +21,7 @@ $profile = @(Get-NetConnectionProfile -InterfaceIndex $adapters[0].ifIndex)
 if ($profile.Count -ne 1) { throw 'The private lab network profile is not ready.' }
 $profile | Set-NetConnectionProfile -NetworkCategory Private
 Set-ItemProperty -LiteralPath 'HKLM:/SYSTEM/CurrentControlSet/Control/Terminal Server' -Name fDenyTSConnections -Value 0
+Set-Service -Name TermService -StartupType Automatic
 Start-Service -Name TermService
 foreach ($port in @(3389,445)) {
     New-NetFirewallRule -Name "LaqayLab-$LabId-$port" -DisplayName "Laqay lab $port" -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -RemoteAddress '10.77.166.0/24' -Profile Private | Out-Null

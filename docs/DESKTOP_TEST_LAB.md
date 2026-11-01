@@ -213,8 +213,8 @@ insufficient reserves, and concurrency limits are tested without creating VMs.
 Provision/install a new Peer separately first; do not run two installers together.
 
 The initializer grants the temporary guest account NTFS Modify on its own share
-directory, in addition to its existing SMB share permission, and starts the guest
-Remote Desktop service. It does not change SMB signing, guest authentication,
+directory, in addition to its existing SMB share permission, and configures the
+guest Remote Desktop service for automatic startup. It does not change SMB signing, guest authentication,
 NLA, or host security settings. Each guest has its own generated credential.
 
 With both owned guests already running, `Test-PrivateLabNetwork.ps1` checks their
