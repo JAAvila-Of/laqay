@@ -85,9 +85,11 @@ function Invoke-Phase([string]$phase){
     New-Item -ItemType Directory -Path $directory | Out-Null
     $receipt=Join-Path $directory 'rust-work.json'
     $previous=$ErrorActionPreference
+    $bootArguments=@()
+    if($phase -in @('Verify','Absent')){$bootArguments=@('-StartGuestForStartup')}
     try{
         $ErrorActionPreference='Continue'
-        & $PythonPath $CoordinatorPath --project laqay-startup-cycle --receipt $receipt --family rust -- (Join-Path $PSHOME 'powershell.exe') -NoProfile -File $suite -LabId $LabId -RunId $runId -CycleId $CycleId -StartupPhase $phase -ExpectedExecutableSha256 $ExpectedExecutableSha256 -OutputDirectory $directory *> (Join-Path $directory 'runtime.log')
+        & $PythonPath $CoordinatorPath --project laqay-startup-cycle --receipt $receipt --family rust -- (Join-Path $PSHOME 'powershell.exe') -NoProfile -File $suite -LabId $LabId -RunId $runId -CycleId $CycleId -StartupPhase $phase -ExpectedExecutableSha256 $ExpectedExecutableSha256 -OutputDirectory $directory @bootArguments *> (Join-Path $directory 'runtime.log')
         $exitCode=$LASTEXITCODE
     }finally{$ErrorActionPreference=$previous}
     $entryReport=[pscustomobject]@{Phase=$phase;RunId=$runId;ExitCode=$exitCode;Passed=$false;Report=$null}
@@ -106,9 +108,9 @@ try{
     Save-Cycle 'Establishing the initial lab logon';Stop-Guest;Start-Guest
     $settingsTouched=$true;$report.SettingsRestored=$false
     Invoke-Phase 'Enable'
-    Save-Cycle 'Booting with startup enabled';Stop-Guest;Start-Guest
+    Save-Cycle 'Preparing enabled startup boot';Stop-Guest
     Invoke-Phase 'Verify'
-    Save-Cycle 'Booting with startup disabled';Stop-Guest;Start-Guest
+    Save-Cycle 'Preparing disabled startup boot';Stop-Guest
     Invoke-Phase 'Absent'
     $report.SettingsRestored=$true
     # Exercise the default transport after the startup phases changed it.

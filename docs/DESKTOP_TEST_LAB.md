@@ -175,8 +175,10 @@ it is never printed, passed on a command line, or included in reports.
 4. Run all thirteen Explorer regression cases through the default transport in
    that same guest session, then restore its preferences again.
 
-Each runtime phase gets its own RustWork lease and unique interactive task;
-boot/shutdown and guest logon configuration stay outside those leases. The
+Each runtime phase gets its own RustWork lease and unique interactive task.
+The enabled/disabled verification boots occur inside their runtime leases:
+Windows may launch the Rust application before the interactive verifier starts.
+Setup boots, shutdown, and guest logon configuration stay outside those leases. The
 existing desktop guard and five/seven/eight-minute input/task/host deadlines
 apply. Reports include boot/start times, PID, session, parent PID, exact named
 cases, exit status, restoration, and the observation duration. A changed boot

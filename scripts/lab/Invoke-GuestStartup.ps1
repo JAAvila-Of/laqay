@@ -158,6 +158,9 @@ try{
     }
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
+    if(-not $applicationStarted -and $state -and $Phase -in @('Absent','Cleanup') -and @(Get-Process laqay -ErrorAction SilentlyContinue).Count -eq 1){
+        try{$report.ApplicationPid=[LaqayGuestDesktop]::AdoptStartupApplication($executable,$boot);$applicationStarted=$true;$report.ApplicationClosed=$false}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+    }
     $report.ApplicationStarted=$applicationStarted
     if($applicationStarted){try{
         $report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced

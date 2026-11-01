@@ -6,6 +6,7 @@ param(
     [string]$OutputDirectory,
     [ValidateSet('Explorer','Enable','Verify','Absent','Cleanup')][string]$StartupPhase='Explorer',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
+    [switch]$StartGuestForStartup,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -13,6 +14,7 @@ $ProgressPreference='SilentlyContinue'
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;return}
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
+if($StartGuestForStartup -and $StartupPhase -notin @('Verify','Absent')){throw 'Only a real startup verification phase may boot its guest inside the runtime lease.'}
 if(-not $env:RUST_WORK_JOB){throw 'Run the Rust application suite through the shared RustWork coordinator with --family rust.'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'An authorized administrator process is required for PowerShell Direct.'}
@@ -25,7 +27,8 @@ $entry=$entry[0]
 $expectedDisk=Join-Path $root 'vms/Primary/system.vhdx'
 if([IO.Path]::GetFullPath($entry.DiskPath) -ne [IO.Path]::GetFullPath($expectedDisk)){throw 'Unexpected primary disk path.'}
 $vm=Get-VM -Id ([guid]$entry.Id)
-if($vm.State -ne 'Running' -or $vm.Name -ne $entry.Name -or $vm.Notes -ne ('Laqay disposable desktop lab '+$LabId)){throw 'The owned lab guest must already be running.'}
+$expectedState=if($StartGuestForStartup){'Off'}else{'Running'}
+if($vm.State.ToString() -ne $expectedState -or $vm.Name -ne $entry.Name -or $vm.Notes -ne ('Laqay disposable desktop lab '+$LabId)){throw ('The owned lab guest must be '+$expectedState+'.')}
 $drives=@(Get-VMHardDiskDrive -VM $vm)
 if($drives.Count -ne 1 -or $drives[0].Path -ne $entry.DiskPath){throw 'Unexpected primary guest disk attachment.'}
 $credential=Import-Clixml -LiteralPath (Join-Path (Split-Path $entry.DiskPath) 'credential.xml')
@@ -38,6 +41,17 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
 try{
+    if($StartGuestForStartup){
+        $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
+        & $control -Action Start -LabId $LabId | Out-Null
+        $bootLimit=[DateTime]::UtcNow.AddMinutes(5)
+        do{
+            $status=& $control -Action Status -LabId $LabId | ConvertFrom-Json
+            if($status.Guest -and $status.Guest.Ready){break}
+            Start-Sleep -Seconds 2
+        }while([DateTime]::UtcNow -lt $bootLimit)
+        if(-not $status.Guest -or -not $status.Guest.Ready){throw 'The startup guest did not become ready within five minutes.'}
+    }
     $session=New-PSSession -VMId $vm.Id -Credential $credential
     Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$StartupPhase -ScriptBlock {
         param($labId,$runId,$runRoot,$startupPhase)
