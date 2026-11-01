@@ -229,12 +229,12 @@ exit $LASTEXITCODE
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
         if($IncludeUnc){
             try{
-                $summary.CredentialRemoved=Invoke-Command -Session $session -ArgumentList $guestRoot -ScriptBlock {
+                $summary.CredentialRemoved=[bool](Invoke-Command -Session $session -ArgumentList $guestRoot -ScriptBlock {
                     param($runRoot)
                     $path=Join-Path $runRoot 'peer-credential.xml'
                     if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -ErrorAction Stop}
                     -not (Test-Path -LiteralPath $path)
-                }
+                })
                 if(-not $summary.CredentialRemoved){throw 'Guest peer credential cleanup failed.'}
             }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
         }
@@ -246,7 +246,7 @@ exit $LASTEXITCODE
     }
     if($peerSession -and $peerFixtureReserved){
         try{
-            $summary.ServerFixtureRemoved=Invoke-Command -Session $peerSession -ArgumentList $RunId -ScriptBlock {
+            $summary.ServerFixtureRemoved=[bool](Invoke-Command -Session $peerSession -ArgumentList $RunId -ScriptBlock {
                 param($runId)
                 $ErrorActionPreference='Stop'
                 $fixture='C:\LaqayLab\Share\Paste-'+$runId
@@ -269,7 +269,7 @@ exit $LASTEXITCODE
                     [IO.Directory]::Delete($fixture)
                 }
                 -not (Test-Path -LiteralPath $fixture)
-            }
+            })
             if(-not $summary.ServerFixtureRemoved){throw 'Server fixture cleanup failed.'}
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
     }
