@@ -99,3 +99,37 @@ Preparation checks run with `scripts/lab/Test-LabPreparation.ps1`. They validate
 planning, invalid ownership/path rejection, unattended XML, and creation of a
 small seed ISO without creating, booting, or removing any VM. Actual provisioning,
 installation, shutdown, and teardown still require validation on a suitable host.
+
+## Explorer smoke suite
+
+`Invoke-DesktopSmoke.ps1` transports a bounded suite into an already running,
+owned primary guest through PowerShell Direct. It requires the host's shared
+RustWork runtime lease (`--family rust`); VM start/shutdown remain separate
+phases. Supply a fresh run ID, the expected executable SHA-256, and a private
+output directory. The controller never elevates itself.
+
+The suite runs as the guest's logged-on `LaqayLab` user through an
+Interactive/Limited scheduled task. A guard checks lab identity, Windows 11
+Enterprise on a Microsoft virtual machine, a nonzero session, a non-elevated
+token, STA, and an unlocked Default input desktop before enabling controls.
+The helper does not operate the host clipboard or foreground window. Compile-only
+checks explicitly reject unarmed controls and invalid/unowned lab identities.
+
+Nine required cases exercise real Ctrl+V through guest SendInput and inspect
+observable results: exact 2x2 image colors/dimensions, preserving existing images,
+multiple-file paste with simultaneous bitmap data, text-plus-image clipboard
+exclusion in address/search/rename fields, disabled/re-enabled behavior, and
+active-tab selection in both directions within one Explorer window. Enabled uses
+the normal application's owned menu command handler. Preferences are restored.
+The application runs with normal permissions in an owned KillOnJobClose process
+job. The suite has a five-minute input deadline, a seven-minute guest task limit,
+and an eight-minute host deadline. It closes its Explorer windows and application;
+the controller removes the task and retains reports, logs, and synthetic output.
+The calling host operation must shut down the owned guest in its final cleanup.
+
+Successful transport, a started task, or a partial report cannot pass: the host
+requires every named case, clean application shutdown, restored preferences,
+no forced termination, no cleanup errors, and task result zero. These smoke
+cases do not cover audio, every notification, other applications, rapid tab or
+clipboard races, UNC failures, OneDrive, RDP, or actual Windows login startup.
+Record completed scenarios and OS builds without expanding their scope.
