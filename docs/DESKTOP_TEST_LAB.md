@@ -359,3 +359,20 @@ private evidence. Preparation can run one guest at a time; queue the paired
 runtime with both guests off, then apply the same 11/7 GiB admission limits.
 This does not test client-to-server file transfer, disconnection/reconnection,
 clipboard policy restrictions, Windows 10, or arbitrary RDP client versions.
+
+### Explicit consent for the owned guest RDP file
+
+Windows can require a first-use account acknowledgement and per-connection
+resource consent when opening RDP files. With separate, explicit permission,
+`-AllowGuestRdpFileConsent` recognizes only the owned native client dialogs,
+checks that the locally generated RDP file is unchanged and the peer name
+matches, acknowledges first use, and selects only Clipboard. Other resource
+checkboxes remain off. It does not accept certificate warnings or revert
+Windows security dialog policies. See the
+[Windows dialog description](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/understanding-security-warnings).
+
+The first-use acknowledgement remains only in the disposable LaqayLab guest
+account until the VM is removed; disclose this when obtaining permission.
+Without the switch, no consent is accepted automatically. Setup also records
+current OS/client versions and evaluation licensing status as read-only private
+diagnostics; it never changes activation, clocks, license keys, or network access.

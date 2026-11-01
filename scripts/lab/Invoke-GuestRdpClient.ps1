@@ -2,6 +2,7 @@
 param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
+    [switch]$AllowGuestRdpFileConsent,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -18,7 +19,7 @@ try{
     if($credential.UserName -notmatch '^(LQW11-[A-Z0-9]{8})\\LaqayLab$'){throw 'Unexpected RDP peer credential.'}
     $peer=$Matches[1]
     Remove-Item -LiteralPath $path
-    [LaqayGuestDesktop]::RunRdpClient($LabId,$RunId,$peer,$credential.Password)
+    [LaqayGuestDesktop]::RunRdpClient($LabId,$RunId,$peer,$credential.Password,[bool]$AllowGuestRdpFileConsent)
 }finally{
     $credential=$null
     if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}

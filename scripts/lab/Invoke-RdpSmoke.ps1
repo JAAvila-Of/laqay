@@ -4,6 +4,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [string]$OutputDirectory,
+    [switch]$AllowGuestRdpFileConsent,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -150,8 +151,8 @@ try{
         $allocated[$role]=$true
         $credentials[$role]=[PSCredential]::new(($name+'\LaqayLab'),$credentials[$role].Password)
         foreach($file in @('GuestDesktopControls.cs','GuestSessionQuery.cs','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestRdpClient.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $sessions[$role]}
-        Invoke-Command -Session $sessions[$role] -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$role -ScriptBlock {
-            param($labId,$runId,$sha,$runRoot,$taskName,$role)
+        Invoke-Command -Session $sessions[$role] -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$role,[bool]$AllowGuestRdpFileConsent -ScriptBlock {
+            param($labId,$runId,$sha,$runRoot,$taskName,$role,$allowConsent)
             $ErrorActionPreference='Stop'
             $launcher=@'
 $ErrorActionPreference='Stop'
@@ -160,6 +161,7 @@ exit $LASTEXITCODE
 '@
             $driver=if($role -eq 'Primary'){'Invoke-GuestRdpClient.ps1'}else{'Invoke-GuestDesktopSmoke.ps1'}
             $extra=if($role -eq 'Peer'){"-IncludeRdp -ExpectedExecutableSha256 '$sha'"}else{''}
+            if($role -eq 'Primary' -and $allowConsent){$extra='-AllowGuestRdpFileConsent'}
             $launcher=$launcher.Replace('@@ROOT@@',$runRoot).Replace('@@DRIVER@@',$driver).Replace('@@LAB@@',$labId).Replace('@@RUN@@',$runId).Replace('@@EXTRA@@',$extra)
             Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
             if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}

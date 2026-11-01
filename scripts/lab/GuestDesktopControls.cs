@@ -138,11 +138,14 @@ public static class LaqayGuestDesktop {
     }
     public static bool ClipboardTextEquals(string expected) {Guard();return Clipboard.ContainsText() && Clipboard.GetText()==expected;}
     public static void RunRdpClient(string labId,string runId,string peer,System.Security.SecureString password) {
+        RunRdpClient(labId,runId,peer,password,false);
+    }
+    public static void RunRdpClient(string labId,string runId,string peer,System.Security.SecureString password,bool allowFileConsent) {
         RequireRole("Primary");
         if(SessionProtocol()!=0 || !Regex.IsMatch(labId,"^[a-f0-9]{32}$") || !Regex.IsMatch(runId,"^[a-f0-9]{32}$") ||
             !Regex.IsMatch(peer,"^LQW11-[A-Z0-9]{8}$") || password==null)
             throw new InvalidOperationException("Unexpected isolated RDP client identity.");
-        using(var client=new RdpClient(labId,runId,peer,password)) client.Run();
+        using(var client=new RdpClient(labId,runId,peer,password,allowFileConsent)) client.Run();
     }
     sealed class RdpClient : IDisposable {
         [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
@@ -157,6 +160,7 @@ public static class LaqayGuestDesktop {
         [DllImport("advapi32.dll")] static extern void CredFree(IntPtr value);
         readonly string labId,runId,peer,root,target;
         readonly System.Security.SecureString password;
+        readonly bool allowFileConsent;
         readonly JavaScriptSerializer json=new JavaScriptSerializer();
         readonly Dictionary<string,object> report=new Dictionary<string,object>();
         readonly List<string> operations=new List<string>();
@@ -166,14 +170,16 @@ public static class LaqayGuestDesktop {
         Process process; IntPtr clientJob;
         bool loggedOn,closing,disconnected,credentialWritten,diagnosticCaptured,forced;
         int sequence,serverSession;DateTime closeDeadline,lastStatus,lastClose;
-        public RdpClient(string lab,string run,string server,System.Security.SecureString secret) {
-            labId=lab;runId=run;peer=server;password=secret;root=@"C:\LaqayLab\Runs\"+run;target="TERMSRV/"+peer;
+        string configuration;
+        public RdpClient(string lab,string run,string server,System.Security.SecureString secret,bool consent) {
+            labId=lab;runId=run;peer=server;password=secret;allowFileConsent=consent;root=@"C:\LaqayLab\Runs\"+run;target="TERMSRV/"+peer;
             if(!Directory.Exists(root) || File.Exists(Path.Combine(root,"client-report.json"))) throw new InvalidOperationException("Missing or reused RDP client run.");
             report["LabId"]=labId;report["RunId"]=runId;report["LoggedOn"]=false;report["Passed"]=false;
             report["Error"]=null;report["AckSequence"]=0;report["Operations"]=operations;report["Disconnected"]=false;
             report["AuthenticationLevel"]=1;report["CredSsp"]=true;report["ClipboardRedirection"]=true;
             report["SessionId"]=Process.GetCurrentProcess().SessionId;report["StartedUtc"]=DateTime.UtcNow.ToString("o");report["FinishedUtc"]=null;
             report["Stage"]="Created";report["CredentialRemoved"]=false;report["ForcedTermination"]=false;report["ClientExitCode"]=null;
+            report["FileConsentAllowed"]=allowFileConsent;report["FirstUseConsentAccepted"]=false;report["ClipboardConsentAccepted"]=false;
         }
         void Save() {
             string temporary=Path.Combine(root,"client-report.tmp");File.WriteAllText(temporary,json.Serialize(report));
@@ -242,6 +248,59 @@ public static class LaqayGuestDesktop {
             error=error.GetBaseException();report["Error"]=error.GetType().Name+": "+error.Message;report["ErrorHResult"]=error.HResult;
             CaptureDiagnostic();Stage("Failed");context.ExitThread();
         }
+        static string Label(AutomationElement element) {return Regex.Replace(element.Current.Name??"",@"\s+"," ").Trim();}
+        void InvokeConsentButton(AutomationElement element) {
+            int handle=element.Current.NativeWindowHandle;
+            if(handle!=0) {
+                uint pid;GetWindowThreadProcessId(new IntPtr(handle),out pid);
+                if(pid!=(uint)process.Id) throw new InvalidOperationException("The consent button belongs to another process.");
+                var name=new StringBuilder(128);GetClassNameW(new IntPtr(handle),name,name.Capacity);
+                if(name.ToString()=="Button") {if(!PostMessageW(new IntPtr(handle),0xF5,IntPtr.Zero,IntPtr.Zero)) throw new InvalidOperationException("The owned consent button could not be invoked.");return;}
+            }
+            ((InvokePattern)element.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+        }
+        void AcceptOwnedFileConsent() {
+            if(!allowFileConsent) return;
+            RequireRole("Primary");
+            if(File.ReadAllText(Path.Combine(root,"connection.rdp"),Encoding.Unicode)!=configuration) throw new InvalidOperationException("The owned RDP file changed before consent.");
+            var candidates=AutomationElement.RootElement.FindAll(TreeScope.Children,new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id));
+            foreach(AutomationElement window in candidates) {
+                if(window.Current.ClassName=="TscShellContainerClass") continue;
+                var controls=window.FindAll(TreeScope.Descendants,Condition.TrueCondition);
+                if(controls.Count>500) continue;
+                AutomationElement first=null,ok=null,connect=null;var boxes=new List<AutomationElement>();var labels=new StringBuilder();
+                for(int i=0;i<controls.Count;i++) {
+                    var element=controls[i];var info=element.Current;string label=Label(element);labels.AppendLine(label);
+                    if(info.ControlType==ControlType.CheckBox) {
+                        boxes.Add(element);
+                        if(label=="I understand and allow RDP files to open on this device for my account") first=element;
+                    }
+                    if(info.ControlType==ControlType.Button && label=="OK") ok=element;
+                    if(info.ControlType==ControlType.Button && label=="Connect") connect=element;
+                    object value;
+                    if(!info.IsPassword && element.TryGetCurrentPattern(ValuePattern.Pattern,out value)) labels.AppendLine(((ValuePattern)value).Current.Value);
+                }
+                string text=labels.ToString();
+                if(first!=null && boxes.Count==1 && ok!=null && text.Contains("Opening Remote Desktop Connection") && !(bool)report["FirstUseConsentAccepted"]) {
+                    var toggle=(TogglePattern)first.GetCurrentPattern(TogglePattern.Pattern);
+                    if(toggle.Current.ToggleState!=ToggleState.On) {toggle.Toggle();return;}
+                    if(ok.Current.IsEnabled) {InvokeConsentButton(ok);report["FirstUseConsentAccepted"]=true;Stage("GuestFirstUseAcknowledged");return;}
+                }
+                bool security=text.Contains("Caution: Unknown remote connection") || text.Contains("Verify the publisher of this remote connection");
+                if(security && connect!=null && text.IndexOf(peer,StringComparison.OrdinalIgnoreCase)>=0 && !(bool)report["ClipboardConsentAccepted"]) {
+                    int clipboard=0;
+                    foreach(var box in boxes) {
+                        bool wanted=String.Equals(Label(box),"Clipboard",StringComparison.OrdinalIgnoreCase);
+                        if(wanted) clipboard++;
+                        var toggle=(TogglePattern)box.GetCurrentPattern(TogglePattern.Pattern);
+                        var expected=wanted?ToggleState.On:ToggleState.Off;
+                        if(toggle.Current.ToggleState!=expected) {toggle.Toggle();return;}
+                    }
+                    if(clipboard!=1) throw new InvalidOperationException("The owned connection warning did not expose exactly one Clipboard resource.");
+                    if(connect.Current.IsEnabled) {InvokeConsentButton(connect);report["ClipboardConsentAccepted"]=true;Stage("GuestClipboardSharingAuthorized");return;}
+                }
+            }
+        }
         Dictionary<string,object> ReadProof(string name) {
             string path=Path.Combine(root,name);if(!File.Exists(path)) return null;
             var proof=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
@@ -273,6 +332,7 @@ public static class LaqayGuestDesktop {
                 }
                 if(process.HasExited) throw new InvalidOperationException("The owned RDP client exited before controlled disconnect.");
                 if(!loggedOn) {
+                    try {AcceptOwnedFileConsent();} catch(ElementNotAvailableException) { }
                     var proof=ReadProof("server-session.json");
                     if(proof!=null) {
                         serverSession=Convert.ToInt32(proof["PeerSessionId"]);if(serverSession<=0 || ClientWindow()==IntPtr.Zero) throw new InvalidOperationException("Missing verified RDP session or native window.");
@@ -306,11 +366,11 @@ public static class LaqayGuestDesktop {
                 Stage("PreparingSessionCredential");WriteCredential();
                 string file=Path.Combine(root,"connection.rdp");
                 if(File.Exists(file)) throw new InvalidOperationException("Refusing an existing RDP file.");
-                string configuration="full address:s:"+peer+"\r\nusername:s:"+peer+"\\LaqayLab\r\n"+
+                configuration="full address:s:"+peer+"\r\nusername:s:"+peer+"\\LaqayLab\r\n"+
                     "authentication level:i:1\r\nenablecredsspsupport:i:1\r\nprompt for credentials:i:0\r\n"+
                     "screen mode id:i:1\r\ndesktopwidth:i:1024\r\ndesktopheight:i:768\r\nsession bpp:i:32\r\n"+
                     "redirectclipboard:i:1\r\naudiomode:i:2\r\naudiocapturemode:i:0\r\nredirectdrives:i:0\r\ndrivestoredirect:s:\r\n"+
-                    "redirectprinters:i:0\r\nredirectsmartcards:i:0\r\nredirectcomports:i:0\r\nredirectposdevices:i:0\r\ndevicestoredirect:s:\r\n"+
+                    "redirectprinters:i:0\r\nredirectsmartcards:i:0\r\nredirectcomports:i:0\r\nredirectposdevices:i:0\r\ndevicestoredirect:s:\r\nredirectwebauthn:i:0\r\nredirectlocation:i:0\r\ncamerastoredirect:s:\r\n"+
                     "autoreconnection enabled:i:0\r\nuse multimon:i:0\r\nadministrative session:i:0\r\n";
                 File.WriteAllText(file,configuration,Encoding.Unicode);
                 clientJob=CreateJobObjectW(IntPtr.Zero,null);if(clientJob==IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
