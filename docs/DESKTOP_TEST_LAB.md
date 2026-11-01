@@ -196,3 +196,46 @@ values, and shuts down only the owned VM. The report cannot pass without app
 settings restored, auto-logon disabled, tasks removed, normal application exits,
 and the VM confirmed off. The lab credential remains in its protected temporary
 provisioning storage until teardown. Future cycles explicitly re-arm guest logon.
+
+## Paired private guests
+
+Single-guest operation remains the default. After explicitly agreeing on a
+two-guest resource budget, start the owned Primary and Peer guests with
+`-MaximumRunningGuests 2`. Both roles must be present with distinct manifest IDs,
+matching ownership, fixed 4 GiB RAM, two CPUs, one owned disk, and one adapter on
+the same owned private switch. Foreign attachments to that switch are refused.
+No host adapter, NAT, external switch, or physical LAN connection is added.
+
+The admission check reserves capacity for the remaining guests plus 3 GiB for
+the host: at least 11 GiB currently free before the first paired start and 7 GiB
+before the second. Every start also requires 40 GiB free disk. Exact boundaries,
+insufficient reserves, and concurrency limits are tested without creating VMs.
+Provision/install a new Peer separately first; do not run two installers together.
+
+The initializer grants the temporary guest account NTFS Modify on its own share
+directory, in addition to its existing SMB share permission, and configures the
+guest Remote Desktop service for automatic startup. It does not change SMB signing, guest authentication,
+NLA, or host security settings. Each guest has its own generated credential.
+
+An unidentified guest network can use the Public profile after a reboot. The
+lab's two inbound rules therefore apply across guest profiles, while requiring
+the single lab interface, the exact role IP (10.77.166.10 or 10.77.166.11), and
+source 10.77.166.0/24. No machine-wide network category policy is changed.
+`Set-GuestLabFirewall.ps1` can create or migrate only those owned rules from its
+fixed `C:\LaqayLab` location after checking the marker, virtual machine, OS,
+administrator token, sole adapter, expected address, and absence of a default
+IPv4 route. Unexpected existing rules are refused. New seeds include this helper;
+existing guests need it copied and invoked through their guarded admin session.
+
+With both owned guests already running, `Test-PrivateLabNetwork.ps1` checks their
+markers, addresses, absence of an IPv4 default route, and private attachments.
+It probes Primary-to-Peer TCP 445/3389 and Peer-to-Primary TCP 445, then transfers
+four synthetic bytes over authenticated, signed SMB using only the Peer account.
+The bytes are read back and hashes compared from both guests. The temporary
+session drive and exact newly allocated fixture are removed; unexpected remaining
+content prevents directory deletion. Reports belong in private output storage.
+
+This preparation script does not boot or stop guests, launch Laqay, manipulate
+desktops/clipboards, or test Explorer paste or an RDP logon. A calling operation
+must stop both guests in its final cleanup. TCP connectivity and an SMB round trip
+are prerequisites, not evidence that the corresponding paste scenarios pass.
