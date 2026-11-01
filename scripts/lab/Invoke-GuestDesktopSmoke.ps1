@@ -3,6 +3,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
+    [switch]$IncludeUnc,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -23,6 +24,9 @@ if($PrepareOnly){
         try{& $operation}catch{$rejected=$true}
         if(-not $rejected){throw 'Unarmed clipboard inspection was accepted.'}
     }
+    $rejected=$false
+    try{[LaqayGuestDesktop]::ConnectPeer('LQW11-12345678\LaqayLab',(ConvertTo-SecureString 'Synthetic-only' -AsPlainText -Force))}catch{$rejected=$true}
+    if(-not $rejected){throw 'An unarmed network connection was accepted.'}
     $rejected=$false
     try{[LaqayGuestDesktop]::Arm('invalid-id')}catch{$rejected=$true}
     if(-not $rejected){throw 'An invalid guest identity was accepted.'}
@@ -46,7 +50,9 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    UncFiles=@();SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+$credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
 $applicationStarted=$false
 $preferencesTouched=$false
@@ -303,6 +309,58 @@ try{
         Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
     }
     Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
+    if($IncludeUnc){
+        $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
+        Assert-True ($ready.Role -eq 'Primary') 'UNC paste requires the primary guest.'
+        Assert-True (@(Get-SmbConnection | Where-Object ServerName -eq '10.77.166.11').Count -eq 0) 'The interactive session already has a peer connection.'
+        $peerCredential=Import-Clixml -LiteralPath $credentialPath
+        try{[LaqayGuestDesktop]::ConnectPeer($peerCredential.UserName,$peerCredential.Password)}finally{
+            $peerCredential=$null
+            Remove-Item -LiteralPath $credentialPath
+            $report.CredentialRemoved=-not (Test-Path -LiteralPath $credentialPath)
+        }
+        $unc='\\10.77.166.11\LaqayLab\Paste-'+$RunId
+        Assert-True ((Test-Path -LiteralPath $unc -PathType Container) -and @(Get-ChildItem -LiteralPath $unc -Force).Count -eq 0) 'The reserved UNC fixture is missing or nonempty.'
+        $uncImages=Join-Path $unc 'images'
+        New-Item -ItemType Directory -Path $uncImages | Out-Null
+        $uncWindow=Open-Folder $uncImages
+        Run-Case 'UncImagePaste' {
+            [LaqayGuestDesktop]::ImageClipboard()
+            $sequence=[LaqayGuestDesktop]::ClipboardSequence()
+            [LaqayGuestDesktop]::Chord([IntPtr]$uncWindow.HWND,[System.UInt16[]]@(17,86))
+            Wait-For {@(Get-ChildItem -LiteralPath $uncImages -Filter '*.png').Count -eq 1} 'UNC image paste did not publish a PNG.' 20
+            Check-Png (Get-ChildItem -LiteralPath $uncImages -Filter '*.png')[0].FullName
+            Assert-True ([LaqayGuestDesktop]::ClipboardSequence() -eq $sequence -and [LaqayGuestDesktop]::ClipboardImageIsFixture()) 'UNC image paste changed the clipboard.'
+            $connection=@(Get-SmbConnection | Where-Object {$_.ServerName -eq '10.77.166.11' -and $_.ShareName -eq 'LaqayLab'})
+            Assert-True ($connection.Count -eq 1 -and $connection[0].Signed) 'The interactive SMB connection is not signed.'
+            $report.SmbSigned=$true
+        }
+        Run-Case 'UncExistingImagePreserved' {
+            $first=(Get-ChildItem -LiteralPath $uncImages -Filter '*.png')[0].FullName
+            $hash=(Get-FileHash -LiteralPath $first -Algorithm SHA256).Hash
+            Start-Sleep -Milliseconds 1100
+            Paste-Image $uncWindow $uncImages 2
+            Assert-True ((Get-FileHash -LiteralPath $first -Algorithm SHA256).Hash -eq $hash) 'An existing UNC image changed.'
+            foreach($file in @(Get-ChildItem -LiteralPath $uncImages -File)){Check-Png $file.FullName}
+            Assert-True (@(Get-ChildItem -LiteralPath $uncImages -Force).Count -eq 2) 'UNC image paste left unexpected files.'
+        }
+        Run-Case 'UncNativeFilePaste' {
+            $destination=Join-Path $unc 'files'
+            New-Item -ItemType Directory -Path $destination | Out-Null
+            $window=Open-Folder $destination
+            $source=Join-Path $root 'data/sources/two.bin'
+            [LaqayGuestDesktop]::FilesAndImageClipboard([string[]]@($source))
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+            Wait-For {Test-Path -LiteralPath (Join-Path $destination 'two.bin')} 'UNC native file paste failed.' 20
+            Assert-True ((Get-FileHash -LiteralPath (Join-Path $destination 'two.bin')).Hash -eq (Get-FileHash -LiteralPath $source).Hash) 'UNC native file contents changed.'
+            Start-Sleep -Milliseconds 500
+            Assert-True (@(Get-ChildItem -LiteralPath $destination -Force).Count -eq 1) 'UNC file paste produced unexpected output.'
+        }
+        foreach($file in @(Get-ChildItem -LiteralPath $unc -File -Recurse)){
+            $report.UncFiles+=@([pscustomobject]@{RelativePath=$file.FullName.Substring($unc.Length+1);Sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash})
+        }
+        Assert-True ($report.Cases.Count -eq 16 -and $report.UncFiles.Count -eq 3) 'The UNC suite did not complete all cases and files.'
+    }
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     if($applicationStarted){
@@ -322,6 +380,14 @@ try{
     }
     try{[LaqayGuestDesktop]::CloseExplorerWindows()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($shell){[void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)}
+    if($IncludeUnc){
+        try{
+            if(Test-Path -LiteralPath $credentialPath){Remove-Item -LiteralPath $credentialPath}
+            $report.CredentialRemoved=-not (Test-Path -LiteralPath $credentialPath)
+            Start-Sleep -Milliseconds 500
+            [LaqayGuestDesktop]::DisconnectPeer();$report.PeerDisconnected=$true
+        }catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+    }
     $report.FinishedUtc=[DateTime]::UtcNow.ToString('o')
     Save-Report
 }

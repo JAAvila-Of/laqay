@@ -239,3 +239,41 @@ This preparation script does not boot or stop guests, launch Laqay, manipulate
 desktops/clipboards, or test Explorer paste or an RDP logon. A calling operation
 must stop both guests in its final cleanup. TCP connectivity and an SMB round trip
 are prerequisites, not evidence that the corresponding paste scenarios pass.
+
+## Explorer paste over UNC
+
+`Invoke-DesktopSmoke.ps1 -IncludeUnc` adds three real Explorer cases to the
+thirteen local cases. Both owned guests must already be running, and Primary
+must have an unlocked interactive LaqayLab logon. Run this transport through
+RustWork with `--family rust`, as for the local suite. A calling operation must
+explicitly establish the temporary guest logon, enforce paired resource limits,
+remove temporary auto-logon credentials, and stop both guests in final cleanup.
+The transport itself never elevates, boots, logs on, or shuts down a guest.
+
+The limited Primary task authenticates directly to `\\10.77.166.11\LaqayLab`
+using the distinct Peer credential. The host sends it only through PowerShell
+Direct; it is exported with guest-user DPAPI protection in the owned run folder,
+imported by the same user, and deleted before result collection. Passwords are
+never command-line arguments or report fields. The native helper creates only
+this fixed, temporary, deviceless connection using
+[WNetAddConnection2](https://learn.microsoft.com/en-us/windows/win32/api/winnetwk/nf-winnetwk-wnetaddconnection2w).
+An existing interactive connection to the peer is refused. Cleanup disconnects
+only the connection it created, without forcing open handles closed.
+
+The host reserves a new `Paste-<RunId>` directory on Peer. Explorer opens its
+actual UNC subdirectories, and synthesized Ctrl+V checks:
+
+- `UncImagePaste`: a PNG with the fixture's dimensions and pixels, an unchanged
+  clipboard, and an authenticated signed SMB connection.
+- `UncExistingImagePreserved`: a second correct PNG without changing the first
+  file or leaving temporary output. This does not force a timestamp collision.
+- `UncNativeFilePaste`: the native file is copied intact when the clipboard also
+  contains a bitmap, with no extra PNG.
+
+Peer independently reads the resulting two PNGs and one binary file and checks
+their SHA-256 against the interactive client's hashes. Cleanup removes only the
+reserved fixture and its expected files, rejects reparse points or unexpected
+content, removes the task and credential file, and requires normal application
+exit. A partial case list, server mismatch, or cleanup error fails the run.
+This covers a healthy authenticated UNC share; it does not simulate network loss,
+server restart, offline files, OneDrive, or an RDP logon/clipboard transfer.
