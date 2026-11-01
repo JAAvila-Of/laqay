@@ -1,5 +1,29 @@
 # Windows integration validation
 
+## Current automated coverage
+
+The full matrix remains incomplete. The normal tray application has passed
+thirteen local Explorer cases in an isolated Windows 11 Enterprise evaluation
+guest (build 26300): image paste, preservation of existing output, multiple native
+files with a bitmap present, address/search/rename text, disable/re-enable,
+active tabs and windows, Unicode paths, clipboard preservation, and recovery
+after denied file creation. A separate real-login cycle verified startup enabled
+and disabled across fresh guest boots, including a PNG from the Windows-launched
+process and a bounded 180-second absence observation when disabled.
+
+The paired-guest UNC suite passed all thirteen local cases plus three UNC cases:
+correct PNG with unchanged clipboard, a second PNG preserving the first, and
+native file paste with a bitmap present. Explorer and Laqay ran with a limited
+token. The controller verified the actual authenticated SMB 3.1.1 connection was
+signed, and the peer independently matched hashes of both PNGs and the binary
+file. Application exit, preference/permission restoration, task/credential/share
+fixture cleanup, temporary auto-logon removal, and both guests off were checked.
+See [the desktop lab procedures](DESKTOP_TEST_LAB.md) for the exact harness and
+its limits. This does not validate a disconnected share, OneDrive, an RDP logon
+or redirected clipboard in the paired lab, or Windows 10.
+
+## Earlier bounded trials
+
 This matrix has not been completed. One authorized RDP image-paste trial on
 Windows 11 25H2 (build 26200.9711) passed the basic T33/T35 path: two Ctrl+V
 presses created two valid 613x572 RGBA PNGs in the approved folder. The tester
@@ -27,15 +51,17 @@ also passed: a valid PNG appeared only in the newly approved second folder,
 the first folder's original file/hash stayed unchanged, and the tester reported
 no disturbances. This covers deliberate two-tab selection in both directions,
 not rapid changes during a paste. Multiple/virtual files, other destinations,
-and the remaining matrix are still pending.
+and the remaining matrix were still pending at that point.
 These results predate the shared-engine and tray integration. The entry point
 now starts the real tray application. A bounded local-console tray trial passed
 the basic T28 exit path: the tester toggled Enabled off and on, confirmed the
 icon changed blue/gray/blue, and selected Exit. Start with Windows was unavailable
 as required in trial mode. Hook removal and process exit were verified, with
 no runtime errors or watchdog termination. No paste was attempted in that block.
-Execution at login, Explorer restart recovery, shutdown with pending work,
-and regression testing of earlier paste results remain pending.
+These earlier trials did not cover execution at login, Explorer restart recovery,
+shutdown with pending work, or regression testing of earlier paste results.
+The subsequent automated coverage is described above; Explorer restart recovery
+and shutdown with pending work remain separate scenarios.
 Automated tests cover generation cancellation and preference/command parsing,
 plus real registry persistence under an isolated test root. The all-features CI
 suite also tests a private native clipboard. They do not exercise the real tray
