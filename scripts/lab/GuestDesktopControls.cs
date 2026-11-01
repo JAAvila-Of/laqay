@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -51,6 +52,8 @@ public static class LaqayGuestDesktop {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(IntPtr token,int type,out int value,int size,out int needed);
+    [DllImport("wtsapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool WTSQuerySessionInformationW(IntPtr server,int session,int info,out IntPtr value,out int bytes);
+    [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr value);
     [StructLayout(LayoutKind.Sequential)] struct Key { public ushort vk,scan; public uint flags,time; public UIntPtr extra; }
     [StructLayout(LayoutKind.Sequential)] struct Mouse { public int x,y; public uint data,flags,time; public UIntPtr extra; }
     [StructLayout(LayoutKind.Explicit)] struct Union { [FieldOffset(0)] public Key key; [FieldOffset(0)] public Mouse mouse; }
@@ -96,6 +99,163 @@ public static class LaqayGuestDesktop {
     static void Guard() {
         if(!armed || DateTime.UtcNow>=deadline || !InputDesktopAvailable())
             throw new InvalidOperationException("Guest desktop controls are not armed or have expired.");
+    }
+    public static void RequireRole(string role) {
+        Guard();
+        var ready=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(@"C:\LaqayLab\ready.json"));
+        if((role!="Primary" && role!="Peer") || !ready.ContainsKey("Role") || (string)ready["Role"]!=role)
+            throw new InvalidOperationException("Unexpected guest role.");
+    }
+    public static int SessionProtocol() {
+        Guard(); IntPtr value; int bytes;
+        if(!WTSQuerySessionInformationW(IntPtr.Zero,Process.GetCurrentProcess().SessionId,16,out value,out bytes))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        try {if(bytes<2) throw new InvalidOperationException("Missing session protocol."); return Marshal.ReadInt16(value);}
+        finally {WTSFreeMemory(value);}
+    }
+    public static string RdpClientAddress() {
+        RequireRole("Peer"); IntPtr value; int bytes;
+        if(SessionProtocol()!=2 || !WTSQuerySessionInformationW(IntPtr.Zero,Process.GetCurrentProcess().SessionId,14,out value,out bytes))
+            throw new InvalidOperationException("An RDP client address is required.");
+        try {
+            if(bytes<24 || Marshal.ReadInt32(value)!=2) throw new InvalidOperationException("Expected an IPv4 RDP client.");
+            return String.Format("{0}.{1}.{2}.{3}",Marshal.ReadByte(value,6),Marshal.ReadByte(value,7),Marshal.ReadByte(value,8),Marshal.ReadByte(value,9));
+        } finally {WTSFreeMemory(value);}
+    }
+    static Bitmap RedirectedFixture() {
+        var bitmap=new Bitmap(3,2);
+        Color[] colors={Color.Magenta,Color.Cyan,Color.Yellow,Color.Black,Color.Orange,Color.Purple};
+        for(int y=0;y<2;y++) for(int x=0;x<3;x++) bitmap.SetPixel(x,y,colors[y*3+x]);
+        return bitmap;
+    }
+    public static bool ClipboardIsRedirectedFixture() {
+        RequireRole("Peer");
+        using(var image=Clipboard.GetImage()) {
+            if(image==null || image.Width!=3 || image.Height!=2) return false;
+            using(var bitmap=new Bitmap(image)) using(var expected=RedirectedFixture())
+                for(int y=0;y<2;y++) for(int x=0;x<3;x++) if(bitmap.GetPixel(x,y).ToArgb()!=expected.GetPixel(x,y).ToArgb()) return false;
+        }
+        return true;
+    }
+    public static bool ClipboardTextEquals(string expected) {Guard();return Clipboard.ContainsText() && Clipboard.GetText()==expected;}
+    public static void RunRdpClient(string labId,string runId,string peer,System.Security.SecureString password) {
+        RequireRole("Primary");
+        if(SessionProtocol()!=0 || !Regex.IsMatch(labId,"^[a-f0-9]{32}$") || !Regex.IsMatch(runId,"^[a-f0-9]{32}$") ||
+            !Regex.IsMatch(peer,"^LQW11-[A-Z0-9]{8}$") || password==null)
+            throw new InvalidOperationException("Unexpected isolated RDP client identity.");
+        using(var client=new RdpClient(labId,runId,peer,password)) client.Run();
+    }
+    sealed class RdpHost : AxHost {
+        public RdpHost() : base("A0C63C30-F08D-4AB4-907C-34905D770C7D") { }
+        public object Client {get {return GetOcx();}}
+    }
+    sealed class RdpClient : IDisposable {
+        readonly string labId,runId,peer,root;
+        readonly System.Security.SecureString password;
+        readonly JavaScriptSerializer json=new JavaScriptSerializer();
+        readonly Dictionary<string,object> report=new Dictionary<string,object>();
+        readonly List<string> operations=new List<string>();
+        readonly Form form=new Form(); readonly RdpHost host=new RdpHost();
+        readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
+        readonly Guid eventsId=new Guid("336d5562-efa8-482e-8cb3-c5c0fc7a7db6");
+        object client,settings;
+        Action login; Action<int> disconnected,fatal;
+        bool loggedOn,closing,disconnectedClean; int sequence;
+        DateTime closeDeadline;
+        static object Get(object target,string name) {return target.GetType().InvokeMember(name,BindingFlags.GetProperty,null,target,null);}
+        static void Set(object target,string name,object value) {target.GetType().InvokeMember(name,BindingFlags.SetProperty,null,target,new[] {value});}
+        static void Call(object target,string name) {target.GetType().InvokeMember(name,BindingFlags.InvokeMethod,null,target,null);}
+        public RdpClient(string lab,string run,string server,System.Security.SecureString secret) {
+            labId=lab;runId=run;peer=server;password=secret;root=@"C:\LaqayLab\Runs\"+run;
+            if(!Directory.Exists(root) || File.Exists(Path.Combine(root,"client-report.json"))) throw new InvalidOperationException("Missing or reused RDP client run.");
+            report["LabId"]=labId;report["RunId"]=runId;report["LoggedOn"]=false;report["Passed"]=false;
+            report["Error"]=null;report["AckSequence"]=0;report["Operations"]=operations;report["Disconnected"]=false;
+            report["AuthenticationLevel"]=1;report["CredSsp"]=true;report["ClipboardRedirection"]=true;
+            report["SessionId"]=Process.GetCurrentProcess().SessionId;report["StartedUtc"]=DateTime.UtcNow.ToString("o");report["FinishedUtc"]=null;
+        }
+        void Save() {
+            string temporary=Path.Combine(root,"client-report.tmp");
+            File.WriteAllText(temporary,json.Serialize(report));
+            string destination=Path.Combine(root,"client-report.json");
+            if(File.Exists(destination)) File.Replace(temporary,destination,null); else File.Move(temporary,destination);
+        }
+        void Fail(Exception error) {error=error.GetBaseException();report["Error"]=error.GetType().Name+": "+error.Message;report["ErrorHResult"]=error.HResult;form.Close();}
+        void FocusClient() {
+            RequireRole("Primary");
+            ShowWindowAsync(form.Handle,3);
+            Send(new[] {new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
+            SetForegroundWindow(form.Handle);host.Focus();
+            if(GetForegroundWindow()!=form.Handle || !host.ContainsFocus) throw new InvalidOperationException("The owned RDP client lost focus.");
+        }
+        void Tick() {
+            try {
+                RequireRole("Primary");
+                if(closing) {if(disconnectedClean) form.Close();else if(DateTime.UtcNow>=closeDeadline) throw new TimeoutException("RDP disconnect did not complete.");return;}
+                if(!loggedOn) return;
+                string path=Path.Combine(root,String.Format("command-{0:0000}.json",sequence+1));
+                if(!File.Exists(path)) return;
+                var command=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
+                if((string)command["LabId"]!=labId || (string)command["RunId"]!=runId || Convert.ToInt32(command["Sequence"])!=sequence+1)
+                    throw new InvalidOperationException("Unexpected RDP command identity.");
+                string operation=(string)command["Operation"];
+                if(operation=="Close") {
+                    closing=true;closeDeadline=DateTime.UtcNow.AddSeconds(10);Call(client,"Disconnect");
+                } else {
+                    FocusClient();
+                    if(operation=="Image") {using(var bitmap=RedirectedFixture()) Clipboard.SetImage(bitmap);}
+                    else if(operation=="Text") Clipboard.SetText("LaqayRdp-"+runId);
+                    else if(operation=="Paste") Send(new[] {
+                        new Input {type=1,value=new Union {key=new Key {vk=17}}},new Input {type=1,value=new Union {key=new Key {vk=86}}},
+                        new Input {type=1,value=new Union {key=new Key {vk=86,flags=2}}},new Input {type=1,value=new Union {key=new Key {vk=17,flags=2}}}});
+                    else throw new InvalidOperationException("Unsupported RDP client command.");
+                }
+                sequence++;operations.Add(operation);report["AckSequence"]=sequence;Save();
+            } catch(Exception error) {Fail(error);}
+        }
+        void Connect() {
+            try {
+                RequireRole("Primary");client=host.Client;
+                Set(client,"Server",peer);Set(client,"UserName","LaqayLab");Set(client,"Domain",peer);
+                Set(client,"DesktopWidth",1024);Set(client,"DesktopHeight",768);Set(client,"ColorDepth",32);
+                settings=Get(client,"AdvancedSettings8");
+                Set(settings,"AuthenticationLevel",1);Set(settings,"EnableCredSspSupport",true);Set(settings,"RedirectClipboard",true);
+                Set(settings,"RedirectDrives",false);Set(settings,"RedirectPrinters",false);Set(settings,"RedirectPorts",false);Set(settings,"RedirectSmartCards",false);
+                Set(settings,"AudioRedirectionMode",2);Set(settings,"AudioCaptureRedirectionMode",false);Set(settings,"EnableAutoReconnect",false);
+                if(Convert.ToInt32(Get(settings,"AuthenticationLevel"))!=1 || !Convert.ToBoolean(Get(settings,"EnableCredSspSupport")) || !Convert.ToBoolean(Get(settings,"RedirectClipboard")))
+                    throw new InvalidOperationException("RDP authentication or clipboard settings did not apply.");
+                login=delegate {loggedOn=true;report["LoggedOn"]=true;Save();};
+                disconnected=delegate(int reason) {disconnectedClean=closing;report["Disconnected"]=true;report["DisconnectReason"]=reason;if(!closing) report["Error"]="Unexpected RDP disconnect: "+reason;Save();if(!closing) form.Close();};
+                fatal=delegate(int code) {Fail(new InvalidOperationException("RDP fatal error: "+code));};
+                ComEventsHelper.Combine(client,eventsId,3,login);ComEventsHelper.Combine(client,eventsId,4,disconnected);ComEventsHelper.Combine(client,eventsId,10,fatal);
+                IntPtr clear=Marshal.SecureStringToGlobalAllocUnicode(password);
+                try {Set(settings,"ClearTextPassword",Marshal.PtrToStringUni(clear));} finally {Marshal.ZeroFreeGlobalAllocUnicode(clear);}
+                FocusClient();Call(client,"Connect");timer.Start();Save();
+            } catch(Exception error) {Fail(error);}
+        }
+        public void Run() {
+            form.Text="Laqay isolated RDP validation";form.WindowState=FormWindowState.Maximized;
+            host.Dock=DockStyle.Fill;
+            ((System.ComponentModel.ISupportInitialize)host).BeginInit();form.Controls.Add(host);((System.ComponentModel.ISupportInitialize)host).EndInit();
+            timer.Interval=200;timer.Tick+=delegate {Tick();};form.Shown+=delegate {Connect();};
+            Save();
+            try {Application.Run(form);} finally {
+                timer.Stop();
+                report["Passed"]=loggedOn && closing && disconnectedClean && report["Error"]==null;
+                report["FinishedUtc"]=DateTime.UtcNow.ToString("o");Save();
+            }
+            if(!(bool)report["Passed"]) throw new InvalidOperationException("The isolated RDP client failed. See its private report.");
+        }
+        public void Dispose() {
+            timer.Dispose();
+            if(client!=null) {
+                try {if(Convert.ToInt32(Get(client,"Connected"))!=0) Call(client,"Disconnect");} catch(COMException) { }
+                if(login!=null) ComEventsHelper.Remove(client,eventsId,3,login);
+                if(disconnected!=null) ComEventsHelper.Remove(client,eventsId,4,disconnected);
+                if(fatal!=null) ComEventsHelper.Remove(client,eventsId,10,fatal);
+            }
+            if(settings!=null) {try {Set(settings,"ClearTextPassword","");} catch(COMException) { }}
+            host.Dispose();form.Dispose();
+        }
     }
     public static void ConnectPeer(string user,System.Security.SecureString password) {
         Guard();
