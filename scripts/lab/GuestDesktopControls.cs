@@ -40,6 +40,10 @@ public static class LaqayGuestDesktop {
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint format);
     [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetClipboardData(uint format);
+    [DllImport("user32.dll",SetLastError=true)] static extern bool EmptyClipboard();
+    [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetClipboardData(uint format,IntPtr data);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GlobalAlloc(uint flags,UIntPtr bytes);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalFree(IntPtr handle);
     [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GlobalLock(IntPtr handle);
     [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr handle);
     [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr handle);
@@ -128,12 +132,6 @@ public static class LaqayGuestDesktop {
             return String.Format("{0}.{1}.{2}.{3}",Marshal.ReadByte(value,6),Marshal.ReadByte(value,7),Marshal.ReadByte(value,8),Marshal.ReadByte(value,9));
         } finally {WTSFreeMemory(value);}
     }
-    static Bitmap RedirectedFixture() {
-        var bitmap=new Bitmap(3,2);
-        Color[] colors={Color.Magenta,Color.Cyan,Color.Yellow,Color.Black,Color.Orange,Color.Purple};
-        for(int y=0;y<2;y++) for(int x=0;x<3;x++) bitmap.SetPixel(x,y,colors[y*3+x]);
-        return bitmap;
-    }
     public static bool ClipboardIsRedirectedFixture() {
         RequireRole("Peer");
         var bytes=ClipboardDib();return bytes!=null && RedirectedDibMatches(bytes);
@@ -177,6 +175,36 @@ public static class LaqayGuestDesktop {
         string[] expected={"FFFF00FF","FF00FFFF","FFFFFF00","FF000000","FFFFA500","FF800080"};
         for(int i=0;i<expected.Length;i++) if(pixels[i]!=expected[i]) return false;
         return true;
+    }
+    public static byte[] RedirectedDibFixture() {
+        var bytes=new byte[148];
+        Array.Copy(BitConverter.GetBytes(124u),0,bytes,0,4);Array.Copy(BitConverter.GetBytes(3),0,bytes,4,4);
+        Array.Copy(BitConverter.GetBytes(-2),0,bytes,8,4);Array.Copy(BitConverter.GetBytes((ushort)1),0,bytes,12,2);
+        Array.Copy(BitConverter.GetBytes((ushort)32),0,bytes,14,2);Array.Copy(BitConverter.GetBytes(3u),0,bytes,16,4);
+        Array.Copy(BitConverter.GetBytes(24u),0,bytes,20,4);
+        uint[] masks={0x00ff0000,0x0000ff00,0x000000ff,0xff000000};
+        for(int i=0;i<masks.Length;i++) Array.Copy(BitConverter.GetBytes(masks[i]),0,bytes,40+i*4,4);
+        Array.Copy(BitConverter.GetBytes(0x73524742u),0,bytes,56,4);Array.Copy(BitConverter.GetBytes(4u),0,bytes,108,4);
+        uint[] pixels={0xffff00ff,0xff00ffff,0xffffff00,0xff000000,0xffffa500,0xff800080};
+        for(int i=0;i<pixels.Length;i++) Array.Copy(BitConverter.GetBytes(pixels[i]),0,bytes,124+i*4,4);
+        return bytes;
+    }
+    static void PublishRedirectedDib(IntPtr owner) {
+        RequireRole("Primary");uint pid;GetWindowThreadProcessId(owner,out pid);
+        if(owner==IntPtr.Zero || pid!=(uint)Process.GetCurrentProcess().Id) throw new InvalidOperationException("The fixture clipboard owner must belong to this guest task.");
+        var bytes=RedirectedDibFixture();IntPtr memory=GlobalAlloc(2,new UIntPtr((uint)bytes.Length));bool transferred=false;
+        if(memory==IntPtr.Zero) throw new InvalidOperationException("The native fixture buffer could not be allocated.");
+        try {
+            IntPtr pointer=GlobalLock(memory);if(pointer==IntPtr.Zero) throw new InvalidOperationException("The native fixture buffer could not be locked.");
+            try {Marshal.Copy(bytes,0,pointer,bytes.Length);} finally {GlobalUnlock(memory);}
+            bool opened=false;for(int attempt=0;attempt<10 && !opened;attempt++) {opened=OpenClipboard(owner);if(!opened) Thread.Sleep(20);}
+            if(!opened) throw new InvalidOperationException("The guest clipboard could not be opened for the native fixture.");
+            try {
+                if(!EmptyClipboard() || SetClipboardData(17,memory)==IntPtr.Zero) throw new InvalidOperationException("The native fixture could not be published.");
+                transferred=true;
+            } finally {CloseClipboard();}
+        } finally {if(!transferred) GlobalFree(memory);}
+        if(!RedirectedDibMatches(ClipboardDib())) throw new InvalidOperationException("The source native DIB fixture failed its exact readback before RDP transfer.");
     }
     public static bool ClipboardTextEquals(string expected) {Guard();return Clipboard.ContainsText() && Clipboard.GetText()==expected;}
     public static object ClipboardDiagnostic() {
@@ -241,7 +269,7 @@ public static class LaqayGuestDesktop {
         readonly ApplicationContext context=new ApplicationContext();
         readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
         readonly DateTime started=DateTime.UtcNow;
-        Process process; IntPtr clientJob;
+        Process process; IntPtr clientJob;NativeWindow clipboardOwner;
         bool loggedOn,closing,disconnected,credentialWritten,diagnosticCaptured,forced;
         int sequence,serverSession;DateTime closeDeadline,lastStatus,lastClose;
         string configuration;
@@ -474,7 +502,10 @@ public static class LaqayGuestDesktop {
                 if(operation=="Close") {closing=true;closeDeadline=DateTime.UtcNow.AddSeconds(20);Stage("AwaitingServerDisconnect");}
                 else {
                     FocusClient();
-                    if(operation=="Image") {using(var bitmap=RedirectedFixture()) Clipboard.SetImage(bitmap);report["ImageClipboard"]=ClipboardDiagnostic();}
+                    if(operation=="Image") {
+                        if(clipboardOwner==null) {clipboardOwner=new NativeWindow();clipboardOwner.CreateHandle(new CreateParams {Caption="Laqay test clipboard",Parent=new IntPtr(-3)});}
+                        PublishRedirectedDib(clipboardOwner.Handle);report["ImageClipboard"]=ClipboardDiagnostic();
+                    }
                     else if(operation=="Text") Clipboard.SetText("LaqayRdp-"+runId);
                     else if(operation=="Paste") Send(new[] {
                         new Input {type=1,value=new Union {key=new Key {vk=17}}},new Input {type=1,value=new Union {key=new Key {vk=86}}},
@@ -521,7 +552,7 @@ public static class LaqayGuestDesktop {
             }
             if(!(bool)report["Passed"]) throw new InvalidOperationException("The isolated native RDP client failed. See its private report.");
         }
-        public void Dispose() {timer.Dispose();context.Dispose();if(clientJob!=IntPtr.Zero) {CloseHandle(clientJob);clientJob=IntPtr.Zero;}if(process!=null) process.Dispose();}
+        public void Dispose() {timer.Dispose();context.Dispose();if(clipboardOwner!=null) clipboardOwner.DestroyHandle();if(clientJob!=IntPtr.Zero) {CloseHandle(clientJob);clientJob=IntPtr.Zero;}if(process!=null) process.Dispose();}
     }
 
     public static void ConnectPeer(string user,System.Security.SecureString password) {

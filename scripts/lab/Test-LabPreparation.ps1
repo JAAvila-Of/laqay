@@ -43,6 +43,9 @@ try {
     $dib[40]=1
     Assert-True (-not [LaqayGuestDesktop]::RedirectedDibMatches($dib)) 'The native DIB oracle accepted an unknown channel mask.'
     Assert-True (-not [LaqayGuestDesktop]::RedirectedDibMatches((New-Object byte[] 40))) 'The native DIB oracle accepted a truncated fixture.'
+    $generated=[LaqayGuestDesktop]::RedirectedDibFixture()
+    Assert-True ([LaqayGuestDesktop]::RedirectedDibMatches($generated)) 'The actual native client fixture failed its independent DIB oracle.'
+    Assert-True ($generated.Length -eq 148 -and [BitConverter]::ToUInt32($generated,0) -eq 124 -and [BitConverter]::ToInt32($generated,8) -eq -2) 'The native client fixture header or extent changed.'
     foreach ($script in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1')) {
         $tokens = $null; $errors = $null
         [Management.Automation.Language.Parser]::ParseFile($script.FullName,[ref]$tokens,[ref]$errors) | Out-Null
