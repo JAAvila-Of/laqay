@@ -47,7 +47,7 @@ public static partial class LaqayGuestDesktop {
     }
     public static object DelayedPngState() {
         LifecycleGuard();if(delayedPng==null) throw new InvalidOperationException("No delayed fixture is active.");
-        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),TimedOut=delayedPng.timedOut,Error=delayedPng.error};
+        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,OwnerMatches=GetClipboardOwner()==delayedPng.Handle,Sequence=GetClipboardSequenceNumber(),PublishedSequence=delayedPng.sequence,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),TimedOut=delayedPng.timedOut,Error=delayedPng.error};
     }
     public static void EndDelayedPng() {
         // Always release the exact owned provider, including after the input deadline.
@@ -56,7 +56,7 @@ public static partial class LaqayGuestDesktop {
     sealed class DelayedPng : NativeWindow {
         internal readonly ManualResetEvent requested=new ManualResetEvent(false),release=new ManualResetEvent(false);
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;uint format;
-        internal uint threadId,requesterPid,requesterThreadId;internal bool timedOut;internal string error;
+        internal uint threadId,requesterPid,requesterThreadId,sequence;internal bool timedOut;internal string error;
         public void Start() {
             thread=new Thread(delegate() {
                 try {
@@ -65,7 +65,7 @@ public static partial class LaqayGuestDesktop {
                     if(!OpenClipboard(Handle)) throw new InvalidOperationException("The delayed fixture clipboard could not be opened.");
                     try {if(!EmptyClipboard()) throw new InvalidOperationException("The delayed fixture clipboard could not be cleared.");SetClipboardData(format,IntPtr.Zero);if(!IsClipboardFormatAvailable(format)) throw new InvalidOperationException("The delayed PNG was not advertised.");}
                     finally {CloseClipboard();}
-                    ready.Set();Application.Run();
+                    sequence=GetClipboardSequenceNumber();ready.Set();Application.Run();
                 }catch(Exception failure){error=failure.GetBaseException().Message;ready.Set();}
                 finally {if(Handle!=IntPtr.Zero) DestroyHandle();}
             });
@@ -109,6 +109,72 @@ public static class LaqayGuestWaitChain {
     [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool LookupPrivilegeValueW(string system,string name,out Luid luid);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool AdjustTokenPrivileges(IntPtr token,bool disable,ref Privilege desired,uint length,out Privilege previous,out uint needed);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr LoadLibraryW(string path);
+    [DllImport("kernel32.dll",CharSet=CharSet.Ansi,SetLastError=true)] static extern IntPtr GetProcAddress(IntPtr module,string name);
+    [DllImport("kernel32.dll")] static extern bool FreeLibrary(IntPtr module);
+    [DllImport("kernel32.dll")] static extern uint PssCaptureSnapshot(IntPtr process,uint flags,uint contextFlags,out IntPtr snapshot);
+    [DllImport("kernel32.dll")] static extern uint PssFreeSnapshot(IntPtr process,IntPtr snapshot);
+    [DllImport("kernel32.dll")] static extern uint PssWalkMarkerCreate(IntPtr allocator,out IntPtr marker);
+    [DllImport("kernel32.dll")] static extern uint PssWalkMarkerFree(IntPtr marker);
+    [DllImport("kernel32.dll")] static extern uint PssWalkSnapshot(IntPtr snapshot,int kind,IntPtr marker,out SnapshotThread entry,uint size);
+    [StructLayout(LayoutKind.Explicit,Size=120)] public struct SnapshotThread {
+        [FieldOffset(0)] public uint ExitStatus;[FieldOffset(16)] public uint ProcessId;[FieldOffset(20)] public uint ThreadId;
+        [FieldOffset(104)] public uint Flags;[FieldOffset(110)] public ushort ContextSize;[FieldOffset(112)] public IntPtr Context;
+    }
+    public static int ClipboardStubLength(byte[] code) {
+        if(code==null || code.Length<24 || code[0]!=0x4c || code[1]!=0x8b || code[2]!=0xd1 || code[3]!=0xb8) return 0;
+        bool syscall=false;
+        for(int i=8;i<Math.Min(code.Length,32);i++) {if(i>0 && code[i-1]==0x0f && code[i]==0x05) syscall=true;if(code[i]==0xc3) return syscall?i+1:0;}
+        return 0;
+    }
+    public static bool InstructionInStub(ulong instruction,ulong start,int length) {return length>0 && instruction>=start && instruction-start<(ulong)length;}
+    static HashSet<uint> CaptureClipboardThreads(Process app,ulong start,int length,List<object> observations) {
+        IntPtr snapshot=IntPtr.Zero,marker=IntPtr.Zero;
+        try {
+            uint result=PssCaptureSnapshot(app.Handle,0x180,0x100001,out snapshot);
+            if(result!=0) throw new System.ComponentModel.Win32Exception((int)result,"Guest thread-context snapshot failed.");
+            result=PssWalkMarkerCreate(IntPtr.Zero,out marker);if(result!=0) throw new System.ComponentModel.Win32Exception((int)result);
+            var matches=new HashSet<uint>();int count=0;
+            while(true) {
+                SnapshotThread entry;result=PssWalkSnapshot(snapshot,3,marker,out entry,(uint)Marshal.SizeOf(typeof(SnapshotThread)));
+                if(result==259) break;if(result!=0) throw new System.ComponentModel.Win32Exception((int)result);
+                if(++count>128 || entry.ProcessId!=app.Id) throw new InvalidOperationException("Unexpected thread snapshot extent or process.");
+                bool valid=entry.ExitStatus==259 && (entry.Flags&1)==0 && entry.Context!=IntPtr.Zero && entry.ContextSize>=256 && (Marshal.ReadInt32(entry.Context,48)&0x100001)==0x100001;
+                ulong instruction=valid?unchecked((ulong)Marshal.ReadInt64(entry.Context,248)):0;
+                bool inside=valid && InstructionInStub(instruction,start,length);
+                observations.Add(new {ThreadId=entry.ThreadId,ValidContext=valid,InstructionPointer=instruction.ToString("X16"),InsideClipboardRead=inside});
+                if(inside) matches.Add(entry.ThreadId);
+            }
+            return matches;
+        } finally {
+            uint markerResult=marker==IntPtr.Zero?0:PssWalkMarkerFree(marker);
+            uint snapshotResult=snapshot==IntPtr.Zero?0:PssFreeSnapshot(new IntPtr(-1),snapshot);
+            if(markerResult!=0 || snapshotResult!=0) throw new InvalidOperationException("The guest thread snapshot could not be freed.");
+        }
+    }
+    sealed class ContextProof {public bool Confirmed;public uint ThreadId;public object Details;}
+    static ContextProof InspectClipboardContexts(Process app) {
+        var result=new ContextProof();var samples=new List<object>();IntPtr library=IntPtr.Zero;
+        try {
+            if(!Environment.Is64BitProcess) throw new InvalidOperationException("Clipboard context inspection requires x64.");
+            string system=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"win32u.dll");ProcessModule target=null;
+            foreach(ProcessModule module in app.Modules) if(String.Equals(module.FileName,system,StringComparison.OrdinalIgnoreCase)) target=module;
+            if(target==null) throw new InvalidOperationException("The owned application has no matching Windows clipboard syscall module.");
+            library=LoadLibraryW(system);if(library==IntPtr.Zero) throw new InvalidOperationException("The system clipboard module could not be inspected.");
+            IntPtr procedure=GetProcAddress(library,"NtUserGetClipboardData");if(procedure==IntPtr.Zero) throw new InvalidOperationException("The clipboard syscall export is unavailable.");
+            var code=new byte[32];Marshal.Copy(procedure,code,0,code.Length);int length=ClipboardStubLength(code);
+            if(length==0) throw new InvalidOperationException("The clipboard syscall stub is not recognized; declining proof.");
+            long offset=procedure.ToInt64()-library.ToInt64();if(offset<0 || offset+length>target.ModuleMemorySize) throw new InvalidOperationException("The clipboard syscall export is outside its system module.");
+            ulong start=checked((ulong)(target.BaseAddress.ToInt64()+offset));
+            var first=new List<object>();var match=CaptureClipboardThreads(app,start,length,first);samples.Add(new {AtUtc=DateTime.UtcNow.ToString("o"),Threads=first});
+            Thread.Sleep(100);
+            var second=new List<object>();match.IntersectWith(CaptureClipboardThreads(app,start,length,second));samples.Add(new {AtUtc=DateTime.UtcNow.ToString("o"),Threads=second});
+            foreach(uint thread in match){result.Confirmed=true;result.ThreadId=thread;break;}
+            result.Details=new {SystemModule=system,Export="NtUserGetClipboardData",TargetStart=start.ToString("X16"),StubLength=length,CaptureFlags=0x180,ContextFlags=0x100001,Samples=samples};
+        }catch(Exception failure){result.Details=new {Error=failure.GetBaseException().Message,Samples=samples};}
+        finally {if(library!=IntPtr.Zero) FreeLibrary(library);}
+        return result;
+    }
     static void Guard(string labId,string runId) {
         if(!System.Text.RegularExpressions.Regex.IsMatch(labId??"","^[a-f0-9]{32}$") || !System.Text.RegularExpressions.Regex.IsMatch(runId??"","^[a-f0-9]{32}$")) throw new InvalidOperationException("Invalid wait-chain lab identity.");
         var ready=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(@"C:\LaqayLab\ready.json"));
@@ -150,7 +216,8 @@ public static class LaqayGuestWaitChain {
                         observations.Add(new {ThreadId=thread.Id,Success=success,Error=error,NodeCount=count,Cycle=cycle,Nodes=observed});if(success && source && owner) confirmed=true;
                     } finally {thread.Dispose();}
                 }
-                return new {LabId=labId,RunId=runId,Confirmed=confirmed,ApplicationPid=appPid,ProviderPid=providerPid,ProviderThreadId=providerThreadId,SessionId=sessionId,Threads=observations};
+                var contexts=InspectClipboardContexts(app);
+                return new {LabId=labId,RunId=runId,Confirmed=confirmed || contexts.Confirmed,ConfirmedByWaitChain=confirmed,ConfirmedByContexts=contexts.Confirmed,ContextThreadId=contexts.ThreadId,ContextDetails=contexts.Details,ApplicationPid=appPid,ProviderPid=providerPid,ProviderThreadId=providerThreadId,SessionId=sessionId,Threads=observations};
             } finally {
                 if(session!=IntPtr.Zero) CloseThreadWaitChainSession(session);
                 if(changed) {Privilege ignored;uint needed;if(!AdjustTokenPrivileges(token,false,ref previous,(uint)Marshal.SizeOf(typeof(Privilege)),out ignored,out needed) || Marshal.GetLastWin32Error()!=0) {CloseHandle(token);throw new InvalidOperationException("The temporary guest debug privilege could not be restored.");}}

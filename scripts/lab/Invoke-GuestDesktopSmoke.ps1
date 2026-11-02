@@ -484,6 +484,8 @@ try{
                 $proof=Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
                 Assert-True ($proof.LabId -eq $LabId -and $proof.RunId -eq $RunId -and $proof.Confirmed -and $proof.ApplicationPid -eq $report.ApplicationPid -and $proof.ProviderPid -eq $report.PendingClipboard.ProviderPid -and $proof.ProviderThreadId -eq $report.PendingClipboard.ProviderThreadId -and $proof.SessionId -eq $report.SessionId) 'The pending-work proof did not match this owned application and provider.'
                 $report.PendingWaitVerified=$true;Save-Report
+                $held=[LaqayGuestDesktop]::DelayedPngState()
+                Assert-True ($held.Requested -and -not $held.Released -and $held.OwnerMatches -and $held.Sequence -eq $held.PublishedSequence) 'The pending provider or clipboard sequence changed before exit.'
                 $timer=[Diagnostics.Stopwatch]::StartNew()
                 $report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced
                 $timer.Stop();$report.ExitMilliseconds=$timer.ElapsedMilliseconds;$script:applicationStarted=$false
