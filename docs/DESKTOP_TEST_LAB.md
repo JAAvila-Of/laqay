@@ -404,12 +404,21 @@ image with exact PNG validation. It does not restart the host shell.
 
 The pending-work case advertises only a delayed PNG from an owned message-only
 window. Its provider thread withholds data for at most sixty seconds. After
-the render request arrives, the privileged guest controller uses Wait Chain
-Traversal on the exact Laqay PID to require a dependency on that provider PID
-and thread. It validates guest identity, process owners, executable paths, and
-session. SeDebugPrivilege is enabled only on the guest controller token for
-the read-only query and restored in a finally block; no policy is modified.
-No proof means failure, rather than a timing-based claim that work was pending.
+the render request arrives, the privileged guest controller inspects only the
+exact Laqay PID. It accepts a wait-chain dependency on the owned provider, or
+two native x64 thread-context snapshots, at least 100 ms apart, that show the
+same thread in the actual system clipboard-read syscall stub. The syscall
+export must have a recognized instruction layout and reside in the matching
+system module. A missing/unknown layout declines proof; these implementation
+details are diagnostic constraints, not a production API dependency.
+Snapshots capture only thread information and control registers: no address
+space clone, application memory pages, or dump file. Snapshots/walk markers are
+freed after each sample. The task also requires the provider to remain the
+clipboard owner, its sequence unchanged, and its data withheld before close.
+Guest identity, process owners, paths, and session are validated. The guest
+controller temporarily enables and restores SeDebugPrivilege for the diagnostic;
+no policy is modified. Missing proof remains a failure. WCT observations are
+retained because clipboard waits may not expose an object/owner chain.
 
 Only after the bound proof does the limited task request normal application
 close. It requires exit 0 without forced termination while the provider remains
