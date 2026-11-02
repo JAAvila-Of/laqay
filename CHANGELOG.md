@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/JAAvila-Of/laqay/compare/v0.1.0...v0.1.1) - 2026-11-02
+
+### Other
+
+- attest builds and gate immutable release publication ([#17](https://github.com/JAAvila-Of/laqay/pull/17))
+
 ## [0.1.0](https://github.com/JAAvila-Of/laqay/releases/tag/v0.1.0) - 2026-11-02
 
 ### Added
