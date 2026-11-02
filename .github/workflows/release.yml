@@ -43,6 +43,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
           python scripts/test-distribution.py
           if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
+          python scripts/test-release-delivery.py
+          if ($LASTEXITCODE -ne 0) { throw 'Release delivery regression tests failed.' }
           ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
           python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
@@ -114,6 +116,8 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         release: ${{ fromJSON(needs.release.outputs.releases) }}
@@ -125,6 +129,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+      - name: Check the tag matches the reviewed workflow commit
+        shell: pwsh
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $commit -ne $env:SOURCE_COMMIT) { throw 'Release source mismatch.' }
       - run: cargo build --locked --release --target x86_64-pc-windows-msvc
       - name: Collect dependency notices
         shell: pwsh
@@ -141,13 +152,20 @@ jobs:
           ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
           python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
-      - name: Upload executable and checksum
+      - name: Attest release build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            target/x86_64-pc-windows-msvc/release/laqay.exe
+            target/laqay-windows-x86_64.zip
+            target/SHA256SUMS.txt
+          create-storage-record: false
+      - name: Upload, verify, and publish the immutable release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ matrix.release.tag }}
+          SOURCE_COMMIT: ${{ github.sha }}
         run: |
-          $binary = 'target/x86_64-pc-windows-msvc/release/laqay.exe'
-          $archive = 'target/laqay-windows-x86_64.zip'
-          gh release upload $env:RELEASE_TAG $binary $archive target/SHA256SUMS.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }
+          python scripts/finalize-release.py --tag $env:RELEASE_TAG --commit $env:SOURCE_COMMIT --repository $env:GITHUB_REPOSITORY --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Release delivery failed; inspect the release before recovery.' }
