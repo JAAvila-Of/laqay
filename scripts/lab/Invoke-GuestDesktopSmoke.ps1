@@ -21,7 +21,7 @@ if($PrepareOnly){
     try{[LaqayGuestDesktop]::ImageClipboard()}catch{$rejected=$true}
     if(-not $rejected){throw 'Unarmed input controls were accepted.'}
     foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
-        {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},
+        {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
@@ -346,7 +346,9 @@ try{
             [LaqayGuestDesktop]::TextClipboard('RemoteBeforeRedirect-'+$RunId)
             Assert-True (-not [LaqayGuestDesktop]::ClipboardIsRedirectedFixture()) 'The client image was already present before redirection.'
             Request-Client 'Image'
-            Wait-For {try{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()}catch{$false}} 'The distinct client image did not cross the RDP clipboard channel.' 30
+            try{
+                Wait-For {try{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()}catch{$false}} 'The distinct client image did not cross the RDP clipboard channel.' 30
+            }finally{$report.RdpImageClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic();Save-Report}
             Request-Client 'Paste'
             Wait-For {@(Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png').Count -eq 2} 'The redirected image was not published.' 20
             $files=@(Get-ChildItem -LiteralPath $script:rdpImages -Filter '*.png')

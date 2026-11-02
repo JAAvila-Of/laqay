@@ -27,7 +27,7 @@ $guestRoot='C:\LaqayLab\Runs\'+$RunId
 $taskName='Laqay.Rdp.'+$RunId
 $sessions=@{};$credentials=@{};$registered=@{};$allocated=@{};$targetSessions=@{}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@{};ServerSessionId=$null;ServerDisconnected=$false;
-    CredentialRemoved=$false;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    CredentialRemoved=$false;TasksStopped=@{};CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $expectedOperations=@('Paste','Image','Paste','Paste','Text','Paste')
 function Save-Report {$report | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
 function Read-Task([string]$role){
@@ -90,6 +90,22 @@ function Assert-Task($task,[string]$role){
     if($task.Report -and ($task.Report.LabId -ne $LabId -or $task.Report.RunId -ne $RunId)){throw ('Unexpected '+$role+' report identity.')}
     if($task.Report.Error){throw ($role+' failed: '+$task.Report.Error)}
     if($task.State -ne 'Running' -and $task.LastResult -notin @(0,267009,267011)){throw ($role+' task failed: '+$task.LastResult)}
+}
+function Disconnect-OwnedPeer {
+    Invoke-Command -Session $sessions.Peer -ArgumentList $LabId,$RunId,$report.ServerSessionId -ScriptBlock {
+        param($labId,$runId,$sessionId)
+        $ErrorActionPreference='Stop'
+        $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
+        $ids=@([LaqayGuestSessionQuery]::FindActive(2,'LaqayLab',$env:COMPUTERNAME))
+        if($ready.LabId -ne $labId -or $ready.Role -ne 'Peer' -or -not $ready.Ready -or $sessionId -le 0 -or $ids.Count -ne 1 -or $ids[0] -ne $sessionId -or [LaqayGuestSessionQuery]::ClientAddress($sessionId) -ne '10.77.166.10'){throw 'Refusing to disconnect an unowned or changed remote session.'}
+        & (Join-Path $env:SystemRoot 'System32/tsdiscon.exe') ([string]$sessionId)
+        if($LASTEXITCODE -ne 0){throw 'The owned peer session did not disconnect.'}
+        $until=[DateTime]::UtcNow.AddSeconds(10)
+        do{if([LaqayGuestSessionQuery]::State($sessionId) -eq 4){return};Start-Sleep -Milliseconds 200}while([DateTime]::UtcNow -lt $until)
+        throw 'The owned peer session did not reach the disconnected state.'
+    }
+    $report.ServerDisconnected=$true
+    Write-ServerProof 'server-disconnected.json' $report.ServerSessionId $ownedClientPid $peerName 4
 }
 function Start-GuestTask([string]$role){
     $target=Invoke-Command -Session $sessions[$role] -ArgumentList $guestRoot,$taskName,$role -ScriptBlock {
@@ -250,20 +266,7 @@ exit $LASTEXITCODE
         if($client.Report.AckSequence -eq 7){break};Start-Sleep -Milliseconds 200
     }while([DateTime]::UtcNow -lt $ackLimit)
     if($client.Report.AckSequence -ne 7){throw 'The native client did not enter its controlled disconnect phase.'}
-    Invoke-Command -Session $sessions.Peer -ArgumentList $LabId,$RunId,$report.ServerSessionId -ScriptBlock {
-        param($labId,$runId,$sessionId)
-        $ErrorActionPreference='Stop'
-        $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
-        $ids=@([LaqayGuestSessionQuery]::FindActive(2,'LaqayLab',$env:COMPUTERNAME))
-        if($ready.LabId -ne $labId -or $ready.Role -ne 'Peer' -or -not $ready.Ready -or $sessionId -le 0 -or $ids.Count -ne 1 -or $ids[0] -ne $sessionId -or [LaqayGuestSessionQuery]::ClientAddress($sessionId) -ne '10.77.166.10'){throw 'Refusing to disconnect an unowned or changed remote session.'}
-        & (Join-Path $env:SystemRoot 'System32/tsdiscon.exe') ([string]$sessionId)
-        if($LASTEXITCODE -ne 0){throw 'The owned peer session did not disconnect.'}
-        $until=[DateTime]::UtcNow.AddSeconds(10)
-        do{if([LaqayGuestSessionQuery]::State($sessionId) -eq 4){return};Start-Sleep -Milliseconds 200}while([DateTime]::UtcNow -lt $until)
-        throw 'The owned peer session did not reach the disconnected state.'
-    }
-    $report.ServerDisconnected=$true
-    Write-ServerProof 'server-disconnected.json' $report.ServerSessionId $ownedClientPid $peerName 4
+    Disconnect-OwnedPeer
     $until=[DateTime]::UtcNow.AddSeconds(30)
     do{
         $client=Read-Task Primary;Assert-Task $client Primary
@@ -275,15 +278,31 @@ exit $LASTEXITCODE
     if(-not $client.Report.FinishedUtc -or -not $client.Report.Passed -or -not $client.Report.LoggedOn -or -not $client.Report.Disconnected -or -not $client.Report.CredentialRemoved -or $client.Report.ForcedTermination -or $client.Report.ClientExitCode -ne 0 -or $client.Report.AuthenticationLevel -ne 1 -or -not $client.Report.CredSsp -or -not $client.Report.ClipboardRedirection -or $client.Report.SessionId -le 0 -or $client.Report.AckSequence -ne 7 -or @($client.Report.Operations).Count -ne 7 -or ([string]::Join(',',@($client.Report.Operations))) -ne ([string]::Join(',',$expectedAll)) -or $client.LastResult -ne 0){throw 'The RDP client did not complete its exact command sequence and clean disconnect.'}
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
+    if(-not $report.Passed -and $report.ServerSessionId -gt 0 -and -not $report.ServerDisconnected -and $sessions.Primary -and $sessions.Peer){try{
+        $client=Read-Task Primary
+        if(-not $client.Report.LoggedOn -or $client.Report.FinishedUtc -or $client.Report.LabId -ne $LabId -or $client.Report.RunId -ne $RunId){throw 'The owned client is unavailable for failure disconnect.'}
+        $closeSequence=[int]$client.Report.AckSequence+1
+        Write-ClientCommand $closeSequence Close
+        $until=[DateTime]::UtcNow.AddSeconds(10)
+        do{$client=Read-Task Primary;if($client.Report.AckSequence -eq $closeSequence){break};Start-Sleep -Milliseconds 200}while([DateTime]::UtcNow -lt $until)
+        if($client.Report.AckSequence -ne $closeSequence){throw 'The owned client did not acknowledge failure disconnect.'}
+        Disconnect-OwnedPeer
+        $until=[DateTime]::UtcNow.AddSeconds(30)
+        do{$client=Read-Task Primary;if($client.Report.FinishedUtc -and $client.State -ne 'Running'){break};Start-Sleep -Milliseconds 200}while([DateTime]::UtcNow -lt $until)
+        $report.Client=$client.Report
+        if(-not $client.Report.FinishedUtc -or -not $client.Report.Disconnected -or -not $client.Report.CredentialRemoved -or $client.Report.ForcedTermination -or $client.Report.ClientExitCode -ne 0){throw 'The owned client did not close cleanly after the failed suite.'}
+    }catch{$report.CleanupErrors+=@($_.Exception.Message)}}
     foreach($role in @('Peer','Primary')){
         if(-not $sessions[$role]){continue}
         if($registered[$role]){try{
-            Invoke-Command -Session $sessions[$role] -ArgumentList $taskName -ScriptBlock {
+            $report.TasksStopped[$role]=[bool](Invoke-Command -Session $sessions[$role] -ArgumentList $taskName -ScriptBlock {
                 param($taskName)
                 $ErrorActionPreference='Stop'
                 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
-            }
+                $stopped=$false
+                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName;$stopped=$true};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
+                $stopped
+            })
             $report.TasksRemoved[$role]=$true
         }catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}}
         if($role -eq 'Primary' -and $allocated[$role]){try{

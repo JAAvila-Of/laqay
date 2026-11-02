@@ -137,6 +137,34 @@ public static class LaqayGuestDesktop {
         return true;
     }
     public static bool ClipboardTextEquals(string expected) {Guard();return Clipboard.ContainsText() && Clipboard.GetText()==expected;}
+    public static object ClipboardDiagnostic() {
+        Guard();var result=new Dictionary<string,object>();
+        try {
+            var data=Clipboard.GetDataObject();result["Formats"]=data==null?new string[0]:data.GetFormats(false);
+            using(var image=Clipboard.GetImage()) {
+                result["HasImage"]=image!=null;
+                if(image!=null) {
+                    result["Width"]=image.Width;result["Height"]=image.Height;result["PixelFormat"]=image.PixelFormat.ToString();
+                    if(image.Width<=256 && image.Height<=256) {
+                        var actual=image as Bitmap;bool owned=actual==null;if(owned) actual=new Bitmap(image);
+                        try {
+                            var argb=new List<byte>();var rgb=new List<byte>();int nonOpaque=0;
+                            for(int y=0;y<actual.Height;y++) for(int x=0;x<actual.Width;x++) {
+                                var color=actual.GetPixel(x,y);argb.Add(color.A);argb.Add(color.R);argb.Add(color.G);argb.Add(color.B);
+                                rgb.Add(color.R);rgb.Add(color.G);rgb.Add(color.B);if(color.A!=255) nonOpaque++;
+                            }
+                            using(var hash=System.Security.Cryptography.SHA256.Create()) {
+                                result["ArgbSha256"]=BitConverter.ToString(hash.ComputeHash(argb.ToArray())).Replace("-","");
+                                result["RgbSha256"]=BitConverter.ToString(hash.ComputeHash(rgb.ToArray())).Replace("-","");
+                            }
+                            result["NonOpaquePixels"]=nonOpaque;
+                        } finally {if(owned) actual.Dispose();}
+                    }
+                }
+            }
+        } catch(Exception error) {result["Error"]=error.GetType().Name+": "+error.Message;}
+        return result;
+    }
     public static void RunRdpClient(string labId,string runId,string peer,System.Security.SecureString password) {
         RunRdpClient(labId,runId,peer,password,false);
     }
@@ -378,7 +406,7 @@ public static class LaqayGuestDesktop {
                 if(operation=="Close") {closing=true;closeDeadline=DateTime.UtcNow.AddSeconds(20);Stage("AwaitingServerDisconnect");}
                 else {
                     FocusClient();
-                    if(operation=="Image") {using(var bitmap=RedirectedFixture()) Clipboard.SetImage(bitmap);}
+                    if(operation=="Image") {using(var bitmap=RedirectedFixture()) Clipboard.SetImage(bitmap);report["ImageClipboard"]=ClipboardDiagnostic();}
                     else if(operation=="Text") Clipboard.SetText("LaqayRdp-"+runId);
                     else if(operation=="Paste") Send(new[] {
                         new Input {type=1,value=new Union {key=new Key {vk=17}}},new Input {type=1,value=new Union {key=new Key {vk=86}}},
