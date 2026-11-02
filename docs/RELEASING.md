@@ -70,6 +70,13 @@ The project is in `0.x`; compatibility may change. Describe breaking behavior
 in the PR and generated release notes. Do not promise a stable interface or
 support for older versions before the project adopts such a policy.
 
+During engineering validation, release-plz marks GitHub releases as pre-releases
+and does not select them as latest. Its configured release body includes the
+validation limits and links to the guide and matrix at that release's tag.
+The release PR uses a plain review template with the generated changelog.
+Revisit these settings explicitly when engineering validation is complete;
+changing the package version alone does not promote a release to production.
+
 ## Licensing and security
 
 Preserve the project's MIT notice and third-party notices when distributing
