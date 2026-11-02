@@ -428,4 +428,5 @@ all fifteen cases, the wait proof, provider cleanup, and task removal. The calle
 must remove temporary guest logon configuration and confirm the guests are off.
 This validates close during a blocked clipboard read; it does not claim coverage
 of every encoding/write stage or an actual Windows shutdown. Runtime validation
-of these two cases is still pending.
+passed all fifteen cases in the owned Windows 11 evaluation console, including
+the native context proof, normal application exit, and complete cleanup.
