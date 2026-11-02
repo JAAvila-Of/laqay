@@ -31,7 +31,35 @@ replace an asset. If publication fails, investigate and document the recovery;
 an already published version is not a reusable version number.
 
 The release archive also carries LICENSE, THIRD_PARTY_NOTICES.md, and generated
-Cargo license texts. Preserve this archive's notices when redistributing builds.
+Cargo license texts, TRADEMARKS.md, and PORTABLE.md. Preserve this archive's
+notices when redistributing builds. The delivery contract is:
+
+- `laqay.exe`: AMD64 PE32+ GUI executable, built with the static C runtime.
+- `laqay-windows-x86_64.zip`: that exact executable and the five notice/guide
+  files, with no nested directories or extra entries.
+- `SHA256SUMS.txt`: SHA-256 entries for the executable and ZIP.
+
+Both CI and Release run the same packaging and validation commands. Validation
+rejects missing, extra, duplicate, or changed ZIP entries, empty notice files,
+an unexpected executable architecture/subsystem, and mismatched checksums.
+It reads files without starting the application. Regression tests include the
+actual PowerShell packaging command with an inert header fixture on Windows.
+The CI development artifact includes all three delivery assets.
+
+The current workflow creates the GitHub release before the asset job runs.
+Do not announce or treat it as ready until all three assets have uploaded and
+been downloaded and checked. If the asset job fails, preserve its evidence;
+do not rerun publication or overwrite existing assets blindly. Investigate the
+missing assets and use an explicitly reviewed recovery. A green `prepare` run
+only prepares a release PR; it does not validate tag creation or asset upload.
+
+Before `1.0.0`, complete a real `0.x` prepare/review/publish cycle, verify the
+tag's commit and downloaded assets, then exercise the portable package in an
+isolated guest: launch, paste, startup enabled/disabled across login, replacement
+with another verified build after exit, and removal of its startup registration.
+Record that first-version replacement is not evidence of cross-version upgrade
+compatibility. The [portable guide](PORTABLE.md) defines the user steps; there is
+no installer or automatic updater.
 
 An Actions build artifact is a development build, not a published release.
 A checksum detects corruption or a mismatch; it is not a code-signing certificate

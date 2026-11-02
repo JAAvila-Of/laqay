@@ -80,7 +80,7 @@ through Windows login. The working computer's settings remain separate.
 | Images | Dimensions, channels, orientation, V5 alpha, opaque HBITMAP snapshots and ownership, malformed metadata/chunks, every truncated input prefix, allocation bounds, PNG padding removal |
 | Files | Collision preservation, concurrent writers, invalid destinations, failed encoding cleanup, cancellation during staging even after re-enabling |
 | Context and keys | Ambiguous/editable/virtual-context rejection, focus stability, modifier handling, key repeat, cancellation generations |
-| Public tooling | Conventional subjects, policy files/links, dependency license collection, missing-notice failures |
+| Public tooling | Conventional subjects, policy files/links, dependency license collection, missing-notice failures; portable archive content, AMD64 GUI header and checksums, with malformed-package rejection and the actual packaging command |
 
 The Windows CI artifact `laqay-validation-log` retains the test output, including
 on failure. Dependency/security and public-policy jobs remain required checks.

@@ -14,7 +14,7 @@ if ((Split-Path -Leaf $binary) -ne 'laqay.exe' -or
     (Split-Path -Leaf $licenses) -ne 'THIRD_PARTY_LICENSES.txt') {
     throw 'Expected laqay.exe and THIRD_PARTY_LICENSES.txt.'
 }
-$files = @($binary, $licenses) + @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md') |
+$files = @($binary, $licenses) + @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'TRADEMARKS.md', 'docs/PORTABLE.md') |
     ForEach-Object {
         $path = if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $projectRoot $_ }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing distribution file: $path" }
@@ -24,4 +24,9 @@ $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 [System.IO.Directory]::CreateDirectory($output) | Out-Null
 $archive = Join-Path $output 'laqay-windows-x86_64.zip'
 Compress-Archive -LiteralPath $files -DestinationPath $archive -Force
+$checksums = Join-Path $output 'SHA256SUMS.txt'
+@($binary, $archive) | ForEach-Object {
+    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
+    "$digest  $(Split-Path -Leaf $_)"
+} | Set-Content -Encoding ascii -LiteralPath $checksums
 Write-Output $archive

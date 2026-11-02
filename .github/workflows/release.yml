@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     runs-on: windows-2022
@@ -29,6 +33,19 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-features
+      - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: Validate the portable delivery before release operations
+        shell: pwsh
+        run: |
+          cargo metadata --locked --format-version 1 | Set-Content -Encoding utf8 target/metadata.json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          python scripts/collect-cargo-licenses.py target/metadata.json target/THIRD_PARTY_LICENSES.txt
+          if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
+          python scripts/test-distribution.py
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
+          ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+          python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
 
   release:
     if: github.ref == 'refs/heads/main' && inputs.action == 'publish'
@@ -118,7 +135,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
       - name: Package executable and licenses
         shell: pwsh
-        run: ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+        run: |
+          python scripts/test-distribution.py
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
+          ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+          python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
       - name: Upload executable and checksum
         shell: pwsh
         env:
@@ -127,8 +149,5 @@ jobs:
         run: |
           $binary = 'target/x86_64-pc-windows-msvc/release/laqay.exe'
           $archive = 'target/laqay-windows-x86_64.zip'
-          @($binary, $archive) | ForEach-Object {
-            $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
-            "$digest  $(Split-Path -Leaf $_)"
-          } | Set-Content -Encoding ascii SHA256SUMS.txt
-          gh release upload $env:RELEASE_TAG $binary $archive SHA256SUMS.txt
+          gh release upload $env:RELEASE_TAG $binary $archive target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }
