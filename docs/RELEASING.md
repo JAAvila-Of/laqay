@@ -86,6 +86,13 @@ after publication fails, the release may already be immutable: investigate
 without trying to replace its files. A green `prepare` run only prepares a
 release PR; it does not validate tag creation, asset upload, or publication.
 
+Draft discovery uses `gh release view` to obtain the database ID, then the REST
+release-by-ID endpoint. REST's by-tag endpoint only returns published releases.
+The delivery files are retained as an Actions artifact before attestation and
+publication, so a failure does not discard the bytes needed for an inspected
+recovery. See [the bounded v0.1.1 recovery](RELEASE_RECOVERY.md) for its distinct
+builder/source verification policy.
+
 Release immutability applies to future publications, not retroactively.
 `v0.1.0` predates this flow and has checksums but no build/release attestations
 or immutable-release protection. Do not replace its files to add these claims.
