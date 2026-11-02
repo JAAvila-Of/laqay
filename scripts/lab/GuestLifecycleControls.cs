@@ -128,6 +128,7 @@ public static class LaqayGuestWaitChain {
         return 0;
     }
     public static bool InstructionInStub(ulong instruction,ulong start,int length) {return length>0 && instruction>=start && instruction-start<(ulong)length;}
+    sealed class SnapshotCleanupException : InvalidOperationException {public SnapshotCleanupException(string message):base(message){}}
     static HashSet<uint> CaptureClipboardThreads(Process app,ulong start,int length,List<object> observations) {
         IntPtr snapshot=IntPtr.Zero,marker=IntPtr.Zero;
         try {
@@ -149,7 +150,7 @@ public static class LaqayGuestWaitChain {
         } finally {
             uint markerResult=marker==IntPtr.Zero?0:PssWalkMarkerFree(marker);
             uint snapshotResult=snapshot==IntPtr.Zero?0:PssFreeSnapshot(new IntPtr(-1),snapshot);
-            if(markerResult!=0 || snapshotResult!=0) throw new InvalidOperationException("The guest thread snapshot could not be freed.");
+            if(markerResult!=0 || snapshotResult!=0) throw new SnapshotCleanupException("The guest thread snapshot could not be freed.");
         }
     }
     sealed class ContextProof {public bool Confirmed;public uint ThreadId;public object Details;}
@@ -171,8 +172,9 @@ public static class LaqayGuestWaitChain {
             var second=new List<object>();match.IntersectWith(CaptureClipboardThreads(app,start,length,second));samples.Add(new {AtUtc=DateTime.UtcNow.ToString("o"),Threads=second});
             foreach(uint thread in match){result.Confirmed=true;result.ThreadId=thread;break;}
             result.Details=new {SystemModule=system,Export="NtUserGetClipboardData",TargetStart=start.ToString("X16"),StubLength=length,CaptureFlags=0x180,ContextFlags=0x100001,Samples=samples};
-        }catch(Exception failure){result.Details=new {Error=failure.GetBaseException().Message,Samples=samples};}
-        finally {if(library!=IntPtr.Zero) FreeLibrary(library);}
+        }catch(SnapshotCleanupException){throw;}
+        catch(Exception failure){result.Confirmed=false;result.ThreadId=0;result.Details=new {Error=failure.GetBaseException().Message,Samples=samples};}
+        finally {if(library!=IntPtr.Zero && !FreeLibrary(library)) throw new SnapshotCleanupException("The guest diagnostic module reference could not be released.");}
         return result;
     }
     static void Guard(string labId,string runId) {
