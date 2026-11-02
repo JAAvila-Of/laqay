@@ -16,6 +16,20 @@ SHA-256 with its entry in the checksum file before extracting:
 Get-FileHash -Algorithm SHA256 -LiteralPath .\laqay-windows-x86_64.zip
 ```
 
+Releases produced by the protected publication flow also provide build
+provenance and immutable-release attestations. Use a current GitHub CLI to
+verify the release and your downloaded ZIP, replacing `vX.Y.Z` with its tag:
+
+```powershell
+gh release verify vX.Y.Z --repo JAAvila-Of/laqay
+gh release verify-asset vX.Y.Z .\laqay-windows-x86_64.zip --repo JAAvila-Of/laqay
+```
+
+The repository's `docs/RELEASING.md` explains how to verify build provenance
+against the exact workflow and source commit. `v0.1.0` predates these protections
+and only provides checksums. These attestations do not add a Windows publisher
+signature or guarantee that SmartScreen will accept the executable.
+
 Extract all files to a permanent folder writable by your account, and run
 `laqay.exe`. Preserve the accompanying licenses and notices. The separately
 provided `laqay.exe` asset is the same executable included in the ZIP; use the

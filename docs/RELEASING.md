@@ -14,8 +14,22 @@ do not change Laqay's version outside a release-plz PR.
    the code and asks release-plz to create or update the release PR.
 4. Review that PR, its generated version/changelog, and the compatibility impact.
    Required checks and normal PR rules apply. Do not merge automatically.
-5. After merging the release PR, run **Release** on `main` with action **publish**.
+5. After merging the release PR, an administrator must check that release
+   immutability is enabled, using the command below. Stop on any error or a
+   false result; retain the result with the release review. Then run **Release**
+   on `main` with action **publish** and `immutability_confirmed=true`.
    Only commits associated with release PRs are eligible for publication.
+
+```powershell
+gh api repos/JAAvila-Of/laqay/immutable-releases
+```
+
+The administrative check must return `enabled: true`. GitHub requires
+Administration-read permission for this endpoint, which `GITHUB_TOKEN` cannot
+provide. The workflow intentionally receives no administrative credential; its
+confirmation input records the maintainer's preflight, not an independent API
+check. Do not disable immutability during publication. The job separately checks
+the actual immutable state and cryptographic release attestation after publish.
 
 Automation-created PR workflows may require a maintainer to approve their runs
 in GitHub. Start the required checks when requested; do not bypass them or use
@@ -24,8 +38,10 @@ a broader token simply to skip review. See
 
 ## Validation and assets
 
-The Windows job builds the executable from the exact release tag and uploads
-it with SHA-256 checksums. Review workflow success, the tag's commit, release
+release-plz creates the version, tag, notes, and a draft GitHub release. The
+Windows job builds the executable from that exact release tag and uploads
+it with SHA-256 checksums. The checked-out commit must match the reviewed
+workflow commit. Review workflow success, the tag's commit, release
 notes, and asset/checksum names before announcing the release. Do not silently
 replace an asset. If publication fails, investigate and document the recovery;
 an already published version is not a reusable version number.
@@ -46,12 +62,60 @@ It reads files without starting the application. Regression tests include the
 actual PowerShell packaging command with an inert header fixture on Windows.
 The CI development artifact includes all three delivery assets.
 
-The current workflow creates the GitHub release before the asset job runs.
-Do not announce or treat it as ready until all three assets have uploaded and
-been downloaded and checked. If the asset job fails, preserve its evidence;
-do not rerun publication or overwrite existing assets blindly. Investigate the
-missing assets and use an explicitly reviewed recovery. A green `prepare` run
-only prepares a release PR; it does not validate tag creation or asset upload.
+The asset job generates a GitHub build-provenance attestation for all three
+files using OIDC and a short-lived signing identity; no signing key is stored
+in repository secrets. It downloads the uploaded draft assets and verifies
+their exact bytes, package contents, API digests, and provenance. Verification
+requires this repository's Release workflow, the expected source commit,
+`refs/heads/main`, and GitHub-hosted runners.
+
+Only after those checks does `scripts/finalize-release.py` publish the existing
+release-plz draft, preserving its version, tag, title, and generated notes. The
+repository must have release immutability enabled, as checked in the
+administrative preflight. Publication locks its assets
+and tag and creates GitHub's separate release attestation. The job then verifies
+that attestation and each downloaded asset with `gh release verify` and
+`gh release verify-asset`. This final draft transition does not create a release
+or choose a version outside release-plz.
+
+If a check before publication fails, the release stays a draft. Preserve its
+evidence; the script refuses published releases or drafts that already have
+assets. Do not rerun publication or overwrite assets blindly. An inspected
+recovery must identify the draft, source commit, and existing files. If a check
+after publication fails, the release may already be immutable: investigate
+without trying to replace its files. A green `prepare` run only prepares a
+release PR; it does not validate tag creation, asset upload, or publication.
+
+Release immutability applies to future publications, not retroactively.
+`v0.1.0` predates this flow and has checksums but no build/release attestations
+or immutable-release protection. Do not replace its files to add these claims.
+
+## Verify a downloaded release
+
+Use a current GitHub CLI. Substitute the release tag and its full commit SHA:
+
+```powershell
+$tag = 'vX.Y.Z'
+$releaseCommit = 'FULL_COMMIT_SHA_FROM_THE_RELEASE_TAG'
+gh release verify $tag --repo JAAvila-Of/laqay
+gh release verify-asset $tag .\laqay-windows-x86_64.zip --repo JAAvila-Of/laqay
+gh attestation verify .\laqay-windows-x86_64.zip --repo JAAvila-Of/laqay --signer-workflow JAAvila-Of/laqay/.github/workflows/release.yml --source-digest $releaseCommit --source-ref refs/heads/main --deny-self-hosted-runners
+```
+
+Run the asset/provenance checks for `laqay.exe` and `SHA256SUMS.txt` as well.
+The release attestation binds the tag, commit, and published files; build
+provenance identifies the workflow and source. Neither establishes that the
+software is free of bugs or replaces Windows Authenticode signing.
+
+CI also attests and verifies the three development-build files after successful
+pushes to `main`, in a separate job with narrowly scoped OIDC/attestation
+permissions. PRs do not run that job. Development attestations identify
+`.github/workflows/ci.yml`; they do not prove a published release.
+
+See [GitHub build attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
+and [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
+
+## Delivery validation before stable releases
 
 Before `1.0.0`, complete a real `0.x` prepare/review/publish cycle, verify the
 tag's commit and downloaded assets, then exercise the portable package in an

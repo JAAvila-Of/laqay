@@ -22,7 +22,11 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - name: Check portable packaging with inert fixtures
-        run: python scripts/test-distribution.py
+        run: |
+          python scripts/test-distribution.py
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution tests failed.' }
+          python scripts/test-release-delivery.py
+          if ($LASTEXITCODE -ne 0) { throw 'Release delivery tests failed.' }
       - name: Check disposable desktop lab preparation without creating VMs
         shell: powershell
         run: ./scripts/lab/Test-LabPreparation.ps1
@@ -81,3 +85,34 @@ jobs:
             target/laqay-windows-x86_64.zip
             target/SHA256SUMS.txt
           if-no-files-found: error
+
+  provenance:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: laqay-windows-x86_64
+          path: delivery
+      - name: Attest development build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            delivery/release/laqay.exe
+            delivery/laqay-windows-x86_64.zip
+            delivery/SHA256SUMS.txt
+          create-storage-record: false
+      - name: Verify development build provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          for file in delivery/release/laqay.exe delivery/laqay-windows-x86_64.zip delivery/SHA256SUMS.txt; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-digest "$SOURCE_COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners
+          done
