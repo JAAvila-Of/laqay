@@ -22,6 +22,14 @@ See [the desktop lab procedures](DESKTOP_TEST_LAB.md) for the exact harness and
 its limits. This does not validate a disconnected share, OneDrive, an RDP logon
 or redirected clipboard in the paired lab, or Windows 10.
 
+A separate paired-guest RDP attempt established an authenticated protocol-2
+session and independently verified the exact native client connection. It passed
+the thirteen regressions in that session and a remote-created image pasted by
+client Ctrl+V. The next case failed before paste because the distinct client
+image was not recognized in the redirected clipboard; redirected native-file
+priority and text cases did not run. This is fourteen passed cases and one
+failure, not a completed RDP suite. Further endpoint diagnostics are pending.
+
 ## Earlier bounded trials
 
 This matrix has not been completed. One authorized RDP image-paste trial on

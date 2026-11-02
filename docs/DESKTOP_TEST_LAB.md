@@ -342,7 +342,13 @@ normal application exit, settings restoration, and clean client disconnect are
 required. After all cases, the controller disconnects only the pinned Peer RDP
 session, checks its disconnected state, and requires the owned client to exit
 with code 0 without forced termination. Both unique tasks, the transport file,
-and the session credential are removed. Client input
+and the session credential are removed. A failed connected suite also requests
+controlled client close and disconnects only that verified session before
+removing tasks; the original test failure remains a failure. Any fallback task
+stop is recorded separately. On redirected-image checks, private diagnostics
+record available clipboard formats, dimensions, pixel format, and bounded RGB
+and ARGB hashes at each endpoint. These observations never supply image data to
+the other guest or relax the exact fixture check. Client input
 has the existing five-minute guest deadline; tasks are limited to seven minutes.
 Preparation checks that the native client exists and compiles the guarded input
 and read-only session helpers without launching it. The command loop reports
