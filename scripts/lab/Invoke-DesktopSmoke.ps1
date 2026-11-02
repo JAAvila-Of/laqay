@@ -156,9 +156,9 @@ exit $LASTEXITCODE
             [pscustomobject]@{State=$task.State.ToString();LastResult=$info.LastTaskResult;Report=$report}
         }
         $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'progress.json') -Encoding UTF8
-        if($IncludeLifecycle -and $result.Report.PendingClipboard.Requested -and -not $pendingVerified){
+        if($IncludeLifecycle -and $result.Report.PendingClipboard.Requested -and -not $result.Report.ProviderStopped -and -not $result.Report.FinishedUtc -and -not $pendingVerified){
             $pending=$result.Report.PendingClipboard
-            $proof=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
+            $proofJson=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
                 param($labId,$runId,$runRoot,$appPid,$providerPid,$providerThread,$sessionId)
                 $ErrorActionPreference='Stop'
                 if(-not ('LaqayGuestWaitChain' -as [type])){
@@ -168,9 +168,11 @@ exit $LASTEXITCODE
                         [Windows.Automation.ControlType].Assembly.Location,[Windows.Rect].Assembly.Location,[Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
                     Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
                 }
-                [LaqayGuestWaitChain]::Inspect($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
+                [LaqayGuestWaitChain]::InspectJson($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
             }
-            $proof | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'pending-wait-chain.json') -Encoding UTF8
+            $proof=$proofJson | ConvertFrom-Json
+            $proofJson | Set-Content -LiteralPath (Join-Path $output ('pending-wait-chain-'+[DateTime]::UtcNow.Ticks+'.json')) -Encoding UTF8
+            if(-not $proof.ProcessExited){$proofJson | Set-Content -LiteralPath (Join-Path $output 'pending-wait-chain.json') -Encoding UTF8}
             if($proof.Confirmed){
                 $summary.PendingWaitProof=$proof
                 Invoke-Command -Session $session -ArgumentList $guestRoot,$proof -ScriptBlock {

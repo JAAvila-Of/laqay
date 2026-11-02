@@ -139,13 +139,13 @@ public static class LaqayGuestWaitChain {
                 var observations=new List<object>();bool confirmed=false;
                 foreach(ProcessThread thread in app.Threads) {
                     try {
-                        uint count=16;bool cycle;var nodes=new Node[16];bool success=GetThreadWaitChain(session,UIntPtr.Zero,0,(uint)thread.Id,ref count,nodes,out cycle);
+                        uint count=16;bool cycle;var nodes=new Node[16];bool success=GetThreadWaitChain(session,UIntPtr.Zero,1,(uint)thread.Id,ref count,nodes,out cycle);int error=success?0:Marshal.GetLastWin32Error();
                         var observed=new List<object>();bool source=false,owner=false;
-                        for(int i=0;i<Math.Min(count,16);i++) {var node=nodes[i];observed.Add(new {Type=node.Type,Status=node.Status,ProcessId=node.ProcessId,ThreadId=node.ThreadId});
+                        for(int i=0;i<Math.Min(count,16);i++) {var node=nodes[i];observed.Add(new {Type=node.Type,Status=node.Status,ProcessId=node.Type==8?node.ProcessId:0,ThreadId=node.Type==8?node.ThreadId:0});
                             if(i==0 && node.Type==8 && node.ProcessId==appPid) source=true;
                             if(i>0 && node.Type==8 && node.ProcessId==providerPid && node.ThreadId==providerThreadId) owner=true;
                         }
-                        observations.Add(new {ThreadId=thread.Id,Success=success,Error=success?0:Marshal.GetLastWin32Error(),Nodes=observed});if(success && source && owner) confirmed=true;
+                        observations.Add(new {ThreadId=thread.Id,Success=success,Error=error,NodeCount=count,Cycle=cycle,Nodes=observed});if(success && source && owner) confirmed=true;
                     } finally {thread.Dispose();}
                 }
                 return new {LabId=labId,RunId=runId,Confirmed=confirmed,ApplicationPid=appPid,ProviderPid=providerPid,ProviderThreadId=providerThreadId,SessionId=sessionId,Threads=observations};
@@ -155,5 +155,9 @@ public static class LaqayGuestWaitChain {
                 CloseHandle(token);
             }
         }
+    }
+    public static string InspectJson(string labId,string runId,int appPid,int providerPid,uint providerThreadId,int sessionId) {
+        try {return new JavaScriptSerializer().Serialize(Inspect(labId,runId,appPid,providerPid,providerThreadId,sessionId));}
+        catch(ArgumentException) {return new JavaScriptSerializer().Serialize(new {LabId=labId,RunId=runId,Confirmed=false,ProcessExited=true});}
     }
 }
