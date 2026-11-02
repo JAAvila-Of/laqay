@@ -162,6 +162,9 @@ try{
         }finally{$key.Dispose()}
     }
     $preferencesTouched=$true
+    if($IncludeLifecycle){
+        [pscustomobject]@{LabId=$LabId;RunId=$RunId;UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;KeyExisted=$preferencesExisted;EnabledExisted=$enabledExisted;EnabledKind=[string]$oldEnabledKind;Enabled=$oldEnabled} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'preferences-before.json') -Encoding UTF8
+    }
     $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Laqay')
     try{$key.SetValue('Enabled',1,[Microsoft.Win32.RegistryValueKind]::DWord)}finally{$key.Dispose()}
     $report.ApplicationPid=[LaqayGuestDesktop]::StartApplication($executable)
@@ -475,7 +478,9 @@ try{
                 Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The PNG provider did not receive a render request.' 10
                 $report.PendingClipboard=[LaqayGuestDesktop]::DelayedPngState();Save-Report
                 $proofPath=Join-Path $root 'pending-proof.json'
-                Wait-For {Test-Path -LiteralPath $proofPath} 'The controller did not verify the application wait dependency.' 25
+                $abortPath=Join-Path $root 'pending-abort.json'
+                Wait-For {(Test-Path -LiteralPath $proofPath) -or (Test-Path -LiteralPath $abortPath)} 'The controller did not verify the application wait dependency.' 25
+                if(Test-Path -LiteralPath $abortPath){throw 'The controller aborted pending-work validation; cleanup is required.'}
                 $proof=Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
                 Assert-True ($proof.LabId -eq $LabId -and $proof.RunId -eq $RunId -and $proof.Confirmed -and $proof.ApplicationPid -eq $report.ApplicationPid -and $proof.ProviderPid -eq $report.PendingClipboard.ProviderPid -and $proof.ProviderThreadId -eq $report.PendingClipboard.ProviderThreadId -and $proof.SessionId -eq $report.SessionId) 'The pending-work proof did not match this owned application and provider.'
                 $report.PendingWaitVerified=$true;Save-Report

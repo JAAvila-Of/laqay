@@ -45,7 +45,7 @@ $peerCredential=$null
 $peerFixtureReserved=$false
 $smbVerified=$false
 $pendingVerified=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;
+$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;
     IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
@@ -161,7 +161,13 @@ exit $LASTEXITCODE
             $proof=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
                 param($labId,$runId,$runRoot,$appPid,$providerPid,$providerThread,$sessionId)
                 $ErrorActionPreference='Stop'
-                if(-not ('LaqayGuestWaitChain' -as [type])){& (Join-Path $runRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly | Out-Null}
+                if(-not ('LaqayGuestWaitChain' -as [type])){
+                    Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
+                    $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,[Management.ManagementObjectSearcher].Assembly.Location,
+                        [Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,[Windows.Automation.AutomationElement].Assembly.Location,
+                        [Windows.Automation.ControlType].Assembly.Location,[Windows.Rect].Assembly.Location,[Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
+                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
+                }
                 [LaqayGuestWaitChain]::Inspect($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
             }
             $proof | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'pending-wait-chain.json') -Encoding UTF8
@@ -242,14 +248,39 @@ exit $LASTEXITCODE
     $summary.GuestReport=$guest
     $summary.Passed=$true
 }catch{$summary.Error=$_.Exception.Message}finally{
+    if($IncludeLifecycle -and $registered -and $session -and -not $summary.Passed){try{
+        Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot -ScriptBlock {
+            param($labId,$runId,$runRoot)
+            $path=Join-Path $runRoot 'pending-abort.json'
+            if(-not (Test-Path -LiteralPath $path)){
+                [pscustomobject]@{LabId=$labId;RunId=$runId;Abort=$true} | ConvertTo-Json | Set-Content -LiteralPath ($path+'.tmp') -Encoding UTF8
+                Move-Item -LiteralPath ($path+'.tmp') -Destination $path
+            }
+        }
+        $grace=[DateTime]::UtcNow.AddSeconds(30)
+        do{
+            $finished=Invoke-Command -Session $session -ArgumentList $taskName,$guestRoot -ScriptBlock {
+                param($taskName,$runRoot)
+                $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+                if($task -and $task.State -eq 'Running'){return $false}
+                $path=Join-Path $runRoot 'report.json'
+                if(Test-Path -LiteralPath $path){try{return [bool](Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).FinishedUtc}catch{}}
+                $false
+            }
+            if($finished){break};Start-Sleep -Milliseconds 200
+        }while([DateTime]::UtcNow -lt $grace)
+    }catch{$summary.CleanupErrors+=@($_.Exception.Message)}}
     if($session){
         try{
             if($registered){
-            Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {
+            $summary.TaskStopped=[bool](Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {
                 param($taskName)
                 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
-            }
+                $stopped=$false
+                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName;$stopped=$true};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
+                $stopped
+            })
+            if($summary.TaskStopped){$summary.Passed=$false;$summary.CleanupErrors+=@('The owned guest task required a fallback stop.')}
             $summary.TaskRemoved=$true
             }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
@@ -267,6 +298,12 @@ exit $LASTEXITCODE
         try{
             if($IncludeUnc -and -not $summary.CredentialRemoved){throw 'Refusing to collect output while the credential remains.'}
             Copy-Item -Path ($guestRoot+'\*') -Destination $output -FromSession $session -Recurse
+            $collected=Join-Path $output 'report.json'
+            if(Test-Path -LiteralPath $collected){
+                $latest=Get-Content -LiteralPath $collected -Raw | ConvertFrom-Json
+                if($latest.LabId -ne $LabId -or $latest.RunId -ne $RunId){throw 'Unexpected collected guest report identity.'}
+                $summary.GuestReport=$latest
+            }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
         Remove-PSSession -Session $session
     }
