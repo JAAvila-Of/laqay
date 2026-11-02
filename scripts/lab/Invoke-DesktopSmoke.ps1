@@ -8,6 +8,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
     [switch]$StartGuestForStartup,
     [switch]$IncludeUnc,
+    [switch]$IncludeLifecycle,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -16,6 +17,7 @@ if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -Pre
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
 if($IncludeUnc -and $StartupPhase -ne 'Explorer'){throw 'UNC cases require the Explorer suite.'}
+if($IncludeLifecycle -and ($IncludeUnc -or $StartupPhase -ne 'Explorer')){throw 'Lifecycle cases require a separate console Explorer suite.'}
 if($StartGuestForStartup -and $StartupPhase -notin @('Verify','Absent')){throw 'Only a real startup verification phase may boot its guest inside the runtime lease.'}
 if(-not $env:RUST_WORK_JOB){throw 'Run the Rust application suite through the shared RustWork coordinator with --family rust.'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
@@ -42,8 +44,9 @@ $peerSession=$null
 $peerCredential=$null
 $peerFixtureReserved=$false
 $smbVerified=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;
-    IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+$pendingVerified=$false
+$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;
+    IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
@@ -106,7 +109,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -116,8 +119,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc)
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc,[bool]$IncludeLifecycle -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle)
         $ErrorActionPreference='Stop'
         $launcher=@'
 $ErrorActionPreference='Stop'
@@ -128,6 +131,7 @@ exit $LASTEXITCODE
         $driver='Invoke-GuestDesktopSmoke.ps1';$extra=''
         if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
         if($includeUnc){$extra='-IncludeUnc'}
+        if($includeLifecycle){$extra='-IncludeLifecycle'}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
         if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}
@@ -152,6 +156,34 @@ exit $LASTEXITCODE
             [pscustomobject]@{State=$task.State.ToString();LastResult=$info.LastTaskResult;Report=$report}
         }
         $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'progress.json') -Encoding UTF8
+        if($IncludeLifecycle -and $result.Report.PendingClipboard.Requested -and -not $result.Report.ProviderStopped -and -not $result.Report.FinishedUtc -and -not $pendingVerified){
+            $pending=$result.Report.PendingClipboard
+            $proofJson=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
+                param($labId,$runId,$runRoot,$appPid,$providerPid,$providerThread,$sessionId)
+                $ErrorActionPreference='Stop'
+                if(-not ('LaqayGuestWaitChain' -as [type])){
+                    Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
+                    $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,[Management.ManagementObjectSearcher].Assembly.Location,
+                        [Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,[Windows.Automation.AutomationElement].Assembly.Location,
+                        [Windows.Automation.ControlType].Assembly.Location,[Windows.Rect].Assembly.Location,[Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
+                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
+                }
+                [LaqayGuestWaitChain]::InspectJson($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
+            }
+            $proof=$proofJson | ConvertFrom-Json
+            $proofJson | Set-Content -LiteralPath (Join-Path $output ('pending-wait-chain-'+[DateTime]::UtcNow.Ticks+'.json')) -Encoding UTF8
+            if(-not $proof.ProcessExited){$proofJson | Set-Content -LiteralPath (Join-Path $output 'pending-wait-chain.json') -Encoding UTF8}
+            if($proof.Confirmed){
+                $summary.PendingWaitProof=$proof
+                Invoke-Command -Session $session -ArgumentList $guestRoot,$proof -ScriptBlock {
+                    param($runRoot,$proof)
+                    $path=Join-Path $runRoot 'pending-proof.json';if(Test-Path -LiteralPath $path){throw 'Refusing a repeated pending-work proof.'}
+                    $proof | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath ($path+'.tmp') -Encoding UTF8
+                    Move-Item -LiteralPath ($path+'.tmp') -Destination $path
+                }
+                $pendingVerified=$true
+            }
+        }
         if($IncludeUnc -and $result.Report.UncConnectionReady -and -not $smbVerified){
             $summary.SmbConnection=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$peerCredential.UserName -ScriptBlock {
                 param($labId,$runId,$runRoot,$peerUser)
@@ -189,9 +221,11 @@ exit $LASTEXITCODE
     }else{
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
+    if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
+    if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
     }
     if($IncludeUnc){
         if(-not $smbVerified -or -not $guest.IncludeUnc -or -not $guest.SmbSigned -or -not $guest.PeerDisconnected -or -not $guest.CredentialRemoved -or $guest.UncFiles.Count -ne 3 -or $guest.ApplicationExitCode -ne 0){throw 'UNC cleanup, signed connection, or application exit validation failed.'}
@@ -216,14 +250,39 @@ exit $LASTEXITCODE
     $summary.GuestReport=$guest
     $summary.Passed=$true
 }catch{$summary.Error=$_.Exception.Message}finally{
+    if($IncludeLifecycle -and $registered -and $session -and -not $summary.Passed){try{
+        Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot -ScriptBlock {
+            param($labId,$runId,$runRoot)
+            $path=Join-Path $runRoot 'pending-abort.json'
+            if(-not (Test-Path -LiteralPath $path)){
+                [pscustomobject]@{LabId=$labId;RunId=$runId;Abort=$true} | ConvertTo-Json | Set-Content -LiteralPath ($path+'.tmp') -Encoding UTF8
+                Move-Item -LiteralPath ($path+'.tmp') -Destination $path
+            }
+        }
+        $grace=[DateTime]::UtcNow.AddSeconds(30)
+        do{
+            $finished=Invoke-Command -Session $session -ArgumentList $taskName,$guestRoot -ScriptBlock {
+                param($taskName,$runRoot)
+                $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+                if($task -and $task.State -eq 'Running'){return $false}
+                $path=Join-Path $runRoot 'report.json'
+                if(Test-Path -LiteralPath $path){try{return [bool](Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).FinishedUtc}catch{}}
+                $false
+            }
+            if($finished){break};Start-Sleep -Milliseconds 200
+        }while([DateTime]::UtcNow -lt $grace)
+    }catch{$summary.CleanupErrors+=@($_.Exception.Message)}}
     if($session){
         try{
             if($registered){
-            Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {
+            $summary.TaskStopped=[bool](Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {
                 param($taskName)
                 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
-            }
+                $stopped=$false
+                if($task){if($task.State -eq 'Running'){Stop-ScheduledTask -TaskName $taskName;$stopped=$true};Unregister-ScheduledTask -TaskName $taskName -Confirm:$false}
+                $stopped
+            })
+            if($summary.TaskStopped){$summary.Passed=$false;$summary.CleanupErrors+=@('The owned guest task required a fallback stop.')}
             $summary.TaskRemoved=$true
             }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
@@ -241,6 +300,12 @@ exit $LASTEXITCODE
         try{
             if($IncludeUnc -and -not $summary.CredentialRemoved){throw 'Refusing to collect output while the credential remains.'}
             Copy-Item -Path ($guestRoot+'\*') -Destination $output -FromSession $session -Recurse
+            $collected=Join-Path $output 'report.json'
+            if(Test-Path -LiteralPath $collected){
+                $latest=Get-Content -LiteralPath $collected -Raw | ConvertFrom-Json
+                if($latest.LabId -ne $LabId -or $latest.RunId -ne $RunId){throw 'Unexpected collected guest report identity.'}
+                $summary.GuestReport=$latest
+            }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
         Remove-PSSession -Session $session
     }

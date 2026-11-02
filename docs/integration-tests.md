@@ -35,6 +35,17 @@ guest shutdown were checked. This covers one Windows 11 Enterprise evaluation
 setup (the guests reported zero evaluation grace remaining), not Windows 10,
 arbitrary RDP clients, reconnects, or policy-restricted clipboard scenarios.
 
+The separate Primary console lifecycle suite passed its thirteen regressions
+plus Explorer restart recovery and exit with a blocked clipboard read. The
+shell PID changed while Laqay kept its PID, restored its registered notification
+icon, and saved another exact PNG. Two native control-register samples identified
+the same application thread in the system clipboard-read stub while the delayed
+provider remained owner with unchanged sequence and withheld data. Laqay exited
+0 without force in 1,016 ms in that run; the provider then stopped, no output or
+staging file remained, preferences/permissions were restored, and both guests
+were off. This is bounded validation of the blocked-read case, not a shutdown
+benchmark or coverage of actual Windows shutdown and every encoding/write stage.
+
 ## Earlier bounded trials
 
 This matrix has not been completed. One authorized RDP image-paste trial on
@@ -73,8 +84,9 @@ as required in trial mode. Hook removal and process exit were verified, with
 no runtime errors or watchdog termination. No paste was attempted in that block.
 These earlier trials did not cover execution at login, Explorer restart recovery,
 shutdown with pending work, or regression testing of earlier paste results.
-The subsequent automated coverage is described above; Explorer restart recovery
-and shutdown with pending work remain separate scenarios.
+The subsequent automated coverage is described above, including Explorer restart
+and application close with a blocked clipboard read. Actual Windows shutdown
+and the remaining encoding/write stages still require separate validation.
 Automated tests cover generation cancellation and preference/command parsing,
 plus real registry persistence under an isolated test root. The all-features CI
 suite also tests a private native clipboard. They do not exercise the real tray

@@ -5,6 +5,7 @@ param(
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [switch]$IncludeUnc,
     [switch]$IncludeRdp,
+    [switch]$IncludeLifecycle,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -13,7 +14,7 @@ $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assem
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
     [Windows.Automation.AutomationElement].Assembly.Location,[Windows.Automation.ControlType].Assembly.Location,
     [Windows.Rect].Assembly.Location,[System.Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
-Add-Type -Path (Join-Path $PSScriptRoot 'GuestDesktopControls.cs') -ReferencedAssemblies $references
+Add-Type -Path @((Join-Path $PSScriptRoot 'GuestDesktopControls.cs'),(Join-Path $PSScriptRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
 if($PrepareOnly){
     $typeNodes=$MyInvocation.MyCommand.ScriptBlock.Ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TypeExpressionAst] -or $node -is [System.Management.Automation.Language.TypeConstraintAst]},$true)
     foreach($node in $typeNodes){if($node.TypeName.FullName -ne 'ordered' -and -not $node.TypeName.GetReflectionType()){throw ('Unresolved PowerShell type: '+$node.TypeName.FullName)}}
@@ -22,6 +23,7 @@ if($PrepareOnly){
     if(-not $rejected){throw 'Unarmed input controls were accepted.'}
     foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
+        {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
@@ -41,6 +43,7 @@ if($PrepareOnly){
 }
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256){throw 'A lab identity, run identity, and executable SHA-256 are required.'}
 if($IncludeRdp -and $IncludeUnc){throw 'RDP and UNC scenarios use separate transports.'}
+if($IncludeLifecycle -and ($IncludeRdp -or $IncludeUnc)){throw 'Lifecycle cases require a separate owned console run.'}
 $armLimit=[DateTime]::UtcNow.AddSeconds(30)
 while($true){
     try{[LaqayGuestDesktop]::Arm($LabId);break}catch{
@@ -56,6 +59,7 @@ $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
+    IncludeLifecycle=[bool]$IncludeLifecycle;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
@@ -142,6 +146,7 @@ try{
         $report.RdpClientAddress=[LaqayGuestDesktop]::RdpClientAddress()
         Assert-True ($report.SessionProtocol -eq 2 -and $report.RdpClientAddress -eq '10.77.166.10') 'Expected a real RDP session from the isolated Primary guest.'
     }
+    if($IncludeLifecycle){[LaqayGuestDesktop]::RequireRole('Primary');$report.SessionProtocol=[LaqayGuestDesktop]::SessionProtocol();Assert-True ($report.SessionProtocol -eq 0) 'Lifecycle cases require the Primary console.'}
     $executables=@(Get-ChildItem -LiteralPath 'C:/LaqayLab/App' -Filter laqay.exe -File -Recurse)
     Assert-True ($executables.Count -eq 1) 'Expected one validated guest executable.'
     $executable=$executables[0].FullName
@@ -157,6 +162,9 @@ try{
         }finally{$key.Dispose()}
     }
     $preferencesTouched=$true
+    if($IncludeLifecycle){
+        [pscustomobject]@{LabId=$LabId;RunId=$RunId;UserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;KeyExisted=$preferencesExisted;EnabledExisted=$enabledExisted;EnabledKind=[string]$oldEnabledKind;Enabled=$oldEnabled} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'preferences-before.json') -Encoding UTF8
+    }
     $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Laqay')
     try{$key.SetValue('Enabled',1,[Microsoft.Win32.RegistryValueKind]::DWord)}finally{$key.Dispose()}
     $report.ApplicationPid=[LaqayGuestDesktop]::StartApplication($executable)
@@ -445,8 +453,53 @@ try{
         }
         Assert-True ($report.Cases.Count -eq 16 -and $report.UncFiles.Count -eq 3) 'The UNC suite did not complete all cases and files.'
     }
+    if($IncludeLifecycle){
+        [LaqayGuestDesktop]::RequireRole('Primary')
+        Assert-True ([LaqayGuestDesktop]::SessionProtocol() -eq 0) 'Lifecycle scenarios require the console session.'
+        Run-Case 'ExplorerRestartRecovery' {
+            Wait-For {[LaqayGuestDesktop]::TrayIconRegistered()} 'The original application icon was not registered.'
+            $originalApp=$report.ApplicationPid
+            $oldExplorer=[LaqayGuestDesktop]::RestartGuestExplorer()
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:shell);$script:shell=$null
+            Wait-For {[LaqayGuestDesktop]::GuestExplorerPid() -gt 0 -and [LaqayGuestDesktop]::GuestExplorerPid() -ne $oldExplorer} 'The guest shell did not restart.' 30
+            Wait-For {[LaqayGuestDesktop]::TrayIconRegistered()} 'The same application did not restore its notification icon.' 20
+            Assert-True ((Get-Process -Id $originalApp).Id -eq $originalApp -and [LaqayGuestDesktop]::ApplicationReady()) 'The application did not survive the shell restart.'
+            $script:shell=New-Object -ComObject Shell.Application
+            $path=New-CaseFolder 'after-explorer-restart';$window=Open-Folder $path
+            Paste-Image $window $path 1
+            Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
+            $report.ExplorerRestart=[pscustomobject]@{OldPid=$oldExplorer;NewPid=[LaqayGuestDesktop]::GuestExplorerPid();ApplicationPid=$originalApp;IconRegistered=$true;ImageVerified=$true}
+        }
+        Run-Case 'ExitWithPendingClipboard' {
+            $path=New-CaseFolder 'pending-on-exit';$window=Open-Folder $path
+            try{
+                [LaqayGuestDesktop]::BeginDelayedPng()
+                [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+                Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The PNG provider did not receive a render request.' 10
+                $report.PendingClipboard=[LaqayGuestDesktop]::DelayedPngState();Save-Report
+                $proofPath=Join-Path $root 'pending-proof.json'
+                $abortPath=Join-Path $root 'pending-abort.json'
+                Wait-For {(Test-Path -LiteralPath $proofPath) -or (Test-Path -LiteralPath $abortPath)} 'The controller did not verify the application wait dependency.' 25
+                if(Test-Path -LiteralPath $abortPath){throw 'The controller aborted pending-work validation; cleanup is required.'}
+                $proof=Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
+                Assert-True ($proof.LabId -eq $LabId -and $proof.RunId -eq $RunId -and $proof.Confirmed -and $proof.ApplicationPid -eq $report.ApplicationPid -and $proof.ProviderPid -eq $report.PendingClipboard.ProviderPid -and $proof.ProviderThreadId -eq $report.PendingClipboard.ProviderThreadId -and $proof.SessionId -eq $report.SessionId) 'The pending-work proof did not match this owned application and provider.'
+                $report.PendingWaitVerified=$true;Save-Report
+                $held=[LaqayGuestDesktop]::DelayedPngState()
+                Assert-True ($held.Requested -and -not $held.Released -and $held.OwnerMatches -and $held.Sequence -eq $held.PublishedSequence) 'The pending provider or clipboard sequence changed before exit.'
+                $timer=[Diagnostics.Stopwatch]::StartNew()
+                $report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced
+                $timer.Stop();$report.ExitMilliseconds=$timer.ElapsedMilliseconds;$script:applicationStarted=$false
+                Assert-True ($report.ApplicationClosed -and $report.ApplicationExitCode -eq 0 -and -not $report.ForcedTermination) 'The application did not exit normally with its image provider blocked.'
+                Assert-True (([LaqayGuestDesktop]::DelayedPngState()).Requested -and -not ([LaqayGuestDesktop]::DelayedPngState()).Released) 'The provider was released before application exit.'
+            }finally{[LaqayGuestDesktop]::EndDelayedPng();$report.ProviderStopped=$true}
+            Start-Sleep -Milliseconds 500
+            Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) 'Pending paste published output or left a staging file after exit.'
+            Assert-True (@(Get-Process -Name laqay -ErrorAction SilentlyContinue).Count -eq 0) 'The owned application process survived exit.'
+        }
+    }
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message;$report.ErrorDetail=[pscustomobject]@{Id=$_.FullyQualifiedErrorId;Position=$_.InvocationInfo.PositionMessage;Stack=$_.ScriptStackTrace}}finally{
+    try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     }

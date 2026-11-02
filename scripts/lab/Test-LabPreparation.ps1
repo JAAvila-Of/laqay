@@ -8,6 +8,16 @@ try {
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     Assert-True (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32/mstsc.exe')) 'The native Windows RDP client is missing.'
     Add-Type -Path (Join-Path $PSScriptRoot 'GuestSessionQuery.cs')
+    Assert-True ([Runtime.InteropServices.Marshal]::SizeOf([type][LaqayGuestWaitChain+Node]) -eq 280 -and [Runtime.InteropServices.Marshal]::OffsetOf([type][LaqayGuestWaitChain+Node],'ThreadId').ToInt32() -eq 12) 'Unexpected native wait-chain ABI layout.'
+    $rejected=$false
+    try{[LaqayGuestWaitChain]::Inspect('invalid','invalid',0,0,0,0) | Out-Null}catch{$rejected=$true}
+    Assert-True $rejected 'An unowned wait-chain diagnostic was accepted.'
+    Assert-True ([Runtime.InteropServices.Marshal]::SizeOf([type][LaqayGuestWaitChain+SnapshotThread]) -eq 120 -and [Runtime.InteropServices.Marshal]::OffsetOf([type][LaqayGuestWaitChain+SnapshotThread],'Context').ToInt32() -eq 112) 'Unexpected x64 process-snapshot thread ABI.'
+    $stub=New-Object byte[] 32;$stub[0]=0x4c;$stub[1]=0x8b;$stub[2]=0xd1;$stub[3]=0xb8;$stub[18]=0x0f;$stub[19]=0x05;$stub[20]=0xc3
+    Assert-True ([LaqayGuestWaitChain]::ClipboardStubLength($stub) -eq 21) 'The expected clipboard syscall stub was not recognized.'
+    $stub[0]=0xe9
+    Assert-True ([LaqayGuestWaitChain]::ClipboardStubLength($stub) -eq 0) 'An unknown or redirected syscall stub was accepted.'
+    Assert-True ([LaqayGuestWaitChain]::InstructionInStub(4116,4096,21) -and -not [LaqayGuestWaitChain]::InstructionInStub(4117,4096,21) -and -not [LaqayGuestWaitChain]::InstructionInStub(4095,4096,21)) 'The clipboard instruction range accepted an out-of-range address.'
     function New-RedirectedDibFixture([int]$header,[int]$height,[int]$compression){
         $offset=$header;if($header -eq 40 -and $compression -eq 3){$offset+=12}
         $bytes=New-Object byte[] ($offset+24)

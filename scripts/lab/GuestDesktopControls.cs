@@ -13,7 +13,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Automation;
 using System.Windows.Forms;
 
-public static class LaqayGuestDesktop {
+public static partial class LaqayGuestDesktop {
     static bool armed;
     static DateTime deadline;
     static readonly HashSet<IntPtr> windows = new HashSet<IntPtr>();

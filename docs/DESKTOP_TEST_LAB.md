@@ -386,3 +386,47 @@ account until the VM is removed; disclose this when obtaining permission.
 Without the switch, no consent is accepted automatically. Setup also records
 current OS/client versions and evaluation licensing status as read-only private
 diagnostics; it never changes activation, clocks, license keys, or network access.
+
+## Isolated Explorer lifecycle checks
+
+`Invoke-DesktopSmoke.ps1 -IncludeLifecycle` extends the thirteen console cases
+with `ExplorerRestartRecovery` and `ExitWithPendingClipboard`. This is a separate
+Primary-only run; do not combine it with startup, UNC, or RDP cases. Arrange an
+explicitly authorized guest interactive logon and acquire RustWork before guest
+boot/runtime. Peer remains off. Preparation compiles helpers and checks guards
+without starting a VM, restarting Explorer, or reading the host clipboard.
+
+The restart case identifies the actual shell PID in the disposable console,
+checks its executable/session, and refuses separately hosted owned folder
+windows. It terminates only that guest shell, waits for a different shell PID,
+requires the same Laqay PID and a registered notification icon, and pastes a new
+image with exact PNG validation. It does not restart the host shell.
+
+The pending-work case advertises only a delayed PNG from an owned message-only
+window. Its provider thread withholds data for at most sixty seconds. After
+the render request arrives, the privileged guest controller inspects only the
+exact Laqay PID. It accepts a wait-chain dependency on the owned provider, or
+two native x64 thread-context snapshots, at least 100 ms apart, that show the
+same thread in the actual system clipboard-read syscall stub. The syscall
+export must have a recognized instruction layout and reside in the matching
+system module. A missing/unknown layout declines proof; these implementation
+details are diagnostic constraints, not a production API dependency.
+Snapshots capture only thread information and control registers: no address
+space clone, application memory pages, or dump file. Snapshots/walk markers are
+freed after each sample. The task also requires the provider to remain the
+clipboard owner, its sequence unchanged, and its data withheld before close.
+Guest identity, process owners, paths, and session are validated. The guest
+controller temporarily enables and restores SeDebugPrivilege for the diagnostic;
+no policy is modified. Missing proof remains a failure. WCT observations are
+retained because clipboard waits may not expose an object/owner chain.
+
+Only after the bound proof does the limited task request normal application
+close. It requires exit 0 without forced termination while the provider remains
+blocked, then cancels and joins its own provider, checks the destination contains
+no PNG or staging file, and restores preferences/permissions. The host requires
+all fifteen cases, the wait proof, provider cleanup, and task removal. The caller
+must remove temporary guest logon configuration and confirm the guests are off.
+This validates close during a blocked clipboard read; it does not claim coverage
+of every encoding/write stage or an actual Windows shutdown. Runtime validation
+passed all fifteen cases in the owned Windows 11 evaluation console, including
+the native context proof, normal application exit, and complete cleanup.
