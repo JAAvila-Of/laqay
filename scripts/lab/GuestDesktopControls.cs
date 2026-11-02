@@ -148,16 +148,18 @@ public static class LaqayGuestDesktop {
                     if(image.Width<=256 && image.Height<=256) {
                         var actual=image as Bitmap;bool owned=actual==null;if(owned) actual=new Bitmap(image);
                         try {
-                            var argb=new List<byte>();var rgb=new List<byte>();int nonOpaque=0;
+                            var argb=new List<byte>();var rgb=new List<byte>();var pixels=new List<string>();int nonOpaque=0;
                             for(int y=0;y<actual.Height;y++) for(int x=0;x<actual.Width;x++) {
                                 var color=actual.GetPixel(x,y);argb.Add(color.A);argb.Add(color.R);argb.Add(color.G);argb.Add(color.B);
                                 rgb.Add(color.R);rgb.Add(color.G);rgb.Add(color.B);if(color.A!=255) nonOpaque++;
+                                if(actual.Width<=8 && actual.Height<=8) pixels.Add(color.ToArgb().ToString("X8"));
                             }
                             using(var hash=System.Security.Cryptography.SHA256.Create()) {
                                 result["ArgbSha256"]=BitConverter.ToString(hash.ComputeHash(argb.ToArray())).Replace("-","");
                                 result["RgbSha256"]=BitConverter.ToString(hash.ComputeHash(rgb.ToArray())).Replace("-","");
                             }
                             result["NonOpaquePixels"]=nonOpaque;
+                            if(pixels.Count>0) result["DiagnosticArgbPixels"]=pixels;
                         } finally {if(owned) actual.Dispose();}
                     }
                 }
@@ -208,6 +210,7 @@ public static class LaqayGuestDesktop {
             report["SessionId"]=Process.GetCurrentProcess().SessionId;report["StartedUtc"]=DateTime.UtcNow.ToString("o");report["FinishedUtc"]=null;
             report["Stage"]="Created";report["CredentialRemoved"]=false;report["ForcedTermination"]=false;report["ClientExitCode"]=null;
             report["FileConsentAllowed"]=allowFileConsent;report["FirstUseConsentAccepted"]=false;report["ClipboardConsentAccepted"]=false;
+            report["EndedSessionDialogAccepted"]=false;
         }
         void Save() {
             string temporary=Path.Combine(root,"client-report.tmp");File.WriteAllText(temporary,json.Serialize(report));
@@ -357,6 +360,21 @@ public static class LaqayGuestDesktop {
                 }
             }
         }
+        void DismissEndedSession() {
+            if((bool)report["EndedSessionDialogAccepted"]) return;
+            foreach(var window in ConsentWindows()) {
+                if(window.Current.ProcessId!=process.Id || window.Current.ClassName!="#32770" || Label(window)!="Remote Desktop Connection") continue;
+                var controls=window.FindAll(TreeScope.Descendants,Condition.TrueCondition);
+                if(controls.Count>100) continue;
+                bool ended=false;AutomationElement ok=null;
+                foreach(AutomationElement control in controls) {
+                    var info=control.Current;if(info.ProcessId!=process.Id || info.IsPassword) continue;
+                    if(info.ControlType==ControlType.Text && Label(control)=="Your Remote Desktop Services session has ended.") ended=true;
+                    if(info.ControlType==ControlType.Button && Label(control)=="OK") ok=control;
+                }
+                if(ended && ok!=null && ok.Current.IsEnabled) {InvokeConsentButton(ok);report["EndedSessionDialogAccepted"]=true;Save();return;}
+            }
+        }
         Dictionary<string,object> ReadProof(string name) {
             string path=Path.Combine(root,name);if(!File.Exists(path)) return null;
             var proof=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
@@ -381,6 +399,7 @@ public static class LaqayGuestDesktop {
                         if(Convert.ToInt32(proof["PeerSessionId"])!=serverSession || Convert.ToInt32(proof["State"])!=4) throw new InvalidOperationException("Unexpected disconnect proof.");
                         disconnected=true;report["Disconnected"]=true;
                         if(process.HasExited) {context.ExitThread();return;}
+                        DismissEndedSession();
                         if(DateTime.UtcNow-lastClose>=TimeSpan.FromSeconds(1)) {CloseOwnedWindows();lastClose=DateTime.UtcNow;}
                     }
                     if(DateTime.UtcNow>=closeDeadline) throw new TimeoutException("The native RDP client did not exit after the verified server disconnect.");
