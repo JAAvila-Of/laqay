@@ -110,7 +110,7 @@ class DistributionTests(unittest.TestCase):
             str(Path(__file__).with_name("New-Distribution.ps1")),
             "-BinaryPath", str(self.binary), "-LicenseTextPath", str(self.licenses),
             "-OutputDirectory", str(output),
-        ], check=True, capture_output=True, text=True)
+        ], check=True)
         distribution.check(self.binary, output / self.archive.name, self.licenses, output / self.checksums.name)
 
 
