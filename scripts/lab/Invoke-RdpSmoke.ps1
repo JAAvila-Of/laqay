@@ -300,6 +300,13 @@ exit $LASTEXITCODE
             if($role -eq 'Primary' -and -not $report.CredentialRemoved){throw 'Refusing output collection with a credential present.'}
             $destination=Join-Path $output $role;New-Item -ItemType Directory -Path $destination -Force | Out-Null
             Copy-Item -Path ($guestRoot+'\*') -Destination $destination -FromSession $sessions[$role] -Recurse
+            $name=if($role -eq 'Primary'){'client-report.json'}else{'report.json'}
+            $collected=Join-Path $destination $name
+            if(Test-Path -LiteralPath $collected){
+                $latest=Get-Content -LiteralPath $collected -Raw | ConvertFrom-Json
+                if($latest.LabId -ne $LabId -or $latest.RunId -ne $RunId){throw 'Unexpected collected guest report identity.'}
+                if($role -eq 'Primary'){$report.Client=$latest}else{$report.Peer=$latest}
+            }
         }catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}}
         Remove-PSSession -Session $sessions[$role]
     }

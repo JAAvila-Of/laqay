@@ -248,7 +248,25 @@ public static class LaqayGuestDesktop {
             error=error.GetBaseException();report["Error"]=error.GetType().Name+": "+error.Message;report["ErrorHResult"]=error.HResult;
             CaptureDiagnostic();Stage("Failed");context.ExitThread();
         }
-        static string Label(AutomationElement element) {return Regex.Replace(element.Current.Name??"",@"\s+"," ").Trim();}
+        static string Label(AutomationElement element) {return Regex.Replace((element.Current.Name??"").Replace("&",""),@"\s+"," ").Trim();}
+        List<AutomationElement> ConsentWindows() {
+            var handles=new HashSet<IntPtr>();var result=new List<AutomationElement>();
+            // Owned modal dialogs need not be direct children of the UI Automation desktop.
+            EnumWindows(delegate(IntPtr window,IntPtr parameter) {
+                uint pid;GetWindowThreadProcessId(window,out pid);
+                var name=new StringBuilder(128);GetClassNameW(window,name,name.Capacity);
+                if(pid==(uint)process.Id && name.ToString()!="TscShellContainerClass") handles.Add(window);
+                return true;
+            },IntPtr.Zero);
+            foreach(var handle in handles) result.Add(AutomationElement.FromHandle(handle));
+            var roots=AutomationElement.RootElement.FindAll(TreeScope.Children,new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id));
+            foreach(AutomationElement window in roots) {
+                if(window.Current.ClassName=="TscShellContainerClass") continue;
+                var handle=new IntPtr(window.Current.NativeWindowHandle);
+                if(handle==IntPtr.Zero || handles.Add(handle)) result.Add(window);
+            }
+            return result;
+        }
         void InvokeConsentButton(AutomationElement element) {
             int handle=element.Current.NativeWindowHandle;
             if(handle!=0) {
@@ -263,14 +281,20 @@ public static class LaqayGuestDesktop {
             if(!allowFileConsent) return;
             RequireRole("Primary");
             if(File.ReadAllText(Path.Combine(root,"connection.rdp"),Encoding.Unicode)!=configuration) throw new InvalidOperationException("The owned RDP file changed before consent.");
-            var candidates=AutomationElement.RootElement.FindAll(TreeScope.Children,new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id));
-            foreach(AutomationElement window in candidates) {
-                if(window.Current.ClassName=="TscShellContainerClass") continue;
+            var observations=new List<object>();report["ConsentWindows"]=observations;
+            foreach(AutomationElement window in ConsentWindows()) {
+                if(window.Current.ProcessId!=process.Id) throw new InvalidOperationException("The consent window belongs to another process.");
                 var controls=window.FindAll(TreeScope.Descendants,Condition.TrueCondition);
                 if(controls.Count>500) continue;
                 AutomationElement first=null,ok=null,connect=null;var boxes=new List<AutomationElement>();var labels=new StringBuilder();
+                var observedControls=new List<object>();
+                observations.Add(new {Name=Label(window),ClassName=window.Current.ClassName,Controls=observedControls});
+                labels.AppendLine(Label(window));
                 for(int i=0;i<controls.Count;i++) {
-                    var element=controls[i];var info=element.Current;string label=Label(element);labels.AppendLine(label);
+                    var element=controls[i];var info=element.Current;
+                    if(info.ProcessId!=process.Id || info.IsPassword) continue;
+                    string label=Label(element);labels.AppendLine(label);
+                    observedControls.Add(new {Name=label,ClassName=info.ClassName,Type=info.ControlType.ProgrammaticName,Enabled=info.IsEnabled});
                     if(info.ControlType==ControlType.CheckBox) {
                         boxes.Add(element);
                         if(label=="I understand and allow RDP files to open on this device for my account") first=element;
