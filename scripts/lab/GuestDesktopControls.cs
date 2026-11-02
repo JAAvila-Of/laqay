@@ -36,6 +36,13 @@ public static class LaqayGuestDesktop {
     [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr window, int command);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll",SetLastError=true)] static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] static extern bool CloseClipboard();
+    [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint format);
+    [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetClipboardData(uint format);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GlobalLock(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr handle);
     [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr window,uint message,IntPtr wparam,IntPtr lparam);
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeoutW(IntPtr window,uint message,IntPtr wparam,IntPtr lparam,uint flags,uint timeout,out UIntPtr result);
@@ -129,17 +136,54 @@ public static class LaqayGuestDesktop {
     }
     public static bool ClipboardIsRedirectedFixture() {
         RequireRole("Peer");
-        using(var image=Clipboard.GetImage()) {
-            if(image==null || image.Width!=3 || image.Height!=2) return false;
-            using(var bitmap=new Bitmap(image)) using(var expected=RedirectedFixture())
-                for(int y=0;y<2;y++) for(int x=0;x<3;x++) if(bitmap.GetPixel(x,y).ToArgb()!=expected.GetPixel(x,y).ToArgb()) return false;
+        var bytes=ClipboardDib();return bytes!=null && RedirectedDibMatches(bytes);
+    }
+    static byte[] ClipboardDib() {
+        Guard();if(!OpenClipboard(IntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            uint format=IsClipboardFormatAvailable(17)?17u:IsClipboardFormatAvailable(8)?8u:0u;
+            if(format==0) return null;
+            IntPtr handle=GetClipboardData(format);if(handle==IntPtr.Zero) throw new InvalidOperationException("Native clipboard DIB is unavailable.");
+            ulong size=GlobalSize(handle).ToUInt64();if(size<40 || size>1048576) throw new InvalidOperationException("Native fixture DIB size is outside its bounds.");
+            IntPtr pointer=GlobalLock(handle);if(pointer==IntPtr.Zero) throw new InvalidOperationException("Native clipboard DIB could not be locked.");
+            try {var bytes=new byte[(int)size];Marshal.Copy(pointer,bytes,0,bytes.Length);return bytes;} finally {GlobalUnlock(handle);}
+        } finally {CloseClipboard();}
+    }
+    static string[] RedirectedDibPixels(byte[] bytes) {
+        if(bytes==null || bytes.Length<40) return null;
+        uint header=BitConverter.ToUInt32(bytes,0);int width=BitConverter.ToInt32(bytes,4),height=BitConverter.ToInt32(bytes,8);
+        uint compression=BitConverter.ToUInt32(bytes,16);
+        if((header!=40 && header!=108 && header!=124) || header>bytes.Length || width!=3 || (height!=2 && height!=-2) ||
+            BitConverter.ToUInt16(bytes,12)!=1 || BitConverter.ToUInt16(bytes,14)!=32 || (compression!=0 && compression!=3) || BitConverter.ToUInt32(bytes,32)!=0) return null;
+        if(header==124 && (BitConverter.ToUInt32(bytes,112)!=0 || BitConverter.ToUInt32(bytes,116)!=0)) return null;
+        int offset=(int)header;uint alpha=0;
+        if(compression==3) {
+            if(header==40) offset+=12;
+            if(bytes.Length<offset || BitConverter.ToUInt32(bytes,40)!=0x00ff0000 || BitConverter.ToUInt32(bytes,44)!=0x0000ff00 || BitConverter.ToUInt32(bytes,48)!=0x000000ff) return null;
+            if(header>=108) alpha=BitConverter.ToUInt32(bytes,52);
+            if(alpha!=0 && alpha!=0xff000000) return null;
         }
+        if(bytes.Length-offset<24) return null;
+        var pixels=new string[6];
+        for(int y=0;y<2;y++) for(int x=0;x<3;x++) {
+            int p=offset+(height>0?1-y:y)*12+x*4;
+            uint value=BitConverter.ToUInt32(bytes,p);if(alpha==0) value|=0xff000000;
+            pixels[y*3+x]=value.ToString("X8");
+        }
+        return pixels;
+    }
+    public static bool RedirectedDibMatches(byte[] bytes) {
+        var pixels=RedirectedDibPixels(bytes);if(pixels==null) return false;
+        string[] expected={"FFFF00FF","FF00FFFF","FFFFFF00","FF000000","FFFFA500","FF800080"};
+        for(int i=0;i<expected.Length;i++) if(pixels[i]!=expected[i]) return false;
         return true;
     }
     public static bool ClipboardTextEquals(string expected) {Guard();return Clipboard.ContainsText() && Clipboard.GetText()==expected;}
     public static object ClipboardDiagnostic() {
         Guard();var result=new Dictionary<string,object>();
         try {
+            var native=ClipboardDib();
+            if(native!=null) result["NativeDib"]=new {HeaderSize=BitConverter.ToUInt32(native,0),Compression=BitConverter.ToUInt32(native,16),Pixels=RedirectedDibPixels(native),Matches=RedirectedDibMatches(native)};
             var data=Clipboard.GetDataObject();result["Formats"]=data==null?new string[0]:data.GetFormats(false);
             using(var image=Clipboard.GetImage()) {
                 result["HasImage"]=image!=null;
@@ -362,16 +406,21 @@ public static class LaqayGuestDesktop {
         }
         void DismissEndedSession() {
             if((bool)report["EndedSessionDialogAccepted"]) return;
+            var observations=new List<object>();report["DisconnectWindows"]=observations;
             foreach(var window in ConsentWindows()) {
-                if(window.Current.ProcessId!=process.Id || window.Current.ClassName!="#32770" || Label(window)!="Remote Desktop Connection") continue;
+                if(window.Current.ProcessId!=process.Id) continue;
                 var controls=window.FindAll(TreeScope.Descendants,Condition.TrueCondition);
                 if(controls.Count>100) continue;
-                bool ended=false;AutomationElement ok=null;
+                var labels=new StringBuilder();var observed=new List<object>();AutomationElement ok=null;
+                observations.Add(new {Name=Label(window),ClassName=window.Current.ClassName,Controls=observed});
                 foreach(AutomationElement control in controls) {
                     var info=control.Current;if(info.ProcessId!=process.Id || info.IsPassword) continue;
-                    if(info.ControlType==ControlType.Text && Label(control)=="Your Remote Desktop Services session has ended.") ended=true;
+                    labels.AppendLine(Label(control));observed.Add(new {Name=Label(control),Type=info.ControlType.ProgrammaticName});
                     if(info.ControlType==ControlType.Button && Label(control)=="OK") ok=control;
                 }
+                string text=labels.ToString();
+                bool ended=window.Current.ClassName=="#32770" && Label(window)=="Remote Desktop Connection" &&
+                    text.Contains("Your Remote Desktop Services session has ended.") && text.Contains("Your network administrator might have ended the connection.");
                 if(ended && ok!=null && ok.Current.IsEnabled) {InvokeConsentButton(ok);report["EndedSessionDialogAccepted"]=true;Save();return;}
             }
         }

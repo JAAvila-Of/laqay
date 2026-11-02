@@ -8,6 +8,41 @@ try {
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     Assert-True (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32/mstsc.exe')) 'The native Windows RDP client is missing.'
     Add-Type -Path (Join-Path $PSScriptRoot 'GuestSessionQuery.cs')
+    function New-RedirectedDibFixture([int]$header,[int]$height,[int]$compression){
+        $offset=$header;if($header -eq 40 -and $compression -eq 3){$offset+=12}
+        $bytes=New-Object byte[] ($offset+24)
+        [BitConverter]::GetBytes([uint32]$header).CopyTo($bytes,0)
+        [BitConverter]::GetBytes([int]3).CopyTo($bytes,4)
+        [BitConverter]::GetBytes($height).CopyTo($bytes,8)
+        [BitConverter]::GetBytes([uint16]1).CopyTo($bytes,12)
+        [BitConverter]::GetBytes([uint16]32).CopyTo($bytes,14)
+        [BitConverter]::GetBytes([uint32]$compression).CopyTo($bytes,16)
+        if($compression -eq 3){
+            [BitConverter]::GetBytes([uint32]16711680).CopyTo($bytes,40)
+            [BitConverter]::GetBytes([uint32]65280).CopyTo($bytes,44)
+            [BitConverter]::GetBytes([uint32]255).CopyTo($bytes,48)
+            if($header -ge 108){[BitConverter]::GetBytes([uint32]4278190080).CopyTo($bytes,52)}
+        }
+        $pixels=@('FFFF00FF','FF00FFFF','FFFFFF00','FF000000','FFFFA500','FF800080')
+        for($y=0;$y -lt 2;$y++){for($x=0;$x -lt 3;$x++){
+            $row=if($height -gt 0){1-$y}else{$y}
+            [BitConverter]::GetBytes([Convert]::ToUInt32($pixels[$y*3+$x],16)).CopyTo($bytes,($offset+$row*12+$x*4))
+        }}
+        return ,$bytes
+    }
+    foreach($case in @(@{Header=40;Compression=0},@{Header=40;Compression=3},@{Header=108;Compression=3},@{Header=124;Compression=3})){
+        foreach($height in @(2,-2)){
+            $dib=New-RedirectedDibFixture $case.Header $height $case.Compression
+            Assert-True ([LaqayGuestDesktop]::RedirectedDibMatches($dib)) 'The native DIB oracle lost fixture colors, masks, or row orientation.'
+        }
+    }
+    $dib=New-RedirectedDibFixture 40 2 3
+    $dib[64]=$dib[64] -bxor 1
+    Assert-True (-not [LaqayGuestDesktop]::RedirectedDibMatches($dib)) 'The native DIB oracle accepted a changed pixel.'
+    $dib=New-RedirectedDibFixture 124 2 3
+    $dib[40]=1
+    Assert-True (-not [LaqayGuestDesktop]::RedirectedDibMatches($dib)) 'The native DIB oracle accepted an unknown channel mask.'
+    Assert-True (-not [LaqayGuestDesktop]::RedirectedDibMatches((New-Object byte[] 40))) 'The native DIB oracle accepted a truncated fixture.'
     foreach ($script in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1')) {
         $tokens = $null; $errors = $null
         [Management.Automation.Language.Parser]::ParseFile($script.FullName,[ref]$tokens,[ref]$errors) | Out-Null
