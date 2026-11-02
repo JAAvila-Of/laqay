@@ -1,0 +1,110 @@
+name: Recover v0.1.1 delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      immutability_confirmed:
+        description: Confirm an administrator just checked release immutability is enabled
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Require administrative preflight
+        shell: pwsh
+        env:
+          IMMUTABILITY_CONFIRMED: ${{ inputs.immutability_confirmed }}
+        run: |
+          if ($env:IMMUTABILITY_CONFIRMED -ne 'true') { throw 'Confirm the administrative immutability preflight before recovery.' }
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: v0.1.1
+          path: source
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Verify the reviewed recovery boundary
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python control/scripts/prepare-release-recovery.py --source source --builder control --output release-source.json
+          if ($LASTEXITCODE -ne 0) { throw 'Recovery boundary validation failed.' }
+      - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+        working-directory: source
+      - name: Collect notices and package the tagged application
+        working-directory: source
+        shell: pwsh
+        run: |
+          cargo metadata --locked --format-version 1 | Set-Content -Encoding utf8 target/metadata.json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          python scripts/collect-cargo-licenses.py target/metadata.json target/THIRD_PARTY_LICENSES.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Notice collection failed.' }
+          ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+          python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Tagged package validation failed.' }
+      - name: Recheck source and control before attestation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python control/scripts/prepare-release-recovery.py --source source --builder control --output release-source.json
+          if ($LASTEXITCODE -ne 0) { throw 'Recovery source changed.' }
+      - name: Retain the recovery delivery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recovery-delivery-v0.1.1
+          path: |
+            source/target/x86_64-pc-windows-msvc/release/laqay.exe
+            source/target/laqay-windows-x86_64.zip
+            source/target/SHA256SUMS.txt
+            source/target/THIRD_PARTY_LICENSES.txt
+            release-source.json
+          if-no-files-found: error
+      - name: Attest the reviewed recovery builder
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            source/target/x86_64-pc-windows-msvc/release/laqay.exe
+            source/target/laqay-windows-x86_64.zip
+            source/target/SHA256SUMS.txt
+          create-storage-record: false
+      - name: Attest the exact tagged application source
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            source/target/x86_64-pc-windows-msvc/release/laqay.exe
+            source/target/laqay-windows-x86_64.zip
+            source/target/SHA256SUMS.txt
+          predicate-type: https://github.com/JAAvila-Of/laqay/attestations/release-source/v1
+          predicate-path: release-source.json
+          create-storage-record: false
+      - name: Verify and publish the existing release-plz draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILDER_COMMIT: ${{ github.sha }}
+        run: |
+          python control/scripts/finalize-release.py --immutability-confirmed --recovery-builder-commit $env:BUILDER_COMMIT --tag v0.1.1 --commit d0b0c24e1892878db3095d24a57ca52894d29988 --repository JAAvila-Of/laqay --binary source/target/x86_64-pc-windows-msvc/release/laqay.exe --archive source/target/laqay-windows-x86_64.zip --licenses source/target/THIRD_PARTY_LICENSES.txt --checksums source/target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Recovery delivery failed; inspect the existing draft before any retry.' }

@@ -15,6 +15,10 @@ spec = importlib.util.spec_from_file_location("distribution", Path(__file__).wit
 distribution = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(distribution)
 ASSET_NAMES = {"laqay.exe", "laqay-windows-x86_64.zip", "SHA256SUMS.txt"}
+RECOVERY_SOURCE = "d0b0c24e1892878db3095d24a57ca52894d29988"
+RECOVERY_RELEASE_ID = 431972518
+RECOVERY_WORKFLOW = ".github/workflows/recover-release.yml"
+SOURCE_PREDICATE = "https://github.com/JAAvila-Of/laqay/attestations/release-source/v1"
 
 
 def gh(*arguments):
@@ -57,6 +61,16 @@ def check_tag(api, tag, commit):
     raise ValueError("Too many annotated tag indirections")
 
 
+def source_binding(repository, tag, source_commit, builder_commit):
+    return {"repository": repository, "tag": tag, "sourceCommit": source_commit, "builderCommit": builder_commit}
+
+
+def check_source_binding(verified, expected):
+    require(any(item.get("verificationResult", {}).get("statement", {}).get("predicateType") == SOURCE_PREDICATE
+                and item["verificationResult"]["statement"].get("predicate") == expected for item in verified),
+            "Verified recovery attestation does not bind the expected tag, source, and builder")
+
+
 def verify_published(*arguments):
     # Release attestations may take a moment to become readable after publication.
     for attempt in range(3):
@@ -68,16 +82,29 @@ def verify_published(*arguments):
             time.sleep(2)
 
 
-def finalize(repository, tag, commit, binary, archive, licenses, checksums, immutability_confirmed=False):
+def finalize(repository, tag, commit, binary, archive, licenses, checksums, immutability_confirmed=False,
+             recovery_builder_commit=None):
     # The repository setting requires Administration read, unavailable to GITHUB_TOKEN.
     require(immutability_confirmed, "An administrator must confirm release immutability before dispatch")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository), "Invalid repository")
     require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag), "Invalid release tag")
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Expected a full source commit")
+    signer = ".github/workflows/release.yml"
+    builder = commit
+    if recovery_builder_commit is not None:
+        require(repository == "JAAvila-Of/laqay" and tag == "v0.1.1" and commit == RECOVERY_SOURCE,
+                "Recovery is restricted to the reviewed v0.1.1 source")
+        require(re.fullmatch(r"[0-9a-f]{40}", recovery_builder_commit), "Expected a full recovery builder commit")
+        signer, builder = RECOVERY_WORKFLOW, recovery_builder_commit
     distribution.check(binary, archive, licenses, checksums)
     api = f"repos/{repository}"
     check_tag(api, tag, commit)
-    release = json.loads(gh("api", f"{api}/releases/tags/{tag}"))
+    # The by-tag REST endpoint only returns published releases. CLI discovery also finds drafts.
+    release_id = json.loads(gh("release", "view", tag, "--repo", repository, "--json", "databaseId"))["databaseId"]
+    require(type(release_id) is int and release_id > 0, "Invalid discovered release ID")
+    if recovery_builder_commit is not None:
+        require(release_id == RECOVERY_RELEASE_ID, "Recovery draft ID changed")
+    release = json.loads(gh("api", f"{api}/releases/{release_id}"))
     check_draft(release, tag)
     require(not release["assets"], "Draft already has assets; inspect it before an explicit recovery")
     release_api = f"{api}/releases/{release['id']}"
@@ -92,9 +119,13 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums, immu
             require((downloaded / name).read_bytes() == path.read_bytes(), f"Downloaded bytes differ: {name}")
         distribution.check(downloaded / binary.name, downloaded / archive.name, licenses, downloaded / checksums.name)
         for name in sorted(ASSET_NAMES):
-            gh("attestation", "verify", downloaded / name, "--repo", repository,
-               "--signer-workflow", f"{repository}/.github/workflows/release.yml",
-               "--source-digest", commit, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners")
+            policy = ("--repo", repository, "--signer-workflow", f"{repository}/{signer}",
+                      "--source-digest", builder, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners")
+            gh("attestation", "verify", downloaded / name, *policy)
+            if recovery_builder_commit is not None:
+                verified = json.loads(gh("attestation", "verify", downloaded / name, *policy,
+                                         "--predicate-type", SOURCE_PREDICATE, "--format", "json"))
+                check_source_binding(verified, source_binding(repository, tag, commit, builder))
         current = json.loads(gh("api", release_api))
         check_draft(current, tag)
         check_assets(current, files)
@@ -114,6 +145,7 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums, immu
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--immutability-confirmed", action="store_true")
+    parser.add_argument("--recovery-builder-commit")
     for name in ("repository", "tag", "commit"):
         parser.add_argument(f"--{name}", required=True)
     for name in ("binary", "archive", "licenses", "checksums"):

@@ -164,6 +164,16 @@ jobs:
           ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
           python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
+      - name: Retain release delivery for inspected recovery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-delivery-${{ matrix.release.tag }}
+          path: |
+            target/x86_64-pc-windows-msvc/release/laqay.exe
+            target/laqay-windows-x86_64.zip
+            target/SHA256SUMS.txt
+            target/THIRD_PARTY_LICENSES.txt
+          if-no-files-found: error
       - name: Attest release build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
