@@ -21,6 +21,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
+      - name: Check portable packaging with inert fixtures
+        run: python scripts/test-distribution.py
       - name: Check disposable desktop lab preparation without creating VMs
         shell: powershell
         run: ./scripts/lab/Test-LabPreparation.ps1
@@ -68,8 +70,6 @@ jobs:
       - name: Package executable and licenses
         shell: pwsh
         run: |
-          python scripts/test-distribution.py
-          if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
           ./scripts/New-Distribution.ps1 -BinaryPath target/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
           python scripts/check-distribution.py --binary target/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }

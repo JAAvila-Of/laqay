@@ -26,7 +26,16 @@ $archive = Join-Path $output 'laqay-windows-x86_64.zip'
 Compress-Archive -LiteralPath $files -DestinationPath $archive -Force
 $checksums = Join-Path $output 'SHA256SUMS.txt'
 @($binary, $archive) | ForEach-Object {
-    $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant()
+    # Avoid depending on cross-edition PowerShell module discovery in CI.
+    $stream = [System.IO.File]::OpenRead($_)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
     "$digest  $(Split-Path -Leaf $_)"
 } | Set-Content -Encoding ascii -LiteralPath $checksums
 Write-Output $archive
