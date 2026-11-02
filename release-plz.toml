@@ -4,4 +4,36 @@ release_always = false
 git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 git_release_enable = true
+git_release_type = "pre"
+git_release_latest = false
+git_release_body = """
+Engineering preview for Windows x64. The full integration matrix is incomplete;
+this release is not a production-readiness claim. Desktop evidence covers one
+Windows 11 Enterprise evaluation setup. Windows 10, RDP reconnects, all storage
+failures, and every shutdown/encoding stage remain unvalidated.
+
+Download the portable ZIP with its notices and guide, and check SHA256SUMS.txt.
+The executable is unsigned; a checksum does not authenticate the publisher.
+The release delivery and downloaded-package lifecycle are separate checks:
+do not treat publication alone as evidence that they passed.
+
+[Portable guide](https://github.com/JAAvila-Of/laqay/blob/v{{ version }}/docs/PORTABLE.md)
+and [validation matrix](https://github.com/JAAvila-Of/laqay/blob/v{{ version }}/docs/integration-tests.md).
+
+{{ changelog }}
+"""
+pr_body = """
+## Proposed engineering preview
+
+This PR prepares a pre-release for Windows x64. It does not publish a release.
+Review the generated changelog, required checks, validation limits, and portable
+delivery before merging. Publication remains a separate workflow operation.
+
+{% for release in releases %}
+### {{ release.package }} v{{ release.next_version }}
+{% if release.changelog %}
+{{ release.changelog }}
+{% endif %}
+{% endfor %}
+"""
 semver_check = false
