@@ -21,6 +21,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
+      - name: Check portable packaging with inert fixtures
+        run: python scripts/test-distribution.py
       - name: Check disposable desktop lab preparation without creating VMs
         shell: powershell
         run: ./scripts/lab/Test-LabPreparation.ps1
@@ -67,11 +69,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'License collection failed.' }
       - name: Package executable and licenses
         shell: pwsh
-        run: ./scripts/New-Distribution.ps1 -BinaryPath target/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+        run: |
+          ./scripts/New-Distribution.ps1 -BinaryPath target/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
+          python scripts/check-distribution.py --binary target/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: laqay-windows-x86_64
           path: |
             target/release/laqay.exe
             target/laqay-windows-x86_64.zip
+            target/SHA256SUMS.txt
           if-no-files-found: error

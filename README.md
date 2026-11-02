@@ -5,24 +5,23 @@ Paste it. Save it.
 Laqay is a Windows utility under development. Its goal is to save clipboard
 images as PNG files in the active Windows Explorer folder when you press Ctrl+V.
 
-**Current status:** engineering validation. Running `laqay.exe` now starts the
-native tray application and observes Ctrl+V. Tray controls and per-user
-preferences are implemented. A bounded desktop trial confirmed the icon's
-enabled/disabled states and Exit cleanup. A subsequent trial of the integrated
-application saved a screenshot as a valid PNG without notices or sounds.
-A follow-up confirmed that disabling prevents image creation and re-enabling
-restores it without disturbances. A same-session duplicate-launch trial confirmed
-that the second copy exits without starting another observer. CI also validates
-normal-mode preference round trips with the actual application in its isolated
-VM. Execution at login and broader Explorer regressions still need testing.
+**Current status:** engineering validation. Running `laqay.exe` starts the native
+tray application and observes Ctrl+V. Isolated Windows 11 desktop suites have
+validated local Explorer paste, native file/text behavior, active tabs/windows,
+real login startup enabled/disabled, an authenticated UNC share, RDP clipboard
+redirection, Explorer restart recovery, and exit during a blocked clipboard read.
+The [integration matrix](docs/integration-tests.md) records the exact coverage
+and remaining limits. Windows 10 and the full failure/shutdown matrix remain
+unvalidated; these results do not establish release readiness.
 
 Repeatable native/API validation is automated; see the
 [test suites and coverage limits](docs/AUTOMATED_TESTS.md). Windows CI runs the
 isolated clipboard suite and retains a validation log. These tests do not start
 the application or inspect a person's clipboard.
-Earlier bounded local-console and RDP trials saved clipboard screenshots as
-PNGs and preserved basic native paste behavior. Those results predate the
-shared-engine refactor and do not validate the new tray application.
+The portable distribution is a ZIP for Windows x64, with licenses and notices.
+See [download, startup, update, and removal instructions](docs/PORTABLE.md).
+Development artifacts are separate from published releases; the end-to-end
+release delivery still needs validation.
 
 ## Requirements
 
