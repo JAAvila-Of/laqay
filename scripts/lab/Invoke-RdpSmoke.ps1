@@ -330,6 +330,7 @@ exit $LASTEXITCODE
         Remove-PSSession -Session $sessions[$role]
     }
     if(-not $report.TasksRemoved.Primary -or -not $report.TasksRemoved.Peer -or -not $report.CredentialRemoved){$report.Passed=$false}
+    if(@($report.TasksStopped.Values | Where-Object {$_}).Count){$report.Passed=$false;$report.CleanupErrors+=@('An owned task required a fallback stop.')}
     $report.FinishedUtc=[DateTime]::UtcNow.ToString('o');Save-Report
 }
 if(-not $report.Passed){throw ('RDP validation failed: '+$report.Error+' '+($report.CleanupErrors -join '; '))}
