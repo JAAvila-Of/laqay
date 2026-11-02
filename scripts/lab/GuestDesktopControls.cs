@@ -286,7 +286,7 @@ public static class LaqayGuestDesktop {
                 if(window.Current.ProcessId!=process.Id) throw new InvalidOperationException("The consent window belongs to another process.");
                 var controls=window.FindAll(TreeScope.Descendants,Condition.TrueCondition);
                 if(controls.Count>500) continue;
-                AutomationElement first=null,ok=null,connect=null;var boxes=new List<AutomationElement>();var labels=new StringBuilder();
+                AutomationElement first=null,ok=null,connect=null;bool peerShown=false;var boxes=new List<AutomationElement>();var labels=new StringBuilder();
                 var observedControls=new List<object>();
                 observations.Add(new {Name=Label(window),ClassName=window.Current.ClassName,Controls=observedControls});
                 labels.AppendLine(Label(window));
@@ -295,6 +295,7 @@ public static class LaqayGuestDesktop {
                     if(info.ProcessId!=process.Id || info.IsPassword) continue;
                     string label=Label(element);labels.AppendLine(label);
                     observedControls.Add(new {Name=label,ClassName=info.ClassName,Type=info.ControlType.ProgrammaticName,Enabled=info.IsEnabled});
+                    if(info.ControlType==ControlType.Text && String.Equals(label,peer,StringComparison.OrdinalIgnoreCase)) peerShown=true;
                     if(info.ControlType==ControlType.CheckBox) {
                         boxes.Add(element);
                         if(label=="I understand and allow RDP files to open on this device for my account") first=element;
@@ -310,8 +311,11 @@ public static class LaqayGuestDesktop {
                     if(toggle.Current.ToggleState!=ToggleState.On) {toggle.Toggle();return;}
                     if(ok.Current.IsEnabled) {InvokeConsentButton(ok);report["FirstUseConsentAccepted"]=true;Stage("GuestFirstUseAcknowledged");return;}
                 }
-                bool security=text.Contains("Caution: Unknown remote connection") || text.Contains("Verify the publisher of this remote connection");
-                if(security && connect!=null && text.IndexOf(peer,StringComparison.OrdinalIgnoreCase)>=0 && !(bool)report["ClipboardConsentAccepted"]) {
+                // The visual banner is exposed only as BannerAccessibilityWrapperWindow on current Windows.
+                bool security=window.Current.ClassName=="#32770" && Label(window)=="Remote Desktop Connection security warning" &&
+                    text.Contains("Allow the remote computer to access the following resources on my computer:") &&
+                    text.Contains("Unknown publisher") && text.Contains("Remote computer:");
+                if(security && peerShown && connect!=null && !(bool)report["ClipboardConsentAccepted"]) {
                     int clipboard=0;
                     foreach(var box in boxes) {
                         bool wanted=String.Equals(Label(box),"Clipboard",StringComparison.OrdinalIgnoreCase);
