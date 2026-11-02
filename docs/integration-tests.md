@@ -22,6 +22,19 @@ See [the desktop lab procedures](DESKTOP_TEST_LAB.md) for the exact harness and
 its limits. This does not validate a disconnected share, OneDrive, an RDP logon
 or redirected clipboard in the paired lab, or Windows 10.
 
+The paired-guest RDP suite passed all seventeen cases: the thirteen regressions
+in an authenticated protocol-2 session, a remote-created image pasted through
+client Ctrl+V, an exact client image delivered through the real clipboard
+channel, native file priority, and redirected text in Explorer search. The
+controller independently verified the server session and connection owned by
+the exact native client process. The explicit CF_DIBV5 fixture passed native
+readback in Primary and Peer, and the resulting PNG preserved all six colors.
+Both application and client exited normally with code 0, without forced task
+stops. Preferences, permissions, credentials, temporary configuration, and
+guest shutdown were checked. This covers one Windows 11 Enterprise evaluation
+setup (the guests reported zero evaluation grace remaining), not Windows 10,
+arbitrary RDP clients, reconnects, or policy-restricted clipboard scenarios.
+
 ## Earlier bounded trials
 
 This matrix has not been completed. One authorized RDP image-paste trial on
