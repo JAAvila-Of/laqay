@@ -28,8 +28,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
         self.release = {"id": 17, "tag_name": "v0.2.0", "draft": True, "prerelease": True,
                         "immutable": False, "assets": []}
         self.commands = []
-        self.enabled = True
-        self.disable_after_upload = False
+        self.confirmed = True
+        self.published_immutable = True
         self.commit = "a" * 40
         self.corrupt_download = False
         self.bad_attestation = False
@@ -44,10 +44,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
         self.commands.append(args)
         if args[0] == "api":
             if "PATCH" in args:
-                self.release.update(draft=False, immutable=True)
+                self.release.update(draft=False, immutable=self.published_immutable)
                 return "{}"
-            if args[1].endswith("immutable-releases"):
-                return json.dumps({"enabled": self.enabled})
             if "/git/ref/" in args[1]:
                 return json.dumps({"object": {"type": "tag", "sha": "b" * 40}})
             if "/git/tags/" in args[1]:
@@ -61,8 +59,6 @@ class ReleaseDeliveryTests(unittest.TestCase):
             ]
             if self.extra_asset:
                 self.release["assets"].append({"name": "unexpected.log"})
-            if self.disable_after_upload:
-                self.enabled = False
         elif args[:2] == ("release", "download"):
             destination = Path(args[args.index("--dir") + 1])
             for name, path in self.files.items():
@@ -75,7 +71,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
     def finalize(self):
         delivery.finalize("example/project", "v0.2.0", "a" * 40,
                           self.files["laqay.exe"], self.files["laqay-windows-x86_64.zip"],
-                          Path("unused-notice-fixture"), self.files["SHA256SUMS.txt"])
+                          Path("unused-notice-fixture"), self.files["SHA256SUMS.txt"],
+                          immutability_confirmed=self.confirmed)
 
     def assert_unpublished(self):
         self.assertFalse(any("PATCH" in command for command in self.commands))
@@ -113,17 +110,16 @@ class ReleaseDeliveryTests(unittest.TestCase):
         self.assertFalse(any(command[:2] == ("release", "upload") for command in self.commands))
         self.assert_unpublished()
 
-    def test_disabled_immutability_never_publishes(self):
-        self.enabled = False
-        with self.assertRaisesRegex(ValueError, "immutability"):
+    def test_missing_administrative_preflight_never_publishes(self):
+        self.confirmed = False
+        with self.assertRaisesRegex(ValueError, "administrator"):
             self.finalize()
         self.assert_unpublished()
 
-    def test_immutability_disabled_during_upload_never_publishes(self):
-        self.disable_after_upload = True
-        with self.assertRaisesRegex(ValueError, "disabled before publication"):
+    def test_mutable_publication_cannot_report_success(self):
+        self.published_immutable = False
+        with self.assertRaisesRegex(ValueError, "immutable pre-release"):
             self.finalize()
-        self.assert_unpublished()
 
     def test_published_release_and_existing_assets_are_not_reused(self):
         for mutation in ({"draft": False}, {"assets": [{"name": "existing"}]}, {"prerelease": False}):

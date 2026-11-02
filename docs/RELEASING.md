@@ -14,8 +14,22 @@ do not change Laqay's version outside a release-plz PR.
    the code and asks release-plz to create or update the release PR.
 4. Review that PR, its generated version/changelog, and the compatibility impact.
    Required checks and normal PR rules apply. Do not merge automatically.
-5. After merging the release PR, run **Release** on `main` with action **publish**.
+5. After merging the release PR, an administrator must check that release
+   immutability is enabled, using the command below. Stop on any error or a
+   false result; retain the result with the release review. Then run **Release**
+   on `main` with action **publish** and `immutability_confirmed=true`.
    Only commits associated with release PRs are eligible for publication.
+
+```powershell
+gh api repos/JAAvila-Of/laqay/immutable-releases
+```
+
+The administrative check must return `enabled: true`. GitHub requires
+Administration-read permission for this endpoint, which `GITHUB_TOKEN` cannot
+provide. The workflow intentionally receives no administrative credential; its
+confirmation input records the maintainer's preflight, not an independent API
+check. Do not disable immutability during publication. The job separately checks
+the actual immutable state and cryptographic release attestation after publish.
 
 Automation-created PR workflows may require a maintainer to approve their runs
 in GitHub. Start the required checks when requested; do not bypass them or use
@@ -57,7 +71,8 @@ requires this repository's Release workflow, the expected source commit,
 
 Only after those checks does `scripts/finalize-release.py` publish the existing
 release-plz draft, preserving its version, tag, title, and generated notes. The
-repository must have release immutability enabled. Publication locks its assets
+repository must have release immutability enabled, as checked in the
+administrative preflight. Publication locks its assets
 and tag and creates GitHub's separate release attestation. The job then verifies
 that attestation and each downloaded asset with `gh release verify` and
 `gh release verify-asset`. This final draft transition does not create a release

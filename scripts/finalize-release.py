@@ -68,14 +68,14 @@ def verify_published(*arguments):
             time.sleep(2)
 
 
-def finalize(repository, tag, commit, binary, archive, licenses, checksums):
+def finalize(repository, tag, commit, binary, archive, licenses, checksums, immutability_confirmed=False):
+    # The repository setting requires Administration read, unavailable to GITHUB_TOKEN.
+    require(immutability_confirmed, "An administrator must confirm release immutability before dispatch")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository), "Invalid repository")
     require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag), "Invalid release tag")
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Expected a full source commit")
     distribution.check(binary, archive, licenses, checksums)
     api = f"repos/{repository}"
-    require(json.loads(gh("api", f"{api}/immutable-releases"))["enabled"],
-            "Enable repository release immutability before publication")
     check_tag(api, tag, commit)
     release = json.loads(gh("api", f"{api}/releases/tags/{tag}"))
     check_draft(release, tag)
@@ -99,8 +99,6 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums):
         check_draft(current, tag)
         check_assets(current, files)
         check_tag(api, tag, commit)
-        require(json.loads(gh("api", f"{api}/immutable-releases"))["enabled"],
-                "Repository release immutability was disabled before publication")
         # release-plz owns version/tag/notes and created this draft. Only now expose it.
         gh("api", "--method", "PATCH", release_api, "-F", "draft=false", "-f", "make_latest=false")
         published = json.loads(gh("api", release_api))
@@ -115,6 +113,7 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--immutability-confirmed", action="store_true")
     for name in ("repository", "tag", "commit"):
         parser.add_argument(f"--{name}", required=True)
     for name in ("binary", "archive", "licenses", "checksums"):
