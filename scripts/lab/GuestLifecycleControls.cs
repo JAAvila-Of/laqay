@@ -12,6 +12,7 @@ using System.Windows.Forms;
 public static partial class LaqayGuestDesktop {
     [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] static extern IntPtr GetClipboardOwner();
+    [DllImport("user32.dll")] static extern IntPtr GetOpenClipboardWindow();
     [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint RegisterClipboardFormatW(string name);
     [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref IconIdentity identity,out RectangleBounds rectangle);
     [StructLayout(LayoutKind.Sequential)] struct IconIdentity {public uint size;public IntPtr window;public uint id;public Guid guid;}
@@ -46,7 +47,7 @@ public static partial class LaqayGuestDesktop {
     }
     public static object DelayedPngState() {
         LifecycleGuard();if(delayedPng==null) throw new InvalidOperationException("No delayed fixture is active.");
-        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),TimedOut=delayedPng.timedOut,Error=delayedPng.error};
+        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),TimedOut=delayedPng.timedOut,Error=delayedPng.error};
     }
     public static void EndDelayedPng() {
         // Always release the exact owned provider, including after the input deadline.
@@ -55,7 +56,7 @@ public static partial class LaqayGuestDesktop {
     sealed class DelayedPng : NativeWindow {
         internal readonly ManualResetEvent requested=new ManualResetEvent(false),release=new ManualResetEvent(false);
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;uint format;
-        internal uint threadId;internal bool timedOut;internal string error;
+        internal uint threadId,requesterPid,requesterThreadId;internal bool timedOut;internal string error;
         public void Start() {
             thread=new Thread(delegate() {
                 try {
@@ -73,6 +74,7 @@ public static partial class LaqayGuestDesktop {
         }
         protected override void WndProc(ref Message message) {
             if(message.Msg==0x305 && (uint)message.WParam.ToInt64()==format) {
+                requesterThreadId=GetWindowThreadProcessId(GetOpenClipboardWindow(),out requesterPid);
                 requested.Set();
                 if(!release.WaitOne(60000)) {timedOut=true;return;}
                 // This adversarial provider never supplies bytes: release only cancels its blocked render after the application has exited.
