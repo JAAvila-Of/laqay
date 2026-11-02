@@ -332,6 +332,10 @@ that remote session, then four cases using Ctrl+V sent through the actual client
 - `RdpRedirectedImagePaste`: a distinct 3x2 image created only in Primary must
   appear in Peer's clipboard before client Ctrl+V creates its exact PNG. The
   controller relays command metadata and acknowledgements, never image pixels.
+  The client publishes an explicit CF_DIBV5 with an owned message-only window
+  and requires exact native source readback before acknowledging the command.
+  The verifier reads native DIB headers and channel masks; preparation checks
+  header variants, row orientation, altered pixels, masks, and truncation.
 - `RdpNativeFilePaste`: a local Peer file retains native paste priority when a
   bitmap is also present; its contents remain intact and no extra PNG appears.
 - `RdpRedirectedTextPaste`: client text crosses the clipboard channel and reaches
