@@ -8,6 +8,10 @@ try {
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     Assert-True (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32/mstsc.exe')) 'The native Windows RDP client is missing.'
     Add-Type -Path (Join-Path $PSScriptRoot 'GuestSessionQuery.cs')
+    Assert-True ([Runtime.InteropServices.Marshal]::SizeOf([type][LaqayGuestWaitChain+Node]) -eq 280 -and [Runtime.InteropServices.Marshal]::OffsetOf([type][LaqayGuestWaitChain+Node],'ThreadId').ToInt32() -eq 12) 'Unexpected native wait-chain ABI layout.'
+    $rejected=$false
+    try{[LaqayGuestWaitChain]::Inspect('invalid','invalid',0,0,0,0) | Out-Null}catch{$rejected=$true}
+    Assert-True $rejected 'An unowned wait-chain diagnostic was accepted.'
     function New-RedirectedDibFixture([int]$header,[int]$height,[int]$compression){
         $offset=$header;if($header -eq 40 -and $compression -eq 3){$offset+=12}
         $bytes=New-Object byte[] ($offset+24)

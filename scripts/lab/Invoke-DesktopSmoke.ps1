@@ -8,6 +8,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
     [switch]$StartGuestForStartup,
     [switch]$IncludeUnc,
+    [switch]$IncludeLifecycle,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -16,6 +17,7 @@ if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -Pre
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
 if($IncludeUnc -and $StartupPhase -ne 'Explorer'){throw 'UNC cases require the Explorer suite.'}
+if($IncludeLifecycle -and ($IncludeUnc -or $StartupPhase -ne 'Explorer')){throw 'Lifecycle cases require a separate console Explorer suite.'}
 if($StartGuestForStartup -and $StartupPhase -notin @('Verify','Absent')){throw 'Only a real startup verification phase may boot its guest inside the runtime lease.'}
 if(-not $env:RUST_WORK_JOB){throw 'Run the Rust application suite through the shared RustWork coordinator with --family rust.'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
@@ -42,8 +44,9 @@ $peerSession=$null
 $peerCredential=$null
 $peerFixtureReserved=$false
 $smbVerified=$false
+$pendingVerified=$false
 $summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;
-    IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
@@ -106,7 +109,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -116,8 +119,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc)
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc,[bool]$IncludeLifecycle -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle)
         $ErrorActionPreference='Stop'
         $launcher=@'
 $ErrorActionPreference='Stop'
@@ -128,6 +131,7 @@ exit $LASTEXITCODE
         $driver='Invoke-GuestDesktopSmoke.ps1';$extra=''
         if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
         if($includeUnc){$extra='-IncludeUnc'}
+        if($includeLifecycle){$extra='-IncludeLifecycle'}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
         if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}
@@ -152,6 +156,26 @@ exit $LASTEXITCODE
             [pscustomobject]@{State=$task.State.ToString();LastResult=$info.LastTaskResult;Report=$report}
         }
         $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'progress.json') -Encoding UTF8
+        if($IncludeLifecycle -and $result.Report.PendingClipboard.Requested -and -not $pendingVerified){
+            $pending=$result.Report.PendingClipboard
+            $proof=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
+                param($labId,$runId,$runRoot,$appPid,$providerPid,$providerThread,$sessionId)
+                $ErrorActionPreference='Stop'
+                if(-not ('LaqayGuestWaitChain' -as [type])){& (Join-Path $runRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly | Out-Null}
+                [LaqayGuestWaitChain]::Inspect($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
+            }
+            $proof | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'pending-wait-chain.json') -Encoding UTF8
+            if($proof.Confirmed){
+                $summary.PendingWaitProof=$proof
+                Invoke-Command -Session $session -ArgumentList $guestRoot,$proof -ScriptBlock {
+                    param($runRoot,$proof)
+                    $path=Join-Path $runRoot 'pending-proof.json';if(Test-Path -LiteralPath $path){throw 'Refusing a repeated pending-work proof.'}
+                    $proof | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath ($path+'.tmp') -Encoding UTF8
+                    Move-Item -LiteralPath ($path+'.tmp') -Destination $path
+                }
+                $pendingVerified=$true
+            }
+        }
         if($IncludeUnc -and $result.Report.UncConnectionReady -and -not $smbVerified){
             $summary.SmbConnection=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$peerCredential.UserName -ScriptBlock {
                 param($labId,$runId,$runRoot,$peerUser)
@@ -189,9 +213,11 @@ exit $LASTEXITCODE
     }else{
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
+    if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
+    if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
     }
     if($IncludeUnc){
         if(-not $smbVerified -or -not $guest.IncludeUnc -or -not $guest.SmbSigned -or -not $guest.PeerDisconnected -or -not $guest.CredentialRemoved -or $guest.UncFiles.Count -ne 3 -or $guest.ApplicationExitCode -ne 0){throw 'UNC cleanup, signed connection, or application exit validation failed.'}

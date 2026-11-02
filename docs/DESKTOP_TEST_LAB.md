@@ -386,3 +386,37 @@ account until the VM is removed; disclose this when obtaining permission.
 Without the switch, no consent is accepted automatically. Setup also records
 current OS/client versions and evaluation licensing status as read-only private
 diagnostics; it never changes activation, clocks, license keys, or network access.
+
+## Isolated Explorer lifecycle checks
+
+`Invoke-DesktopSmoke.ps1 -IncludeLifecycle` extends the thirteen console cases
+with `ExplorerRestartRecovery` and `ExitWithPendingClipboard`. This is a separate
+Primary-only run; do not combine it with startup, UNC, or RDP cases. Arrange an
+explicitly authorized guest interactive logon and acquire RustWork before guest
+boot/runtime. Peer remains off. Preparation compiles helpers and checks guards
+without starting a VM, restarting Explorer, or reading the host clipboard.
+
+The restart case identifies the actual shell PID in the disposable console,
+checks its executable/session, and refuses separately hosted owned folder
+windows. It terminates only that guest shell, waits for a different shell PID,
+requires the same Laqay PID and a registered notification icon, and pastes a new
+image with exact PNG validation. It does not restart the host shell.
+
+The pending-work case advertises only a delayed PNG from an owned message-only
+window. Its provider thread withholds data for at most sixty seconds. After
+the render request arrives, the privileged guest controller uses Wait Chain
+Traversal on the exact Laqay PID to require a dependency on that provider PID
+and thread. It validates guest identity, process owners, executable paths, and
+session. SeDebugPrivilege is enabled only on the guest controller token for
+the read-only query and restored in a finally block; no policy is modified.
+No proof means failure, rather than a timing-based claim that work was pending.
+
+Only after the bound proof does the limited task request normal application
+close. It requires exit 0 without forced termination while the provider remains
+blocked, then cancels and joins its own provider, checks the destination contains
+no PNG or staging file, and restores preferences/permissions. The host requires
+all fifteen cases, the wait proof, provider cleanup, and task removal. The caller
+must remove temporary guest logon configuration and confirm the guests are off.
+This validates close during a blocked clipboard read; it does not claim coverage
+of every encoding/write stage or an actual Windows shutdown. Runtime validation
+of these two cases is still pending.
