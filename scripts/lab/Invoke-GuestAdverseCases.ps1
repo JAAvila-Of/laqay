@@ -202,9 +202,10 @@ function Release-RenderedPng {
 }
 Run-Case 'RenderedPngReferencePaste' {
     $path=New-CaseFolder 'rendered-reference';$window=Open-Folder $path
-    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;WindowHandle=0;SourceTab=$null;DestinationTab=$null;FenceTab=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
+    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;ReferenceInput=$null;WindowHandle=0;SourceTab=$null;DestinationTab=$null;FenceTab=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
     try{
         [LaqayGuestDesktop]::BeginRenderedDelayedPng()
+        $report.TabClipboardRace.ReferenceInput=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
         Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The reference provider did not receive its render request.'
         Release-RenderedPng
@@ -213,7 +214,10 @@ Run-Case 'RenderedPngReferencePaste' {
         Check-RenderedPng (Get-ChildItem -LiteralPath $path -Filter '*.png' -File)[0].FullName
         $report.TabClipboardRace.Reference=[LaqayGuestDesktop]::DelayedPngState()
         Assert-True ($report.TabClipboardRace.Reference.Sequence -eq $report.TabClipboardRace.Reference.PublishedSequence) 'Rendering changed the reference clipboard sequence; it cannot isolate a focus race.'
-    }finally{[LaqayGuestDesktop]::EndDelayedPng();Save-Report}
+    }finally{
+        try{$report.TabClipboardRace.Reference=[LaqayGuestDesktop]::DelayedPngState()}catch{}
+        [LaqayGuestDesktop]::EndDelayedPng();Save-Report
+    }
 }
 Run-Case 'TabSwitchCancelsPendingImage' {
     $pathA=New-CaseFolder 'pending-tab-a';$pathB=New-CaseFolder 'pending-tab-b';$pathC=New-CaseFolder 'pending-tab-fence'
