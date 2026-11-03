@@ -434,9 +434,12 @@ the native context proof, normal application exit, and complete cleanup.
 ## Published portable package cycle
 
 `Invoke-PortablePackageCycle.ps1` prepares a Primary-only upgrade and removal
-check using the published v0.1.0 and v0.1.1 ZIP bytes. This cycle is **prepared;
-runtime validation is pending**. Previous development-binary tests do not count
-as validation of these release packages. It does not publish or change versions.
+check using the published v0.1.0 and v0.1.1 ZIP bytes. This cycle **passed all
+37 assertions on 2026-11-03 in the isolated Windows 11 Enterprise evaluation
+console**, using five guest boots. The original App, preferences and temporary
+logon configuration were restored; both guests were shut down and all owned
+helper/coordinator processes exited. These results use the actual published
+packages. The cycle does not publish or change versions.
 
 The first isolated attempt passed all thirteen v0.1.0 Explorer assertions but
 stopped because the launch controller incorrectly sent disabled Boolean options
@@ -446,7 +449,8 @@ its owned processes. That failed attempt does not pass this gate. Desktop and
 RDP option transport now uses explicitly grouped Boolean values and rejects
 non-Boolean input. CI captures the actual launch argument expressions against a
 local remoting mock across enabled/disabled options and portable phases, without
-contacting a guest. A fresh full-cycle run is still required.
+contacting a guest. The subsequent fresh full-cycle run passed, including both
+180-second absence observations, normal application exits and complete cleanup.
 
 Obtain the releases separately and verify their source/release provenance before
 authorizing the administrator process. The harness additionally pins both archive
