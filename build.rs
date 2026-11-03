@@ -4,7 +4,7 @@ use std::{env, fs, path::Path};
 // icon resources. Four-by-four coverage samples keep the small edges smooth.
 fn icon_image(size: u32, enabled: bool) -> Vec<u8> {
     let color = if enabled {
-        [33u32, 102, 169]
+        [20u32, 99, 223]
     } else {
         [112, 116, 123]
     };
@@ -16,19 +16,19 @@ fn icon_image(size: u32, enabled: bool) -> Vec<u8> {
             let mut sum = [0u32; 4];
             for sy in 0..4 {
                 for sx in 0..4 {
-                    let px = (x as f64 + (sx as f64 + 0.5) / 4.0) * 32.0 / size as f64;
-                    let py = (y as f64 + (sy as f64 + 0.5) / 4.0) * 32.0 / size as f64;
-                    let cx = px.clamp(8.0, 24.0);
-                    let cy = py.clamp(8.0, 24.0);
-                    if (px - cx).powi(2) + (py - cy).powi(2) > 36.0 {
+                    let px = (x as f64 + (sx as f64 + 0.5) / 4.0) * 64.0 / size as f64;
+                    let py = (y as f64 + (sy as f64 + 0.5) / 4.0) * 64.0 / size as f64;
+                    let letter = (7.0..19.0).contains(&px) && (8.0..57.0).contains(&py)
+                        || (19.0..56.0).contains(&px) && (45.0..57.0).contains(&py);
+                    let corner = (28.0..56.0).contains(&px) && (8.0..20.0).contains(&py)
+                        || (44.0..56.0).contains(&px) && (20.0..36.0).contains(&py);
+                    let entry = (45.0..83.0).contains(&(px + py))
+                        && (-11.0..5.0).contains(&(px - py));
+                    if !letter && !corner && !entry {
                         continue;
                     }
-                    let paper = (10.0..23.0).contains(&px) && (7.0..25.0).contains(&py);
-                    let letter = (13.0..16.0).contains(&px) && (11.0..22.0).contains(&py)
-                        || (16.0..21.0).contains(&px) && (19.0..22.0).contains(&py);
-                    let rgb = if paper && !letter { [255u32; 3] } else { color };
                     for channel in 0..3 {
-                        sum[channel] += rgb[channel];
+                        sum[channel] += color[channel];
                     }
                     sum[3] += 255;
                 }
