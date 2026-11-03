@@ -10,10 +10,25 @@ Run-Case 'EmptyClipboardNoOutput' {
 }
 Run-Case 'LockedClipboardRecovery' {
     $path=New-CaseFolder 'locked-clipboard';$window=Open-Folder $path
+    # Retire the preceding case's input thread and invalidate old requests before
+    # testing a newly held external lock. In-flight earlier work is a separate case.
+    [LaqayGuestDesktop]::ToggleEnabled()
+    Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 0} 'The lock fixture could not pause old requests.'
+    [LaqayGuestDesktop]::EmptyImageClipboard();Start-Sleep -Milliseconds 500;Assert-Empty $path
+    [LaqayGuestDesktop]::ToggleEnabled()
+    Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 1} 'The lock fixture could not resume input.'
     [LaqayGuestDesktop]::ImageClipboard();$report.AdverseFixturesClosed=$false
+    function Record-Lease([string]$stage){
+        $proof=[LaqayGuestDesktop]::ClipboardLeaseState()
+        $report.ClipboardLeaseProof+=@([pscustomobject]@{Stage=$stage;Proof=$proof});Save-Report
+        Assert-True ($proof.Held -and $proof.ProbeRejected -and $proof.OwnerPid -ne $report.ApplicationPid) 'The external clipboard lock was not independently confirmed.'
+    }
     try{
-        [LaqayGuestDesktop]::BeginClipboardLease();[LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
-        Start-Sleep -Milliseconds 1000;Assert-Empty $path;Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The clipboard lock blocked the tray window.'
+        [LaqayGuestDesktop]::BeginClipboardLease();Record-Lease 'BeforeKey'
+        Assert-Empty $path
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86));Record-Lease 'AfterKey'
+        Start-Sleep -Milliseconds 1000;Record-Lease 'AfterObservation'
+        Assert-Empty $path;Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The clipboard lock blocked the tray window.'
     }finally{[LaqayGuestDesktop]::EndClipboardLease();$report.AdverseFixturesClosed=$true}
     # A request may finish only after the external lock is released. Allow either
     # safe rejection or one complete result; never accept incomplete output.

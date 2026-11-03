@@ -40,21 +40,39 @@ public static partial class LaqayGuestDesktop {
     public static void EndClipboardLease() {
         var owned=matrixClipboardLease;matrixClipboardLease=null;if(owned!=null) owned.Dispose();
     }
-    sealed class ClipboardLease : IDisposable {
+    public static object ClipboardLeaseState() {
+        MatrixGuard();if(matrixClipboardLease==null) throw new InvalidOperationException("No owned clipboard lease exists.");
+        return matrixClipboardLease.State();
+    }
+    sealed class ClipboardLease : NativeWindow,IDisposable {
         readonly ManualResetEvent ready=new ManualResetEvent(false),release=new ManualResetEvent(false);
-        Thread thread;string error;
+        readonly Stopwatch elapsed=new Stopwatch();Thread thread;volatile string error;volatile bool expired;uint ownerThread;
         public void Start() {
             thread=new Thread(delegate() {
                 bool opened=false;
                 try {
-                    MatrixGuard();opened=OpenClipboard(IntPtr.Zero);
+                    MatrixGuard();ownerThread=GetCurrentThreadId();
+                    CreateHandle(new CreateParams {Caption="Laqay owned clipboard lease",Parent=new IntPtr(-3)});
+                    opened=OpenClipboard(Handle);
                     if(!opened) throw new InvalidOperationException("The fixture did not obtain the clipboard lock.");
-                    ready.Set();if(!release.WaitOne(10000)) error="The owned clipboard lock exceeded ten seconds.";
+                    elapsed.Start();ready.Set();if(!release.WaitOne(10000)) {expired=true;error="The owned clipboard lock exceeded ten seconds.";}
                 }catch(Exception failure){error=failure.Message;ready.Set();}
-                finally {if(opened) CloseClipboard();}
+                finally {if(opened && !CloseClipboard()) error="The owned clipboard lease did not close normally.";if(Handle!=IntPtr.Zero) DestroyHandle();}
             });
             thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();
             if(!ready.WaitOne(3000) || error!=null) {Dispose();throw new InvalidOperationException("Clipboard lock setup failed: "+error);}
+        }
+        public object State() {
+            var window=GetOpenClipboardWindow();uint pid=0;
+            uint observedThread=window==IntPtr.Zero?0:GetWindowThreadProcessId(window,out pid);
+            bool rejected=!OpenClipboard(IntPtr.Zero);
+            if(!rejected) CloseClipboard();
+            uint expectedPid=(uint)Process.GetCurrentProcess().Id;
+            bool held=window!=IntPtr.Zero && window==Handle && observedThread==ownerThread && pid==expectedPid
+                && thread.IsAlive && !release.WaitOne(0) && !expired && error==null && rejected;
+            return new {Held=held,ProbeRejected=rejected,Window=window.ToInt64(),ExpectedWindow=Handle.ToInt64(),
+                OwnerPid=pid,ExpectedPid=expectedPid,OwnerThread=observedThread,ExpectedThread=ownerThread,
+                ElapsedMilliseconds=elapsed.ElapsedMilliseconds,Expired=expired,Error=error};
         }
         public void Dispose() {
             release.Set();if(thread!=null && !thread.Join(3000)) throw new InvalidOperationException("The owned clipboard lock did not stop.");

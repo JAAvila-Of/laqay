@@ -512,6 +512,17 @@ responsiveness checks, held-key repeat, rapid paste preservation, a real second
 instance, This PC namespace rejection, native Edit/RichEdit fixtures, and idle/
 serial resource samples. This suite is **prepared, not runtime-validated**.
 
+The first attempt passed the thirteen regressions and empty-clipboard case, then
+stopped in the lock case. Its windowless lock did not provide independent
+ownership evidence, so the unexpected PNG is not treated as a product verdict.
+The revised fixture retires old input requests, opens the clipboard with its
+own message-only window, and records exact window/process/thread ownership plus
+a rejected second open before Ctrl+V, after Ctrl+V and after observation. All
+three observations are required. See the Windows descriptions of
+[OpenClipboard](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard)
+and [GetOpenClipboardWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getopenclipboardwindow).
+The revised case has not run yet.
+
 It reuses the byte-pinned published v0.1.1 executable and the original App/
 preference/logon backup and restoration policy. v0.1.0 is staged only as an
 unexecuted file fixture before installing v0.1.1. Primary uses two normal boots,
@@ -520,6 +531,16 @@ authorize the new administrator process before execution. No host input,
 clipboard, window or session is controlled. Normal application exits, all
 27 named cases, four resource records, owned editor/clipboard-lock teardown,
 baseline restoration and both guests off are required.
+
+Before queuing any new boot, the mixed orchestrator waits up to two minutes for
+the unchanged seven-GiB host-memory admission budget, outside a Rust lease. This
+can accommodate memory reclamation after guest shutdown; actual start still
+rechecks all ownership, memory and disk guards. It does not guarantee capacity
+will remain available during the queue. A rejected recovery leaves the original
+snapshot intact and requires a separately authorized restoration before retest.
+The first attempt's restoration was completed in that separate operation, with
+both guests off and its helper/coordinator processes exited; the failed test
+result remains preserved.
 
 The editor fixtures are a separate helper window containing native TextBox and
 RichTextBox controls. They do not stand in for Notepad, VS Code, Rider, Terminal

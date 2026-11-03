@@ -44,7 +44,7 @@ $guestRoot='C:\LaqayLab\Portable\'+$CycleId
 $maximumBoots=if($AdverseOnly){3}else{6}
 $session=$null;$touched=$false;$staged=$false;$stageAttempted=$false;$bootAttempts=0
 $report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Process=$PID;Passed=$false;Error=$null;Phases=@();FileActions=@();
-    AdverseOnly=[bool]$AdverseOnly;BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    AdverseOnly=[bool]$AdverseOnly;MemoryWaits=@();BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 function Save-Report {$report.BootAttempts=$script:bootAttempts;$report | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
 function Assert-PeerOff {if((Get-VM -Id ([guid]$peer.Id)).State -ne 'Off'){throw 'Peer must remain off throughout the portable cycle.'}}
 function Connect-Guest {
@@ -67,6 +67,16 @@ function Run-Phase([string]$phase,[string]$sha){
     Assert-PeerOff
     if((Get-VM -Id $vm.Id).State -eq 'Off'){
         if($script:bootAttempts -ge $maximumBoots){throw 'The bounded boot limit, including recovery, was reached.'}
+        # Let recently stopped guests release memory before queuing another boot.
+        # This bounded wait holds no Rust lease and never lowers the start guard.
+        $watch=[Diagnostics.Stopwatch]::StartNew()
+        do{
+            $available=[long](Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory*1KB
+            if($available -ge 7GB){break};Start-Sleep -Seconds 2
+        }while($watch.Elapsed.TotalSeconds -lt 120)
+        $report.MemoryWaits+=@([pscustomobject]@{Phase=$phase;Seconds=$watch.Elapsed.TotalSeconds;AvailableBytes=$available;Allowed=($available -ge 7GB)})
+        Save-Report
+        if($available -lt 7GB){throw 'Host memory did not reach the unchanged seven-GiB admission budget within two minutes.'}
         $script:bootAttempts++
     }
     $script:touched=$true
