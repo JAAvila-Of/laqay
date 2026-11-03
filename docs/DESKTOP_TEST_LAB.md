@@ -438,6 +438,16 @@ check using the published v0.1.0 and v0.1.1 ZIP bytes. This cycle is **prepared;
 runtime validation is pending**. Previous development-binary tests do not count
 as validation of these release packages. It does not publish or change versions.
 
+The first isolated attempt passed all thirteen v0.1.0 Explorer assertions but
+stopped because the launch controller incorrectly sent disabled Boolean options
+as nonempty strings, enabling an unintended lifecycle case. It restored the
+baseline and temporary logon configuration, shut down both guests and exited
+its owned processes. That failed attempt does not pass this gate. Desktop and
+RDP option transport now uses explicitly grouped Boolean values and rejects
+non-Boolean input. CI captures the actual launch argument expressions against a
+local remoting mock across enabled/disabled options and portable phases, without
+contacting a guest. A fresh full-cycle run is still required.
+
 Obtain the releases separately and verify their source/release provenance before
 authorizing the administrator process. The harness additionally pins both archive
 and executable hashes. v0.1.0 has no artifact attestations and is mutable; its
