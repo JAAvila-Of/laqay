@@ -22,8 +22,8 @@ fn icon_image(size: u32, enabled: bool) -> Vec<u8> {
                         || (19.0..56.0).contains(&px) && (45.0..57.0).contains(&py);
                     let corner = (28.0..56.0).contains(&px) && (8.0..20.0).contains(&py)
                         || (44.0..56.0).contains(&px) && (20.0..36.0).contains(&py);
-                    let entry = (45.0..83.0).contains(&(px + py))
-                        && (-11.0..5.0).contains(&(px - py));
+                    let entry =
+                        (45.0..83.0).contains(&(px + py)) && (-11.0..5.0).contains(&(px - py));
                     if !letter && !corner && !entry {
                         continue;
                     }
