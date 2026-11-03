@@ -165,7 +165,7 @@ jobs:
           python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
       - name: Retain release delivery for inspected recovery
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-delivery-${{ matrix.release.tag }}
           path: |
