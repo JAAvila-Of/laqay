@@ -510,18 +510,18 @@ the thirteen Explorer regressions plus empty clipboard, externally locked
 clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window
 responsiveness checks, held-key repeat, rapid paste preservation, a real second
 instance, This PC namespace rejection, native Edit/RichEdit fixtures, and idle/
-serial resource samples. This suite is **prepared, not runtime-validated**.
+serial resource samples. This suite **passed all 27 cases on 2026-11-03** using
+published v0.1.1 in the isolated Windows 11 Enterprise evaluation console. The
+normal two-boot cycle completed application exit, baseline/preferences/logon
+restoration, both guest shutdowns and owned helper/coordinator process exit.
 
-The first attempt passed the thirteen regressions and empty-clipboard case, then
-stopped in the lock case. Its windowless lock did not provide independent
-ownership evidence, so the unexpected PNG is not treated as a product verdict.
-The revised fixture retires old input requests, opens the clipboard with its
+The lock fixture retires old input requests, opens the clipboard with its
 own message-only window, and records exact window/process/thread ownership plus
 a rejected second open before Ctrl+V, after Ctrl+V and after observation. All
 three observations are required. See the Windows descriptions of
 [OpenClipboard](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard)
 and [GetOpenClipboardWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getopenclipboardwindow).
-The revised case has not run yet.
+All three ownership observations and the subsequent recovery passed.
 
 It reuses the byte-pinned published v0.1.1 executable and the original App/
 preference/logon backup and restoration policy. v0.1.0 is staged only as an
@@ -543,7 +543,15 @@ both guests off and its helper/coordinator processes exited; the failed test
 result remains preserved.
 
 The editor fixtures are a separate helper window containing native TextBox and
-RichTextBox controls. They do not stand in for Notepad, VS Code, Rider, Terminal
+RichTextBox controls. They select the child after activating their own form,
+without synthetic Alt, and require native focus outside menu/move mode. Exact
+text passed with Laqay disabled and enabled, retaining GUI thread state and
+bounded Ctrl/V queue observations. Earlier editor failures disappeared after
+removing Alt from fixture activation; no production code changed. Failure-only
+sender-thread and forwarding-hook diagnostics preserve the original failure
+and were not needed in the passing run. The reference hook has a ten-second
+timer and explicit owned unregistration/cleanup.
+These controls do not stand in for Notepad, VS Code, Rider, Terminal
 or a browser. Resource samples record CPU, memory, handles and threads and
 window-message responsiveness; they do not claim a sustained-load benchmark
 or leak test. Clipboard lock rejection may safely finish with one complete PNG

@@ -225,28 +225,12 @@ restored baseline/preferences/logon configuration, both guests off and owned
 helper/coordinator processes exited. This is a scoped package-cycle result;
 it does not complete every scenario in the desktop integration matrix.
 
-The separate 27-case adverse suite is still pending a complete runtime pass.
-Its native Edit/RichEdit fixtures select the child after foreground activation,
-require that child's native keyboard focus before Ctrl+V, and retain focus and
-text-match evidence with Laqay disabled and enabled. These reference controls
-do not establish compatibility with the real applications listed above.
-The latest attempt passed 21 cases, then reproduced missing text with Laqay
-enabled despite confirmed child focus; its disabled reference passed. The
-enabled fixture observed only Ctrl/V key-up messages, while its disabled
-reference also received key-down messages. Clipboard sequence and Unicode
-availability remained stable. Cleanup and baseline restoration passed.
-The bounded, non-consuming observer now also covers the fixture's root window.
-After an original failure, a diagnostic comparison submits real Ctrl+V from
-the editor's own UI thread and preserves the original failure regardless of
-the comparison's outcome. That comparison reproduced the failure as well.
-The next diagnostic also repeats the disabled reference after failure, then
-compares it with a minimal forwarding-only hook in the disposable guest. This
-reference hook has a ten-second timer, a dedicated message pump, explicit
-unregistration and owned cleanup; it never queues paste work. The latest
-disabled recovery also failed, while that reference observed both key-down and
-key-up events with no downstream rejection and unregistered normally. The
-initial enabled/disabled contrast therefore does not isolate an application
-defect. The fixture now avoids injecting Alt on editor activation and requires
-native focus outside menu/move mode, retaining GUI thread flags in its proof.
-Diagnostic outcomes do not replace the original assertion. This fixture
-correction still needs an authorized runtime pass; the cause remains unresolved.
+The separate [27-case adverse suite](DESKTOP_TEST_LAB.md#additional-console-adverse-checks)
+passed on 2026-11-03 using published v0.1.1 in the isolated Windows 11 Enterprise
+evaluation console. It completed two guest boots, normal application exit,
+baseline/preferences/logon restoration, both guests off and owned-process exit.
+Native Edit/RichEdit text passed with Laqay disabled and enabled, with confirmed
+child focus outside menu/move mode. The fixture activates its own form without
+synthetic Alt; earlier failed attempts remain failures. These helper controls
+do not establish compatibility with the real applications listed above, and
+the bounded resource samples do not establish sustained-load or leak results.
