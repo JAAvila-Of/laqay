@@ -25,6 +25,7 @@ if($PrepareOnly){
     foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
+        {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
@@ -68,7 +69,7 @@ $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
-    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
+    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null

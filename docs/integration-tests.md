@@ -234,3 +234,11 @@ child focus outside menu/move mode. The fixture activates its own form without
 synthetic Alt; earlier failed attempts remain failures. These helper controls
 do not establish compatibility with the real applications listed above, and
 the bounded resource samples do not establish sustained-load or leak results.
+
+The serial fixture now keeps the initial Explorer Items View focus for all
+twelve Ctrl+V inputs instead of reactivating and clicking the folder between
+inputs. Each step records its index, native foreground/focus/menu state,
+clipboard sequence, publication result and observed PNG count, including on
+failure. The host requires all twelve observations and the existing exact
+image/content checks; the wait limit and number of inputs are unchanged.
+This fixture revision still requires a fresh guest runtime pass.
