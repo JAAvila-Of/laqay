@@ -245,6 +245,11 @@ exit $LASTEXITCODE
     if($IncludeAdverse){
         if(@($guest.EditorSenderComparison).Count -ne 0){throw 'An editor failure required a diagnostic comparison; it is not a passing suite.'}
         if(@($guest.ReferenceHookProof).Count -ne 0){throw 'A passive-hook diagnostic cannot replace an editor failure.'}
+        $imagePastes=@($guest.ImagePastes)
+        if($imagePastes.Count -eq 0){throw 'The Explorer image paste observations are missing.'}
+        foreach($entry in $imagePastes){
+            if(-not $entry.Published -or $entry.Error -or $entry.ObservedPngCount -ne $entry.ExpectedCount -or -not $entry.Before -or -not $entry.After){throw 'An Explorer image paste observation is incomplete or failed.'}
+        }
         $serial=@($guest.SerialPastes)
         if($serial.Count -ne 12){throw 'The twelve serial paste observations are incomplete.'}
         for($index=0;$index -lt 12;$index++){

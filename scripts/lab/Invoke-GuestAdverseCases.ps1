@@ -167,15 +167,15 @@ Run-Case 'SerialPasteResourceSample' {
         $entry=[pscustomobject]@{Index=$index;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null}
         try{
             [LaqayGuestDesktop]::ImageClipboard()
-            $entry.Before=[LaqayGuestDesktop]::FolderInputState($window)
+            $entry.Before=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
             Assert-True ($entry.Before.Foreground -and $entry.Before.FocusWithinWindow -and ($entry.Before.GuiFlags -band 0x1e) -eq 0 -and $entry.Before.MenuOwner -eq 0) ('Serial paste '+$index+' lost guest folder input focus.')
-            [LaqayGuestDesktop]::Chord($window,17,86)
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
             Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq $index} ('Serial paste '+$index+' did not publish the expected image in the active guest folder.')
             $entry.Published=$true
         }catch{$entry.Error=$_.Exception.Message;throw}finally{
             $entry.Finished=[DateTime]::UtcNow.ToString('o')
             $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
-            try{$entry.After=[LaqayGuestDesktop]::FolderInputState($window)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
+            try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
             $report.SerialPastes+=@($entry);Save-Report
         }
         Assert-True (-not $entry.Error) ('Serial paste '+$index+' input inspection failed: '+$entry.Error)

@@ -242,3 +242,10 @@ clipboard sequence, publication result and observed PNG count, including on
 failure. The host requires all twelve observations and the existing exact
 image/content checks; the wait limit and number of inputs are unchanged.
 This fixture revision still requires a fresh guest runtime pass.
+The shared image-paste helper also records input state before activation,
+before Ctrl+V and after its publication wait. Structural UI Automation focus,
+modifier state and native clipboard-format availability aid diagnosis without
+reading control text. A failed paste additionally retains clipboard fixture
+diagnostics; it remains a failure and is not retried automatically. The inert
+preparation gate exercises the actual serial invocation expressions with a
+Shell-shaped object, requiring native-handle binding before the unarmed guard.
