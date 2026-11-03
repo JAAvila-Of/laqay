@@ -99,6 +99,7 @@ try{
                 [LaqayGuestDesktop]::ToggleEnabled()
                 Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The editor reference could not change input state.'
                 $proof=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Before=$null;After=$null;TextMatched=$false}
+                $pasteFailure=$null
                 try{
                     [LaqayGuestDesktop]::FocusMatrixEditor($rich)
                     [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
@@ -106,8 +107,23 @@ try{
                     [LaqayGuestDesktop]::PasteMatrixEditor()
                     Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('Text did not reach '+$prefix+'; Laqay enabled='+$enabled)
                     $proof.TextMatched=$true
-                }finally{
+                }catch{$pasteFailure=$_}finally{
                     $proof.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorProof+=@($proof);Save-Report
+                }
+                if($pasteFailure){
+                    # Diagnose sender-thread coupling without replacing the failed assertion.
+                    $alternate=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Sender='EditorThread';Before=$null;After=$null;TextMatched=$false;Error=$null}
+                    try{
+                        [LaqayGuestDesktop]::FocusMatrixEditor($rich)
+                        [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
+                        $alternate.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                        [LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()
+                        Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} 'The editor-thread diagnostic did not receive text.'
+                        $alternate.TextMatched=$true
+                    }catch{$alternate.Error=$_.Exception.Message}finally{
+                        $alternate.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorSenderComparison+=@($alternate);Save-Report
+                    }
+                    throw $pasteFailure
                 }
             }
         }

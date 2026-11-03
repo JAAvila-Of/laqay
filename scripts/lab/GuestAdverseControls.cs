@@ -144,8 +144,18 @@ public static partial class LaqayGuestDesktop {
     public static void PasteMatrixEditor() {
         MatrixGuard();if(matrixEditor==null || GetForegroundWindow()!=matrixEditor.Handle) throw new InvalidOperationException("The editor fixture lost foreground.");
         RequireMatrixEditorFocus();
+        SendMatrixEditorPaste();
+    }
+    static void SendMatrixEditorPaste() {
         Send(new[]{new Input {type=1,value=new Union {key=new Key {vk=17}}},new Input {type=1,value=new Union {key=new Key {vk=86}}},
             new Input {type=1,value=new Union {key=new Key {vk=86,flags=2}}},new Input {type=1,value=new Union {key=new Key {vk=17,flags=2}}}});
+    }
+    public static void PasteMatrixEditorFromUiThread() {
+        MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No editor fixture.");
+        matrixEditor.Invoke(delegate(){
+            if(GetForegroundWindow()!=matrixEditor.Handle || !matrixEditor.Focused) throw new InvalidOperationException("The editor-thread reference lost native focus.");
+            SendMatrixEditorPaste();
+        });
     }
     public static string MatrixEditorText() {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No editor fixture.");
@@ -157,12 +167,13 @@ public static partial class LaqayGuestDesktop {
         [DllImport("user32.dll")] static extern short GetKeyState(int key);
         readonly List<object> receivedKeys=new List<object>();
         public bool PreFilterMessage(ref Message message) {
-            // Observe only Ctrl/V queue messages for our two disposable controls.
+            // Observe only Ctrl/V queue messages for our disposable form/controls.
             // Always continue normal dispatch; never register a desktop hook.
             long key=message.WParam.ToInt64();
-            if(receivedKeys.Count<16 && (message.HWnd==plain.Handle || message.HWnd==rich.Handle)
+            if(receivedKeys.Count<16 && (message.HWnd==form.Handle || message.HWnd==plain.Handle || message.HWnd==rich.Handle)
                 && message.Msg>=0x100 && message.Msg<=0x105 && (key==17 || key==86 || key==162 || key==163)) {
                 receivedKeys.Add(new {Message=message.Msg,Key=key,ControlWindow=message.HWnd.ToInt64(),
+                    FocusWindow=GetFocus().ToInt64(),Foreground=GetForegroundWindow()==Handle,
                     ControlDown=(GetKeyState(17)&0x8000)!=0,AltDown=(GetKeyState(18)&0x8000)!=0,
                     ShiftDown=(GetKeyState(16)&0x8000)!=0,Milliseconds=Environment.TickCount});
             }

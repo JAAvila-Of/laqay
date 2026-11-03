@@ -231,8 +231,12 @@ require that child's native keyboard focus before Ctrl+V, and retain focus and
 text-match evidence with Laqay disabled and enabled. These reference controls
 do not establish compatibility with the real applications listed above.
 The latest attempt passed 21 cases, then reproduced missing text with Laqay
-enabled despite confirmed child focus; its disabled reference passed. Cleanup
-and baseline restoration passed. A bounded, non-consuming message observer in
-the fixture now records only Ctrl/V queue messages for its own two controls,
-plus clipboard sequence/Unicode-format availability. This diagnostic revision
-still needs an authorized guest run; the cause remains unresolved.
+enabled despite confirmed child focus; its disabled reference passed. The
+enabled fixture observed only Ctrl/V key-up messages, while its disabled
+reference also received key-down messages. Clipboard sequence and Unicode
+availability remained stable. Cleanup and baseline restoration passed.
+The bounded, non-consuming observer now also covers the fixture's root window.
+After an original failure, a diagnostic comparison submits real Ctrl+V from
+the editor's own UI thread and preserves the original failure regardless of
+the comparison's outcome. This revision needs an authorized guest run; the
+cause remains unresolved.

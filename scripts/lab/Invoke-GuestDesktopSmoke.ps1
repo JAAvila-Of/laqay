@@ -43,7 +43,7 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::BeginClipboardLease()},{[LaqayGuestDesktop]::ClipboardLeaseState()},{[LaqayGuestDesktop]::BeginMatrixEditor()},
         {[LaqayGuestDesktop]::SecondApplication()},{[LaqayGuestDesktop]::MatrixResources()},{[LaqayGuestDesktop]::MatrixApplicationResponsive()},
         {[LaqayGuestDesktop]::HeldPaste([IntPtr]::Zero)},{[LaqayGuestDesktop]::FocusMatrixEditor($false)},
-        {[LaqayGuestDesktop]::PasteMatrixEditor()},{[LaqayGuestDesktop]::MatrixEditorText()},{[LaqayGuestDesktop]::MatrixEditorState()})){
+        {[LaqayGuestDesktop]::PasteMatrixEditor()},{[LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()},{[LaqayGuestDesktop]::MatrixEditorText()},{[LaqayGuestDesktop]::MatrixEditorState()})){
         $rejected=$false;try{& $operation | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Unarmed adverse controls were accepted.'}
     }
     Write-Output 'Guest desktop helper compiled; unarmed input and invalid identity were rejected.'
@@ -68,7 +68,7 @@ $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
-    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
+    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
