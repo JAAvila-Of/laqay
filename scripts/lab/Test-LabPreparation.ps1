@@ -7,6 +7,7 @@ function Assert-True($value,[string]$message) { if (-not $value) { throw $messag
 try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
+    & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
