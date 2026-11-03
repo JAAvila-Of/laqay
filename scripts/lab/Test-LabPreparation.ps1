@@ -23,6 +23,14 @@ try {
         Assert-True $rejectedAtGuard 'A serial Shell window failed argument binding before the unarmed guard.'
     }
     Write-Output 'Actual serial Shell-window expressions bind native handles before rejecting unarmed input.'
+    $renderedBytes=[LaqayGuestDesktop]::RenderedPngFixture()
+    $renderedStream=[IO.MemoryStream]::new($renderedBytes,$false);$renderedBitmap=[Drawing.Bitmap]::new($renderedStream)
+    try{
+        Assert-True ($renderedBitmap.Width -eq 2 -and $renderedBitmap.Height -eq 2) 'The delayed PNG fixture dimensions changed.'
+        for($y=0;$y -lt 2;$y++){for($x=0;$x -lt 2;$x++){
+            Assert-True ($renderedBitmap.GetPixel($x,$y).ToArgb() -eq [Drawing.Color]::Magenta.ToArgb()) 'The delayed fixture cannot distinguish a stale paste from fresh recovery.'
+        }}
+    }finally{$renderedBitmap.Dispose();$renderedStream.Dispose()}
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)

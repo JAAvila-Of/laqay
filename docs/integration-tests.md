@@ -253,3 +253,22 @@ reading control text. A failed paste additionally retains clipboard fixture
 diagnostics; it remains a failure and is not retried automatically. The inert
 preparation gate exercises the actual serial invocation expressions with a
 Shell-shaped object, requiring native-handle binding before the unarmed guard.
+
+The next adverse revision adds `RenderedPngReferencePaste` and
+`TabSwitchCancelsPendingImage` (29 cases total). Their guest runtime result is
+pending. A valid magenta PNG first proves the delayed-render source can publish
+with stable focus. The race then prepares three tabs before publishing that
+source, requires independent native evidence of Laqay waiting for its provider,
+and switches from A to B before releasing bytes. The provider records ownership,
+sequence and release/render state on both sides of the switch.
+
+A later paste into C uses the same clipboard without republishing or clearing
+it. For the pinned v0.1.1 single FIFO paste worker, C's exact PNG is a completion
+fence for the earlier request. A and B must then contain no files, including
+staging files. After retiring the provider, a fresh, visually distinct image
+must paste correctly into B. This avoids treating a quiet-time delay or missing
+source bytes as cancellation evidence. The fence must be revised if the worker
+becomes concurrent. The rendering handler follows
+[WM_RENDERFORMAT](https://learn.microsoft.com/en-us/windows/win32/dataxchg/wm-renderformat):
+it supplies its memory handle without opening the consumer's clipboard lock.
+The existing exit-with-pending-work provider retains its cancel-only behavior.

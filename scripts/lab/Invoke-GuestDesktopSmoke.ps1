@@ -26,6 +26,8 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
         {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
+        {[LaqayGuestDesktop]::BeginRenderedDelayedPng()},{[LaqayGuestDesktop]::ReleaseRenderedDelayedPng()},
+        {[LaqayGuestDesktop]::ClipboardReadAvailable()},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
@@ -67,7 +69,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}

@@ -43,11 +43,32 @@ public static partial class LaqayGuestDesktop {
     public static int GuestExplorerPid() {LifecycleGuard();uint pid;GetWindowThreadProcessId(GetShellWindow(),out pid);return (int)pid;}
     public static void BeginDelayedPng() {
         LifecycleGuard();if(application==null || application.HasExited || delayedPng!=null) throw new InvalidOperationException("A fresh owned application and provider are required.");
-        delayedPng=new DelayedPng();delayedPng.Start();
+        delayedPng=new DelayedPng(null);delayedPng.Start();
+    }
+    // Pure, distinct source pixels let the recovery paste prove its own output.
+    public static byte[] RenderedPngFixture() {
+        using(var bitmap=new System.Drawing.Bitmap(2,2)) using(var output=new MemoryStream()) {
+            using(var graphics=System.Drawing.Graphics.FromImage(bitmap)) graphics.Clear(System.Drawing.Color.Magenta);
+            bitmap.Save(output,System.Drawing.Imaging.ImageFormat.Png);return output.ToArray();
+        }
+    }
+    public static void BeginRenderedDelayedPng() {
+        LifecycleGuard();if(application==null || application.HasExited || delayedPng!=null) throw new InvalidOperationException("A fresh owned application and provider are required.");
+        delayedPng=new DelayedPng(RenderedPngFixture());delayedPng.Start();
+    }
+    public static void ReleaseRenderedDelayedPng() {
+        LifecycleGuard();
+        if(delayedPng==null || delayedPng.payload==null || !delayedPng.requested.WaitOne(0) || delayedPng.release.WaitOne(0))
+            throw new InvalidOperationException("An unreleased, requested rendered provider is required.");
+        delayedPng.release.Set();
+    }
+    public static bool ClipboardReadAvailable() {
+        LifecycleGuard();if(!OpenClipboard(IntPtr.Zero)) return false;
+        try {return true;} finally {CloseClipboard();}
     }
     public static object DelayedPngState() {
         LifecycleGuard();if(delayedPng==null) throw new InvalidOperationException("No delayed fixture is active.");
-        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,OwnerMatches=GetClipboardOwner()==delayedPng.Handle,Sequence=GetClipboardSequenceNumber(),PublishedSequence=delayedPng.sequence,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),TimedOut=delayedPng.timedOut,Error=delayedPng.error};
+        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,OwnerMatches=GetClipboardOwner()==delayedPng.Handle,Sequence=GetClipboardSequenceNumber(),PublishedSequence=delayedPng.sequence,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),Rendered=delayedPng.rendered.WaitOne(0),RenderedSequence=delayedPng.renderedSequence,PayloadBytes=delayedPng.payload==null?0:delayedPng.payload.Length,TimedOut=delayedPng.timedOut,Error=delayedPng.error};
     }
     public static void EndDelayedPng() {
         // Always release the exact owned provider, including after the input deadline.
@@ -55,6 +76,10 @@ public static partial class LaqayGuestDesktop {
     }
     sealed class DelayedPng : NativeWindow {
         internal readonly ManualResetEvent requested=new ManualResetEvent(false),release=new ManualResetEvent(false);
+        internal readonly ManualResetEvent rendered=new ManualResetEvent(false);
+        internal readonly byte[] payload;
+        internal uint renderedSequence;
+        internal DelayedPng(byte[] bytes) {payload=bytes;}
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;uint format;
         internal uint threadId,requesterPid,requesterThreadId,sequence;internal bool timedOut;internal string error;
         public void Start() {
@@ -77,7 +102,21 @@ public static partial class LaqayGuestDesktop {
                 requesterThreadId=GetWindowThreadProcessId(GetOpenClipboardWindow(),out requesterPid);
                 requested.Set();
                 if(!release.WaitOne(60000)) {timedOut=true;return;}
-                // This adversarial provider never supplies bytes: release only cancels its blocked render after the application has exited.
+                // The lifecycle provider only cancels; the race provider supplies
+                // valid bytes without opening the consumer's clipboard lock.
+                if(payload!=null) {
+                    IntPtr memory=IntPtr.Zero;bool transferred=false;
+                    try {
+                        memory=GlobalAlloc(2,new UIntPtr((uint)payload.Length));
+                        if(memory==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG buffer could not be allocated.");
+                        IntPtr pointer=GlobalLock(memory);
+                        if(pointer==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG buffer could not be locked.");
+                        try {Marshal.Copy(payload,0,pointer,payload.Length);} finally {GlobalUnlock(memory);}
+                        if(SetClipboardData(format,memory)==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG bytes were not accepted.");
+                        transferred=true;renderedSequence=GetClipboardSequenceNumber();rendered.Set();
+                    } catch(Exception failure) {error=failure.GetBaseException().Message;}
+                    finally {if(!transferred && memory!=IntPtr.Zero) GlobalFree(memory);}
+                }
                 return;
             }
             if(message.Msg==0x10) {
@@ -89,7 +128,7 @@ public static partial class LaqayGuestDesktop {
         public void Stop() {
             release.Set();if(Handle!=IntPtr.Zero) PostMessageW(Handle,0x10,IntPtr.Zero,IntPtr.Zero);
             if(thread!=null && !thread.Join(5000)) throw new InvalidOperationException("The owned delayed PNG thread did not stop.");
-            requested.Dispose();release.Dispose();ready.Dispose();
+            requested.Dispose();release.Dispose();rendered.Dispose();ready.Dispose();
             if(timedOut || error!=null) throw new InvalidOperationException("The delayed PNG provider failed: "+error);
         }
     }

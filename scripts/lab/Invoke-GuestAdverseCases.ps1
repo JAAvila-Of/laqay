@@ -2,6 +2,7 @@
 if(-not $IncludeAdverse -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 13){throw 'The adverse cases require the owned smoke context.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
 Assert-True ([LaqayGuestDesktop]::SessionProtocol() -eq 0) 'The adverse cases require the disposable console.'
+$report.SessionProtocol=[LaqayGuestDesktop]::SessionProtocol()
 function Assert-Empty([string]$path){Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) 'A declined paste left files or staging output.'}
 Run-Case 'EmptyClipboardNoOutput' {
     $path=New-CaseFolder 'empty-clipboard';$window=Open-Folder $path
@@ -185,4 +186,86 @@ Run-Case 'SerialPasteResourceSample' {
     foreach($file in $files){Check-Png $file.FullName}
     $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
-Assert-True ($report.Cases.Count -eq 27) 'The complete adverse suite did not execute.'
+function Check-RenderedPng([string]$path){
+    $image=[Drawing.Bitmap]::new($path)
+    try{
+        Assert-True ($image.Width -eq 2 -and $image.Height -eq 2) 'The rendered PNG dimensions changed.'
+        for($y=0;$y -lt 2;$y++){for($x=0;$x -lt 2;$x++){
+            Assert-True ($image.GetPixel($x,$y).ToArgb() -eq [Drawing.Color]::Magenta.ToArgb()) 'The rendered PNG pixels changed.'
+        }}
+    }finally{$image.Dispose()}
+}
+function Release-RenderedPng {
+    [LaqayGuestDesktop]::ReleaseRenderedDelayedPng()
+    Wait-For {$state=[LaqayGuestDesktop]::DelayedPngState();Assert-True (-not $state.Error -and -not $state.TimedOut) 'The rendered provider failed.';$state.Rendered} 'The provider did not supply its PNG bytes.'
+    Wait-For {[LaqayGuestDesktop]::ClipboardReadAvailable()} 'The application did not release its clipboard read.'
+}
+Run-Case 'RenderedPngReferencePaste' {
+    $path=New-CaseFolder 'rendered-reference';$window=Open-Folder $path
+    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
+    try{
+        [LaqayGuestDesktop]::BeginRenderedDelayedPng()
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
+        Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The reference provider did not receive its render request.'
+        Release-RenderedPng
+        Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq 1} 'The held PNG reference did not publish.'
+        Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'The reference left extra files.'
+        Check-RenderedPng (Get-ChildItem -LiteralPath $path -Filter '*.png' -File)[0].FullName
+        $report.TabClipboardRace.Reference=[LaqayGuestDesktop]::DelayedPngState()
+        Assert-True ($report.TabClipboardRace.Reference.Sequence -eq $report.TabClipboardRace.Reference.PublishedSequence) 'Rendering changed the reference clipboard sequence; it cannot isolate a focus race.'
+    }finally{[LaqayGuestDesktop]::EndDelayedPng();Save-Report}
+}
+Run-Case 'TabSwitchCancelsPendingImage' {
+    $pathA=New-CaseFolder 'pending-tab-a';$pathB=New-CaseFolder 'pending-tab-b';$pathC=New-CaseFolder 'pending-tab-fence'
+    $window=Open-Folder $pathA;$handle=[IntPtr]$window.HWND
+    foreach($path in @($pathB,$pathC)){
+        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,84));Start-Sleep -Milliseconds 400
+        Navigate-Tab $handle $path
+        Assert-True ((Find-Folder $path).HWND -eq $window.HWND) 'The pending fixtures are not tabs of one Explorer window.'
+    }
+    $report.TabClipboardRace.SameWindow=$true
+    [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9));[LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9))
+    Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-a')} 'The source tab was not selected.'
+    [LaqayGuestDesktop]::FocusFolder($handle)
+    try{
+        $report.ProviderStopped=$false;[LaqayGuestDesktop]::BeginRenderedDelayedPng()
+        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
+        Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The race provider did not receive its render request.'
+        $report.PendingClipboard=[LaqayGuestDesktop]::DelayedPngState();Save-Report
+        $proofPath=Join-Path $root 'pending-proof.json';$abortPath=Join-Path $root 'pending-abort.json'
+        Wait-For {(Test-Path -LiteralPath $proofPath) -or (Test-Path -LiteralPath $abortPath)} 'The controller did not verify the held clipboard read.' 25
+        if(Test-Path -LiteralPath $abortPath){throw 'The controller aborted the held-read validation.'}
+        $proof=Get-Content -LiteralPath $proofPath -Raw | ConvertFrom-Json
+        Assert-True ($proof.LabId -eq $LabId -and $proof.RunId -eq $RunId -and $proof.Confirmed -and $proof.ApplicationPid -eq $report.ApplicationPid -and $proof.ProviderPid -eq $report.PendingClipboard.ProviderPid -and $proof.ProviderThreadId -eq $report.PendingClipboard.ProviderThreadId -and $proof.SessionId -eq $report.SessionId) 'The wait proof does not match this application and provider.'
+        $report.PendingWaitVerified=$true
+        $report.TabClipboardRace.BeforeSwitch=[LaqayGuestDesktop]::DelayedPngState()
+        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,9))
+        Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-b')} 'The destination tab did not become active.'
+        $report.TabClipboardRace.TabChanged=$true
+        $held=[LaqayGuestDesktop]::DelayedPngState();$report.TabClipboardRace.AfterSwitch=$held
+        Assert-True ($held.Requested -and -not $held.Released -and -not $held.Rendered -and $held.OwnerMatches -and $held.Sequence -eq $held.PublishedSequence -and -not $held.Error -and -not $held.TimedOut) 'The provider was not retained across the tab switch.'
+        Release-RenderedPng
+        $report.TabClipboardRace.AfterRender=[LaqayGuestDesktop]::DelayedPngState()
+        # The published application has one FIFO paste worker. A later output
+        # from the same clipboard proves the held request has finished, without
+        # changing its clipboard sequence or relying on a quiet-time delay.
+        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,9))
+        Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-fence')} 'The completion-fence tab did not become active.'
+        [LaqayGuestDesktop]::FocusFolder($handle)
+        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
+        Wait-For {@(Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File).Count -eq 1} 'The later same-clipboard paste did not complete.'
+        Check-RenderedPng (Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File)[0].FullName
+        Assert-True (@(Get-ChildItem -LiteralPath $pathC -Force).Count -eq 1) 'The completion fence left extra files.'
+        $report.TabClipboardRace.AfterFence=[LaqayGuestDesktop]::DelayedPngState()
+        Assert-True ($report.TabClipboardRace.AfterFence.OwnerMatches -and $report.TabClipboardRace.AfterFence.Sequence -eq $held.PublishedSequence) 'The completion fence changed clipboard ownership or sequence.'
+        $report.TabClipboardRace.FenceVerified=$true
+        Assert-Empty $pathA;Assert-Empty $pathB;$report.TabClipboardRace.OriginalFoldersEmpty=$true
+    }finally{[LaqayGuestDesktop]::EndDelayedPng();$report.ProviderStopped=$true;$report.TabClipboardRace.ProviderStopped=$true;Save-Report}
+    [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9))
+    Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-b')} 'The recovery tab did not become active.'
+    Paste-Image (Find-Folder $pathB) $pathB 1
+    Check-Png (Get-ChildItem -LiteralPath $pathB -Filter '*.png' -File)[0].FullName
+    Assert-True (@(Get-ChildItem -LiteralPath $pathB -Force).Count -eq 1) 'The fresh recovery paste left extra files.'
+    Assert-Empty $pathA;$report.TabClipboardRace.FreshPasteVerified=$true;Save-Report
+}
+Assert-True ($report.Cases.Count -eq 29) 'The complete adverse suite did not execute.'
