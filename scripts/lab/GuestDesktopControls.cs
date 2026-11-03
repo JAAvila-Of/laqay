@@ -36,6 +36,15 @@ public static partial class LaqayGuestDesktop {
     [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr window, int command);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+    [StructLayout(LayoutKind.Sequential)]
+    struct FolderGuiInfo {
+        public uint size, flags;
+        public IntPtr active, focus, capture, menuOwner, moveSize, caret;
+        public int left, top, right, bottom;
+    }
+    [DllImport("user32.dll",SetLastError=true)] static extern bool GetGUIThreadInfo(uint thread,ref FolderGuiInfo info);
+    [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent,IntPtr child);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll",SetLastError=true)] static extern bool OpenClipboard(IntPtr owner);
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint format);
@@ -601,6 +610,35 @@ public static partial class LaqayGuestDesktop {
         Send(new[] {new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
         SetForegroundWindow(window); Thread.Sleep(200);
         if(GetForegroundWindow()!=window) throw new InvalidOperationException("Guest Explorer activation failed.");
+    }
+    public static object FolderInputState(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        uint pid; uint thread=GetWindowThreadProcessId(window,out pid);
+        var info=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
+        if(!GetGUIThreadInfo(thread,ref info)) throw new InvalidOperationException("The guest Explorer input state could not be inspected.");
+        bool within=info.focus==window || IsChild(window,info.focus);
+        var name=new StringBuilder(128);
+        if(within) GetClassNameW(info.focus,name,name.Capacity);
+        bool itemsFocus=false;string semanticClass="",semanticType="",semanticError=null;
+        try {
+            var focused=AutomationElement.FocusedElement;
+            if(focused!=null && focused.Current.ProcessId==(int)pid) {
+                semanticClass=focused.Current.ClassName;semanticType=focused.Current.ControlType.ProgrammaticName;
+                for(int depth=0;focused!=null && depth<16;depth++) {
+                    if(focused.Current.ProcessId!=(int)pid) break;
+                    if(focused.Current.ClassName=="UIItemsView" || focused.Current.AutomationId=="ItemsView") {itemsFocus=true;break;}
+                    focused=TreeWalker.ControlViewWalker.GetParent(focused);
+                }
+            }
+        } catch(Exception error) {semanticError=error.GetType().Name;}
+        return new {Foreground=GetForegroundWindow()==window,FocusWithinWindow=within,
+            FocusWindow=info.focus.ToInt64(),FocusedClass=name.ToString(),GuiFlags=info.flags,
+            MenuOwner=info.menuOwner.ToInt64(),ClipboardSequence=GetClipboardSequenceNumber(),
+            ItemsViewFocused=itemsFocus,SemanticClass=semanticClass,SemanticType=semanticType,SemanticError=semanticError,
+            ControlDown=(GetAsyncKeyState(17)&0x8000)!=0,AltDown=(GetAsyncKeyState(18)&0x8000)!=0,
+            ShiftDown=(GetAsyncKeyState(16)&0x8000)!=0,WindowsDown=((GetAsyncKeyState(91)|GetAsyncKeyState(92))&0x8000)!=0,
+            HasBitmap=IsClipboardFormatAvailable(2),HasDib=IsClipboardFormatAvailable(8),
+            HasDibV5=IsClipboardFormatAvailable(17),HasFileDrop=IsClipboardFormatAvailable(15)};
     }
     public static void FocusFolder(IntPtr window) {
         Guard(); ExplorerWindow(window);

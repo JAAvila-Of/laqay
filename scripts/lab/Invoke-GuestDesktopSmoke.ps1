@@ -25,6 +25,7 @@ if($PrepareOnly){
     foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
+        {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
         $rejected=$false
         try{& $operation}catch{$rejected=$true}
@@ -66,9 +67,9 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
-    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
+    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
@@ -122,11 +123,23 @@ function Open-Folder([string]$path){
     return $window
 }
 function Paste-Image($window,[string]$path,[int]$count){
-    [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
-    Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
-    [LaqayGuestDesktop]::ImageClipboard()
-    [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
-    Wait-For { @(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq $count } 'The expected image was not published in the active guest folder.'
+    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null}
+    try{
+        $entry.BeforeActivation=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
+        Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
+        [LaqayGuestDesktop]::ImageClipboard()
+        $entry.Before=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+        Wait-For { @(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq $count } 'The expected image was not published in the active guest folder.'
+        $entry.Published=$true
+    }catch{$entry.Error=$_.Exception.Message;throw}finally{
+        $entry.Finished=[DateTime]::UtcNow.ToString('o')
+        $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
+        try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
+        if($entry.Error){try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}}
+        $report.ImagePastes+=@($entry);Save-Report
+    }
 }
 function Check-Png([string]$path){
     Assert-True ([IO.Path]::GetFileName($path) -match '^Screenshot_\d{8}_\d{6}(_\d{3,})?\.png$') 'Unexpected screenshot filename.'

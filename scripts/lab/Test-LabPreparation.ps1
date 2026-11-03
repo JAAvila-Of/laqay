@@ -9,6 +9,20 @@ try {
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
+    # Exercise the actual serial input expressions with a Shell-shaped object.
+    # Every call must bind successfully and then fail at the unarmed guard.
+    $serialAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Invoke-GuestAdverseCases.ps1'),[ref]$null,[ref]$null)
+    $serialCase=@($serialAst.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Run-Case' -and $node.CommandElements[1].Extent.Text -eq "'SerialPasteResourceSample'"},$true))
+    Assert-True ($serialCase.Count -eq 1) 'The serial fixture could not be located.'
+    $inputCalls=@($serialCase[0].FindAll({param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Expression.Extent.Text -eq '[LaqayGuestDesktop]' -and $node.Member.Value -in @('FolderInputState','Chord')},$true))
+    Assert-True ($inputCalls.Count -eq 3) 'The serial fixture input observations changed.'
+    $window=[pscustomobject]@{HWND=[long]12345}
+    foreach($call in $inputCalls){
+        $rejectedAtGuard=$false
+        try{& ([scriptblock]::Create($call.Extent.Text))}catch{$rejectedAtGuard=$_.Exception.ToString().Contains('Guest desktop controls are not armed or have expired.')}
+        Assert-True $rejectedAtGuard 'A serial Shell window failed argument binding before the unarmed guard.'
+    }
+    Write-Output 'Actual serial Shell-window expressions bind native handles before rejecting unarmed input.'
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)

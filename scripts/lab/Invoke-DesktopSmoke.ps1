@@ -245,6 +245,20 @@ exit $LASTEXITCODE
     if($IncludeAdverse){
         if(@($guest.EditorSenderComparison).Count -ne 0){throw 'An editor failure required a diagnostic comparison; it is not a passing suite.'}
         if(@($guest.ReferenceHookProof).Count -ne 0){throw 'A passive-hook diagnostic cannot replace an editor failure.'}
+        $imagePastes=@($guest.ImagePastes)
+        if($imagePastes.Count -eq 0){throw 'The Explorer image paste observations are missing.'}
+        foreach($entry in $imagePastes){
+            if(-not $entry.Published -or $entry.Error -or $entry.ObservedPngCount -ne $entry.ExpectedCount -or -not $entry.Before -or -not $entry.After){throw 'An Explorer image paste observation is incomplete or failed.'}
+        }
+        $serial=@($guest.SerialPastes)
+        if($serial.Count -ne 12){throw 'The twelve serial paste observations are incomplete.'}
+        for($index=0;$index -lt 12;$index++){
+            $entry=$serial[$index]
+            if($entry.Index -ne ($index+1) -or -not $entry.Published -or $entry.Error -or $entry.ObservedPngCount -ne ($index+1)){throw 'A serial paste observation did not confirm exactly one new image.'}
+            foreach($state in @($entry.Before,$entry.After)){
+                if(-not $state.Foreground -or -not $state.FocusWithinWindow -or ($state.GuiFlags -band 0x1e) -ne 0 -or $state.MenuOwner -ne 0){throw 'The serial sample did not retain native Explorer focus outside menu/move mode.'}
+            }
+        }
         $editors=@($guest.EditorProof)
         if($editors.Count -ne 4){throw 'The native editor references are incomplete.'}
         foreach($control in @('NativeEdit','RichEdit')){
