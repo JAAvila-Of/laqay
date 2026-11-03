@@ -127,15 +127,16 @@ public static partial class LaqayGuestDesktop {
     public static void FocusMatrixEditor(bool rich) {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No owned editor fixture.");
         var handle=matrixEditor.Handle;
-        Send(new[]{new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
-        SetForegroundWindow(handle);Thread.Sleep(200);
+        // This form belongs to our process. Repeated Alt input on an already
+        // active editor can enter menu preprocessing instead of preparing text input.
+        if(GetForegroundWindow()!=handle) {SetForegroundWindow(handle);Thread.Sleep(200);}
         if(GetForegroundWindow()!=handle) throw new InvalidOperationException("The owned guest editor is not foreground.");
         // Select the child after activation, which can otherwise restore a different control.
         matrixEditor.Invoke(delegate(){matrixEditor.Select(rich);});
         Thread.Sleep(100);RequireMatrixEditorFocus();
     }
     static void RequireMatrixEditorFocus() {
-        bool focused=false;matrixEditor.Invoke(delegate(){focused=matrixEditor.Focused;});
+        bool focused=false;matrixEditor.Invoke(delegate(){focused=matrixEditor.InputReady;});
         if(GetForegroundWindow()!=matrixEditor.Handle || !focused) throw new InvalidOperationException("The selected editor control does not own native keyboard focus.");
     }
     public static object MatrixEditorState() {
@@ -154,7 +155,7 @@ public static partial class LaqayGuestDesktop {
     public static void PasteMatrixEditorFromUiThread() {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No editor fixture.");
         matrixEditor.Invoke(delegate(){
-            if(GetForegroundWindow()!=matrixEditor.Handle || !matrixEditor.Focused) throw new InvalidOperationException("The editor-thread reference lost native focus.");
+            if(GetForegroundWindow()!=matrixEditor.Handle || !matrixEditor.InputReady) throw new InvalidOperationException("The editor-thread reference lost native focus.");
             SendMatrixEditorPaste();
         });
     }
@@ -238,6 +239,15 @@ public static partial class LaqayGuestDesktop {
         }
     }
     sealed class MatrixEditor : IDisposable,IMessageFilter {
+        [StructLayout(LayoutKind.Sequential)] struct GuiInfo {
+            public uint size,flags;public IntPtr active,focus,capture,menuOwner,moveSize,caret;public int left,top,right,bottom;
+        }
+        [DllImport("user32.dll",SetLastError=true)] static extern bool GetGUIThreadInfo(uint thread,ref GuiInfo info);
+        GuiInfo ThreadInfo() {
+            var info=new GuiInfo {size=(uint)Marshal.SizeOf(typeof(GuiInfo))};
+            if(!GetGUIThreadInfo(GetCurrentThreadId(),ref info)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            return info;
+        }
         [DllImport("user32.dll")] static extern IntPtr GetFocus();
         [DllImport("user32.dll")] static extern short GetKeyState(int key);
         readonly List<object> receivedKeys=new List<object>();
@@ -260,7 +270,9 @@ public static partial class LaqayGuestDesktop {
         public void Invoke(Action action) {if(form==null || form.IsDisposed) throw new InvalidOperationException("The editor fixture closed unexpectedly.");form.Invoke(action);}
         TextBoxBase Target {get{return selectedRich?(TextBoxBase)rich:plain;}}
         public bool Focused {get{return Target.Focused && GetFocus()==Target.Handle && form.ActiveControl==Target;}}
-        public object State() {return new {Rich=selectedRich,Foreground=GetForegroundWindow()==Handle,Focused=Focused,
+        public bool InputReady {get{return Focused && (ThreadInfo().flags&0x1e)==0;}}
+        public object State() {var gui=ThreadInfo();return new {Rich=selectedRich,Foreground=GetForegroundWindow()==Handle,Focused=Focused,
+            InputReady=Focused && (gui.flags&0x1e)==0,GuiFlags=gui.flags,MenuOwner=gui.menuOwner.ToInt64(),
             ControlWindow=Target.Handle.ToInt64(),FocusWindow=GetFocus().ToInt64(),Visible=Target.Visible,
             Enabled=Target.Enabled,ReadOnly=Target.ReadOnly,TextLength=Target.TextLength,
             ClipboardSequence=GetClipboardSequenceNumber(),ClipboardUnicode=IsClipboardFormatAvailable(13),ReceivedKeys=receivedKeys.ToArray()};}

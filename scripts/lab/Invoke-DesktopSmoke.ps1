@@ -253,7 +253,7 @@ exit $LASTEXITCODE
             foreach($entry in $pair){
                 if(-not $entry.TextMatched){throw 'Native editor text did not match.'}
                 foreach($state in @($entry.Before,$entry.After)){
-                    if(-not $state.Foreground -or -not $state.Focused -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus.'}
+                    if(-not $state.Foreground -or -not $state.Focused -or -not $state.InputReady -or ($state.GuiFlags -band 0x1e) -ne 0 -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus outside menu/move mode.'}
                 }
             }
         }

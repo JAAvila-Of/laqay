@@ -242,5 +242,11 @@ the comparison's outcome. That comparison reproduced the failure as well.
 The next diagnostic also repeats the disabled reference after failure, then
 compares it with a minimal forwarding-only hook in the disposable guest. This
 reference hook has a ten-second timer, a dedicated message pump, explicit
-unregistration and owned cleanup; it never queues paste work. Diagnostic
-outcomes do not replace the original assertion. The cause remains unresolved.
+unregistration and owned cleanup; it never queues paste work. The latest
+disabled recovery also failed, while that reference observed both key-down and
+key-up events with no downstream rejection and unregistered normally. The
+initial enabled/disabled contrast therefore does not isolate an application
+defect. The fixture now avoids injecting Alt on editor activation and requires
+native focus outside menu/move mode, retaining GUI thread flags in its proof.
+Diagnostic outcomes do not replace the original assertion. This fixture
+correction still needs an authorized runtime pass; the cause remains unresolved.
