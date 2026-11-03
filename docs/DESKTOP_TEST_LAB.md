@@ -564,3 +564,19 @@ corner pixels without opening a clipboard or desktop. Actual application
 compatibility, deterministic focus/clipboard races, OLE virtual-file transfer,
 full-volume/disconnected-share recovery and long-running resource tests remain
 separate pending portions of the integration matrix. Windows 10 is not covered.
+
+## Read-only application inventory
+
+`Get-GuestApplicationInventory.ps1 -Session <owned-primary-session> -LabId <id>`
+collects fixed-path executable metadata and registered/provisioned Notepad and
+Terminal package metadata before planning real application paste tests. It
+rejects missing/wrong lab markers, Peer, non-VM hardware and unsupported OS
+before collection. No application, task, clipboard operation or installation
+is started. Execution aliases are reported without following their targets.
+
+Missing applications are inventory results, not failed compatibility tests.
+A launcher file or registered package does not prove the application opens or
+pastes correctly. Partial package-query errors remain explicit. Boot Primary
+only with authorization, ownership/resource guards and RustWork; keep Peer off
+and shut Primary down afterward. The inventory itself runs outside the Rust
+lease and does not require an interactive guest login or temporary auto-logon.
