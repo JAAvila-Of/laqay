@@ -261,6 +261,11 @@ with stable focus. The race then prepares three tabs before publishing that
 source, requires independent native evidence of Laqay waiting for its provider,
 and switches from A to B before releasing bytes. The provider records ownership,
 sequence and release/render state on both sides of the switch.
+The source also publishes a materialized metadata marker before advertising its
+delayed PNG. It records the actual sequence after closing that initial
+publication. This does not assume sequence stability: the reference and every
+race stage must confirm it, since Windows can defer sequence changes until
+[rendering occurs](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber).
 
 A later paste into C uses the same clipboard without republishing or clearing
 it. For the pinned v0.1.1 single FIFO paste worker, C's exact PNG is a completion

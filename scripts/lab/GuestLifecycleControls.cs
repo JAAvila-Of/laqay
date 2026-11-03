@@ -68,7 +68,7 @@ public static partial class LaqayGuestDesktop {
     }
     public static object DelayedPngState() {
         LifecycleGuard();if(delayedPng==null) throw new InvalidOperationException("No delayed fixture is active.");
-        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,OwnerMatches=GetClipboardOwner()==delayedPng.Handle,Sequence=GetClipboardSequenceNumber(),PublishedSequence=delayedPng.sequence,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),Rendered=delayedPng.rendered.WaitOne(0),RenderedSequence=delayedPng.renderedSequence,PayloadBytes=delayedPng.payload==null?0:delayedPng.payload.Length,TimedOut=delayedPng.timedOut,Error=delayedPng.error};
+        return new {ProviderPid=Process.GetCurrentProcess().Id,ProviderThreadId=delayedPng.threadId,RequesterPid=delayedPng.requesterPid,RequesterThreadId=delayedPng.requesterThreadId,OwnerMatches=GetClipboardOwner()==delayedPng.Handle,Sequence=GetClipboardSequenceNumber(),PublishedSequence=delayedPng.sequence,Requested=delayedPng.requested.WaitOne(0),Released=delayedPng.release.WaitOne(0),Rendered=delayedPng.rendered.WaitOne(0),RenderedSequence=delayedPng.renderedSequence,MarkerPublished=delayedPng.markerPublished,PayloadBytes=delayedPng.payload==null?0:delayedPng.payload.Length,TimedOut=delayedPng.timedOut,Error=delayedPng.error};
     }
     public static void EndDelayedPng() {
         // Always release the exact owned provider, including after the input deadline.
@@ -79,6 +79,7 @@ public static partial class LaqayGuestDesktop {
         internal readonly ManualResetEvent rendered=new ManualResetEvent(false);
         internal readonly byte[] payload;
         internal uint renderedSequence;
+        internal bool markerPublished;
         internal DelayedPng(byte[] bytes) {payload=bytes;}
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;uint format;
         internal uint threadId,requesterPid,requesterThreadId,sequence;internal bool timedOut;internal string error;
@@ -88,7 +89,16 @@ public static partial class LaqayGuestDesktop {
                     LifecycleGuard();threadId=GetCurrentThreadId();CreateHandle(new CreateParams {Caption="Laqay delayed PNG fixture",Parent=new IntPtr(-3)});
                     format=RegisterClipboardFormatW("PNG");if(format==0) throw new InvalidOperationException("PNG format registration failed.");
                     if(!OpenClipboard(Handle)) throw new InvalidOperationException("The delayed fixture clipboard could not be opened.");
-                    try {if(!EmptyClipboard()) throw new InvalidOperationException("The delayed fixture clipboard could not be cleared.");SetClipboardData(format,IntPtr.Zero);if(!IsClipboardFormatAvailable(format)) throw new InvalidOperationException("The delayed PNG was not advertised.");}
+                    try {
+                        if(!EmptyClipboard()) throw new InvalidOperationException("The delayed fixture clipboard could not be cleared.");
+                        if(payload!=null) {
+                            uint marker=RegisterClipboardFormatW("LaqayLab.SourceMarker");
+                            if(marker==0) throw new InvalidOperationException("The source marker format could not be registered.");
+                            PublishBytes(marker,BitConverter.GetBytes(1));markerPublished=true;
+                        }
+                        SetClipboardData(format,IntPtr.Zero);
+                        if(!IsClipboardFormatAvailable(format)) throw new InvalidOperationException("The delayed PNG was not advertised.");
+                    }
                     finally {CloseClipboard();}
                     sequence=GetClipboardSequenceNumber();ready.Set();Application.Run();
                 }catch(Exception failure){error=failure.GetBaseException().Message;ready.Set();}
@@ -105,17 +115,9 @@ public static partial class LaqayGuestDesktop {
                 // The lifecycle provider only cancels; the race provider supplies
                 // valid bytes without opening the consumer's clipboard lock.
                 if(payload!=null) {
-                    IntPtr memory=IntPtr.Zero;bool transferred=false;
                     try {
-                        memory=GlobalAlloc(2,new UIntPtr((uint)payload.Length));
-                        if(memory==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG buffer could not be allocated.");
-                        IntPtr pointer=GlobalLock(memory);
-                        if(pointer==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG buffer could not be locked.");
-                        try {Marshal.Copy(payload,0,pointer,payload.Length);} finally {GlobalUnlock(memory);}
-                        if(SetClipboardData(format,memory)==IntPtr.Zero) throw new InvalidOperationException("The delayed PNG bytes were not accepted.");
-                        transferred=true;renderedSequence=GetClipboardSequenceNumber();rendered.Set();
+                        PublishBytes(format,payload);renderedSequence=GetClipboardSequenceNumber();rendered.Set();
                     } catch(Exception failure) {error=failure.GetBaseException().Message;}
-                    finally {if(!transferred && memory!=IntPtr.Zero) GlobalFree(memory);}
                 }
                 return;
             }
@@ -124,6 +126,17 @@ public static partial class LaqayGuestDesktop {
                 DestroyHandle();Application.ExitThread();return;
             }
             base.WndProc(ref message);
+        }
+        static void PublishBytes(uint target,byte[] bytes) {
+            IntPtr memory=GlobalAlloc(2,new UIntPtr((uint)bytes.Length));bool transferred=false;
+            if(memory==IntPtr.Zero) throw new InvalidOperationException("The delayed source buffer could not be allocated.");
+            try {
+                IntPtr pointer=GlobalLock(memory);
+                if(pointer==IntPtr.Zero) throw new InvalidOperationException("The delayed source buffer could not be locked.");
+                try {Marshal.Copy(bytes,0,pointer,bytes.Length);} finally {GlobalUnlock(memory);}
+                if(SetClipboardData(target,memory)==IntPtr.Zero) throw new InvalidOperationException("The delayed source bytes were not accepted.");
+                transferred=true;
+            } finally {if(!transferred) GlobalFree(memory);}
         }
         public void Stop() {
             release.Set();if(Handle!=IntPtr.Zero) PostMessageW(Handle,0x10,IntPtr.Zero,IntPtr.Zero);
