@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
-    [Parameter(Mandatory=$true)][ValidateSet('Boot','Old','New','Enable','Verify','Absent','Removed')][string]$Phase,
+    [Parameter(Mandatory=$true)][ValidateSet('Boot','Old','New','Enable','Verify','Absent','Removed','Adverse')][string]$Phase,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [Parameter(Mandatory=$true)][string]$OutputDirectory
 )
@@ -58,6 +58,7 @@ try{
         Verify {Run-Suite 'startup' @{StartupPhase='Verify'}}
         Absent {Run-Suite 'startup' @{StartupPhase='Absent'}}
         Removed {Run-Suite 'portable' @{PortablePhase='Removed'}}
+        Adverse {Run-Suite 'adverse' @{IncludeAdverse=$true}}
     }
     $report.Passed=$true
 }catch{

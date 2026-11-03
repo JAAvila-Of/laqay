@@ -9,12 +9,14 @@ param(
     [switch]$StartGuestForStartup,
     [switch]$IncludeUnc,
     [switch]$IncludeLifecycle,
+    [switch]$IncludeAdverse,
     [ValidateSet('Old','New','Removed')][string]$PortablePhase,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
+if($IncludeAdverse -and ($IncludeUnc -or $IncludeLifecycle -or $PortablePhase -or $StartupPhase -ne 'Explorer')){throw 'Adverse cases require a separate console Explorer suite.'}
 if($PortablePhase -and (-not $CycleId -or $StartupPhase -ne 'Explorer' -or $IncludeUnc -or $IncludeLifecycle -or $StartGuestForStartup)){throw 'Portable phases require their own cycle and running console guest.'}
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
@@ -111,7 +113,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -121,10 +123,11 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase) -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase)
+    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse)) -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse)
         $ErrorActionPreference='Stop'
         if($includeUnc -isnot [bool] -or $includeLifecycle -isnot [bool]){throw 'Guest launch options must be Boolean values.'}
+        if($includeAdverse -isnot [bool]){throw 'The adverse option must be Boolean.'}
         $launcher=@'
 $ErrorActionPreference='Stop'
 & (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy RemoteSigned -File '@@ROOT@@\@@DRIVER@@' -LabId '@@LAB@@' -RunId '@@RUN@@' -ExpectedExecutableSha256 '@@SHA@@' @@EXTRA@@ *> '@@ROOT@@\console.log'
@@ -135,6 +138,7 @@ exit $LASTEXITCODE
         if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
         if($includeUnc){$extra='-IncludeUnc'}
         if($includeLifecycle){$extra='-IncludeLifecycle'}
+        if($includeAdverse){$extra='-IncludeAdverse'}
         if($portablePhase){$driver='Invoke-GuestPortableSession.ps1';$extra="-CycleId '$cycleId' -Phase '$portablePhase'"}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
@@ -232,10 +236,30 @@ exit $LASTEXITCODE
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
+    if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
     if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
+    if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 4 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
+    if($IncludeAdverse){
+        if(@($guest.EditorSenderComparison).Count -ne 0){throw 'An editor failure required a diagnostic comparison; it is not a passing suite.'}
+        if(@($guest.ReferenceHookProof).Count -ne 0){throw 'A passive-hook diagnostic cannot replace an editor failure.'}
+        $editors=@($guest.EditorProof)
+        if($editors.Count -ne 4){throw 'The native editor references are incomplete.'}
+        foreach($control in @('NativeEdit','RichEdit')){
+            $pair=@($editors | Where-Object Control -eq $control)
+            if($pair.Count -ne 2 -or $pair[0].LaqayEnabled -or -not $pair[1].LaqayEnabled){throw 'The disabled/enabled editor comparison is missing.'}
+            foreach($entry in $pair){
+                if(-not $entry.TextMatched){throw 'Native editor text did not match.'}
+                foreach($state in @($entry.Before,$entry.After)){
+                    if(-not $state.Foreground -or -not $state.Focused -or -not $state.InputReady -or ($state.GuiFlags -band 0x1e) -ne 0 -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus outside menu/move mode.'}
+                }
+            }
+        }
+        $stages=@($guest.ClipboardLeaseProof | ForEach-Object Stage)
+        if($stages.Count -ne 3 -or @(Compare-Object @('BeforeKey','AfterKey','AfterObservation') $stages).Count -ne 0 -or @($guest.ClipboardLeaseProof | Where-Object {-not $_.Proof.Held -or -not $_.Proof.ProbeRejected -or $_.Proof.Expired -or $_.Proof.Error -or $_.Proof.OwnerPid -eq $guest.ApplicationPid}).Count -ne 0){throw 'The clipboard-lock test did not preserve its independently observed barrier.'}
+    }
     }
     if($IncludeUnc){
         if(-not $smbVerified -or -not $guest.IncludeUnc -or -not $guest.SmbSigned -or -not $guest.PeerDisconnected -or -not $guest.CredentialRemoved -or $guest.UncFiles.Count -ne 3 -or $guest.ApplicationExitCode -ne 0){throw 'UNC cleanup, signed connection, or application exit validation failed.'}

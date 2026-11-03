@@ -224,3 +224,13 @@ Enterprise evaluation console, with five guest boots, normal application exits,
 restored baseline/preferences/logon configuration, both guests off and owned
 helper/coordinator processes exited. This is a scoped package-cycle result;
 it does not complete every scenario in the desktop integration matrix.
+
+The separate [27-case adverse suite](DESKTOP_TEST_LAB.md#additional-console-adverse-checks)
+passed on 2026-11-03 using published v0.1.1 in the isolated Windows 11 Enterprise
+evaluation console. It completed two guest boots, normal application exit,
+baseline/preferences/logon restoration, both guests off and owned-process exit.
+Native Edit/RichEdit text passed with Laqay disabled and enabled, with confirmed
+child focus outside menu/move mode. The fixture activates its own form without
+synthetic Alt; earlier failed attempts remain failures. These helper controls
+do not establish compatibility with the real applications listed above, and
+the bounded resource samples do not establish sustained-load or leak results.
