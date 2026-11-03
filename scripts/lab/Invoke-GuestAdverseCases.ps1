@@ -202,7 +202,7 @@ function Release-RenderedPng {
 }
 Run-Case 'RenderedPngReferencePaste' {
     $path=New-CaseFolder 'rendered-reference';$window=Open-Folder $path
-    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
+    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;WindowHandle=0;SourceTab=$null;DestinationTab=$null;FenceTab=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
     try{
         [LaqayGuestDesktop]::BeginRenderedDelayedPng()
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
@@ -224,8 +224,10 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         Assert-True ((Find-Folder $path).HWND -eq $window.HWND) 'The pending fixtures are not tabs of one Explorer window.'
     }
     $report.TabClipboardRace.SameWindow=$true
+    $report.TabClipboardRace.WindowHandle=$handle.ToInt64()
     [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9));[LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9))
     Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-a')} 'The source tab was not selected.'
+    $report.TabClipboardRace.SourceTab=[LaqayGuestDesktop]::SelectedTabName($handle)
     [LaqayGuestDesktop]::FocusFolder($handle)
     try{
         $report.ProviderStopped=$false;[LaqayGuestDesktop]::BeginRenderedDelayedPng()
@@ -241,6 +243,7 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         $report.TabClipboardRace.BeforeSwitch=[LaqayGuestDesktop]::DelayedPngState()
         [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,9))
         Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-b')} 'The destination tab did not become active.'
+        $report.TabClipboardRace.DestinationTab=[LaqayGuestDesktop]::SelectedTabName($handle)
         $report.TabClipboardRace.TabChanged=$true
         $held=[LaqayGuestDesktop]::DelayedPngState();$report.TabClipboardRace.AfterSwitch=$held
         Assert-True ($held.Requested -and -not $held.Released -and -not $held.Rendered -and $held.OwnerMatches -and $held.Sequence -eq $held.PublishedSequence -and -not $held.Error -and -not $held.TimedOut) 'The provider was not retained across the tab switch.'
@@ -251,6 +254,7 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         # changing its clipboard sequence or relying on a quiet-time delay.
         [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,9))
         Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-fence')} 'The completion-fence tab did not become active.'
+        $report.TabClipboardRace.FenceTab=[LaqayGuestDesktop]::SelectedTabName($handle)
         [LaqayGuestDesktop]::FocusFolder($handle)
         [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
         Wait-For {@(Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File).Count -eq 1} 'The later same-clipboard paste did not complete.'
