@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 220" role="img" aria-labelledby="title desc">
+  <title id="title">From clipboard to PNG with Ctrl+V</title>
+  <desc id="desc">An illustration of a clipboard image, the Ctrl and V keys, and a PNG saved in the current Explorer folder. This is not a screenshot.</desc>
+  <rect width="860" height="220" rx="12" fill="#f2f6fc"/>
+  <g font-family="Segoe UI,Arial,sans-serif" fill="#233548">
+    <g transform="translate(34 28)">
+      <rect width="178" height="118" rx="7" fill="#dce9fc" stroke="#c1d0e4"/>
+      <rect x="15" y="14" width="148" height="90" rx="3" fill="#fff"/>
+      <path d="m22 96 37-37 26 20 37-42 34 59Z" fill="#1463df" opacity=".8"/>
+      <circle cx="53" cy="40" r="11" fill="#1463df"/>
+      <text x="89" y="157" text-anchor="middle" font-size="15">Clipboard image</text>
+    </g>
+    <path d="M238 87h65m-10-9 10 9-10 9" fill="none" stroke="#69819d" stroke-width="2"/>
+    <g transform="translate(329 60)">
+      <rect width="65" height="51" rx="6" fill="#fff" stroke="#c1d0e4" stroke-width="2"/>
+      <rect x="90" width="51" height="51" rx="6" fill="#fff" stroke="#c1d0e4" stroke-width="2"/>
+      <text x="32" y="32" text-anchor="middle" font-size="17">Ctrl</text>
+      <text x="77" y="32" text-anchor="middle" font-size="16">+</text>
+      <text x="115" y="32" text-anchor="middle" font-size="17">V</text>
+    </g>
+    <path d="M496 87h65m-10-9 10 9-10 9" fill="none" stroke="#69819d" stroke-width="2"/>
+    <g transform="translate(588 28)">
+      <rect width="238" height="118" rx="7" fill="#fff" stroke="#c1d0e4"/>
+      <path d="M0 30h238" stroke="#c1d0e4"/>
+      <circle cx="15" cy="15" r="3" fill="#69819d"/>
+      <text x="30" y="20" font-size="12">Your folder</text>
+      <path d="M20 46h26l10 10v40H20Z" fill="#1463df"/>
+      <path d="M45 46v12h11" fill="#dce9fc"/>
+      <text x="68" y="74" font-size="12">Screenshot_….png</text>
+      <text x="119" y="157" text-anchor="middle" font-size="15">PNG saved</text>
+    </g>
+  </g>
+</svg>
