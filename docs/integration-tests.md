@@ -213,3 +213,11 @@ checks and actual login behavior remain separate desktop validations.
 For the initial diagnostic, compare reported paths and focus against the real UI
 with multiple tabs, address/search fields, rename controls, and virtual folders.
 Never use a cached diagnostic snapshot to suppress a later key event.
+
+The [published portable cycle](DESKTOP_TEST_LAB.md#published-portable-package-cycle)
+adds a separate release-package gate: v0.1.0 to v0.1.1 replacement at the same
+path, persistence of Disabled, exact image paste after re-enabling, real login
+startup enabled/disabled, and removal followed by a clean login observation.
+Preparation is automated in CI; the published-package runtime cycle is pending
+an explicitly authorized isolated Windows 11 run. The earlier development-binary
+results and CI preparation do not establish that this release gate has passed.

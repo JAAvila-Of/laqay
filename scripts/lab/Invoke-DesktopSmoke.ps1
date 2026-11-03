@@ -9,11 +9,13 @@ param(
     [switch]$StartGuestForStartup,
     [switch]$IncludeUnc,
     [switch]$IncludeLifecycle,
+    [ValidateSet('Old','New','Removed')][string]$PortablePhase,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;return}
+if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
+if($PortablePhase -and (-not $CycleId -or $StartupPhase -ne 'Explorer' -or $IncludeUnc -or $IncludeLifecycle -or $StartGuestForStartup)){throw 'Portable phases require their own cycle and running console guest.'}
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
 if($IncludeUnc -and $StartupPhase -ne 'Explorer'){throw 'UNC cases require the Explorer suite.'}
@@ -109,7 +111,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -119,8 +121,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc,[bool]$IncludeLifecycle -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle)
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,[bool]$IncludeUnc,[bool]$IncludeLifecycle,$PortablePhase -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase)
         $ErrorActionPreference='Stop'
         $launcher=@'
 $ErrorActionPreference='Stop'
@@ -132,6 +134,7 @@ exit $LASTEXITCODE
         if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
         if($includeUnc){$extra='-IncludeUnc'}
         if($includeLifecycle){$extra='-IncludeLifecycle'}
+        if($portablePhase){$driver='Invoke-GuestPortableSession.ps1';$extra="-CycleId '$cycleId' -Phase '$portablePhase'"}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
         if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}
@@ -206,7 +209,13 @@ exit $LASTEXITCODE
     }while([DateTime]::UtcNow -lt $limit)
     if(-not $result.Report -or -not $result.Report.FinishedUtc){throw 'The guest smoke suite did not finish within its deadline.'}
     $guest=$result.Report
-    if($StartupPhase -ne 'Explorer'){
+    if($PortablePhase){
+        $required=switch($PortablePhase){Old {@('OldDisabledPreference','OldStartupRoundTrip')} New {@('UpgradePreservesDisabled','UpgradeImagePaste')} Removed {@('RemovedStaysAbsent')}}
+        $names=@($guest.Cases | ForEach-Object Name)
+        if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or $guest.CycleId -ne $CycleId -or $guest.Phase -ne $PortablePhase -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.Passed -or -not $guest.ApplicationClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ForcedTermination -or $guest.SessionId -le 0 -or @($guest.CleanupErrors).Count -or @($guest.Cases).Count -ne @($required).Count -or @(Compare-Object @($required) $names).Count -or @($guest.Cases | Where-Object {-not $_.Passed}).Count -or $result.LastResult -ne 0){throw ('Portable session validation failed: '+$guest.Error)}
+        if($PortablePhase -ne 'Removed' -and -not $guest.ApplicationStarted){throw 'The portable phase did not own its application.'}
+        if($PortablePhase -eq 'Removed' -and $guest.ObservationSeconds -lt 180){throw 'The removed-package observation was incomplete.'}
+    }elseif($StartupPhase -ne 'Explorer'){
         $required=switch($StartupPhase){
             Enable {@('StartupRegistered')}
             Verify {@('LaunchedAtLogin','StartupImagePaste','StartupDisabled')}

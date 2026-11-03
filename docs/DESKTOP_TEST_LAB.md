@@ -430,3 +430,61 @@ This validates close during a blocked clipboard read; it does not claim coverage
 of every encoding/write stage or an actual Windows shutdown. Runtime validation
 passed all fifteen cases in the owned Windows 11 evaluation console, including
 the native context proof, normal application exit, and complete cleanup.
+
+## Published portable package cycle
+
+`Invoke-PortablePackageCycle.ps1` prepares a Primary-only upgrade and removal
+check using the published v0.1.0 and v0.1.1 ZIP bytes. This cycle is **prepared;
+runtime validation is pending**. Previous development-binary tests do not count
+as validation of these release packages. It does not publish or change versions.
+
+Obtain the releases separately and verify their source/release provenance before
+authorizing the administrator process. The harness additionally pins both archive
+and executable hashes. v0.1.0 has no artifact attestations and is mutable; its
+previously reviewed byte hashes are the baseline identity, not an attestation.
+v0.1.1 was built by the recovery workflow: its builder commit differs from the
+application tag. Verify both its standard build attestation and release-source
+binding, plus the immutable release attestation. See [PORTABLE.md](PORTABLE.md).
+
+The administrator invokes the mixed orchestrator outside a RustWork lease:
+
+```powershell
+./scripts/lab/Invoke-PortablePackageCycle.ps1 -LabId <lab-id> -CycleId <new-guid-N> -OldArchivePath <verified-v0.1.0-zip> -NewArchivePath <verified-v0.1.1-zip> -OutputDirectory <new-private-directory> -PythonPath <python-executable> -CoordinatorPath <rust-work.py>
+```
+
+It never requests elevation itself. Obtain explicit permission first. Both guests
+must initially be off; Peer stays off throughout. Primary retains 2 CPUs, 4 GiB
+fixed RAM, its owned disk and private network. Existing admission guards reserve
+3 GiB of host RAM and 40 GiB of free disk. Every boot and runtime phase enters
+the shared RustWork coordinator **before** starting the VM. File, registry and
+shutdown operations run separately. The cycle requires five normal boots and
+allows at most one additional recovery boot. A failed runtime phase attempts
+normal guest shutdown before releasing its lease.
+
+The sequence checks 37 interactive assertions: thirteen Explorer cases on each
+release, the old version's saved Disabled setting and startup registration round
+trip, the upgrade preserving Disabled and subsequently saving an exact PNG,
+six actual login-startup assertions, and a fresh post-removal boot with no app,
+startup entry or preferences for 180 seconds. The startup-disabled observation
+also lasts 180 seconds. Interactive tasks run with the existing limited guest
+token and guarded disposable console; no host input or clipboard is used.
+
+The original development App tree moves to an owned backup outside App. Inventories
+include file hashes and empty directories, reject reparse points and prevent
+recursive deletion of unexpected contents. Old and new packages occupy the same
+path. Original preferences and nonsecret Winlogon values are snapshotted before
+changes. Each temporary guest login has a one-login count and cycle ownership
+marker; its password is neither returned nor logged. Final cleanup removes the
+temporary login password/count/marker, verifies the restored App inventory and
+preferences, removes verified archive inputs, and requires both guests off.
+Changed or partially installed content is preserved and makes cleanup fail rather
+than overwriting it. Inspect private reports and resolve any failed cleanup before
+another run. Reports include normal application exits, task removal, runtime
+receipts, file actions and final guest states. Confirm the elevated helper and
+its coordinator children have exited after collecting the final report.
+
+`Test-LabPreparation.ps1` runs inert archive/file safety cases, compiles the guest
+helpers and parses the scripts in CI without creating a VM or running Laqay.
+That preparation does not prove the interactive cycle passed. This cycle does
+not cover Windows 10, Authenticode signing, every image format, or the complete
+desktop integration matrix.
