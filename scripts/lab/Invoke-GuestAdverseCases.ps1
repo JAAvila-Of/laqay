@@ -100,8 +100,9 @@ try{
                 Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The editor reference could not change input state.'
                 $proof=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Before=$null;After=$null;TextMatched=$false}
                 try{
-                    [LaqayGuestDesktop]::FocusMatrixEditor($rich);$proof.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                    [LaqayGuestDesktop]::FocusMatrixEditor($rich)
                     [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
+                    $proof.Before=[LaqayGuestDesktop]::MatrixEditorState()
                     [LaqayGuestDesktop]::PasteMatrixEditor()
                     Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('Text did not reach '+$prefix+'; Laqay enabled='+$enabled)
                     $proof.TextMatched=$true

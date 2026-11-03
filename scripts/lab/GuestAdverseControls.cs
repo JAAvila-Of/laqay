@@ -152,8 +152,22 @@ public static partial class LaqayGuestDesktop {
         string text=null;matrixEditor.Invoke(delegate(){text=matrixEditor.Text;});return text;
     }
     public static void EndMatrixEditor() {var owned=matrixEditor;matrixEditor=null;if(owned!=null) owned.Dispose();}
-    sealed class MatrixEditor : IDisposable {
+    sealed class MatrixEditor : IDisposable,IMessageFilter {
         [DllImport("user32.dll")] static extern IntPtr GetFocus();
+        [DllImport("user32.dll")] static extern short GetKeyState(int key);
+        readonly List<object> receivedKeys=new List<object>();
+        public bool PreFilterMessage(ref Message message) {
+            // Observe only Ctrl/V queue messages for our two disposable controls.
+            // Always continue normal dispatch; never register a desktop hook.
+            long key=message.WParam.ToInt64();
+            if(receivedKeys.Count<16 && (message.HWnd==plain.Handle || message.HWnd==rich.Handle)
+                && message.Msg>=0x100 && message.Msg<=0x105 && (key==17 || key==86 || key==162 || key==163)) {
+                receivedKeys.Add(new {Message=message.Msg,Key=key,ControlWindow=message.HWnd.ToInt64(),
+                    ControlDown=(GetKeyState(17)&0x8000)!=0,AltDown=(GetKeyState(18)&0x8000)!=0,
+                    ShiftDown=(GetKeyState(16)&0x8000)!=0,Milliseconds=Environment.TickCount});
+            }
+            return false;
+        }
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;Form form;TextBox plain;RichTextBox rich;bool selectedRich;string error;
         public IntPtr Handle {get;private set;}
         public string Text {get{return selectedRich?rich.Text:plain.Text;}}
@@ -162,9 +176,10 @@ public static partial class LaqayGuestDesktop {
         public bool Focused {get{return Target.Focused && GetFocus()==Target.Handle && form.ActiveControl==Target;}}
         public object State() {return new {Rich=selectedRich,Foreground=GetForegroundWindow()==Handle,Focused=Focused,
             ControlWindow=Target.Handle.ToInt64(),FocusWindow=GetFocus().ToInt64(),Visible=Target.Visible,
-            Enabled=Target.Enabled,ReadOnly=Target.ReadOnly,TextLength=Target.TextLength};}
+            Enabled=Target.Enabled,ReadOnly=Target.ReadOnly,TextLength=Target.TextLength,
+            ClipboardSequence=GetClipboardSequenceNumber(),ClipboardUnicode=IsClipboardFormatAvailable(13),ReceivedKeys=receivedKeys.ToArray()};}
         public void Select(bool useRich) {
-            selectedRich=useRich;plain.Clear();rich.Clear();form.ActiveControl=Target;Target.Select();
+            selectedRich=useRich;plain.Clear();rich.Clear();receivedKeys.Clear();form.ActiveControl=Target;Target.Select();
             if(!Target.Focus() || !Focused) throw new InvalidOperationException("The owned editor child could not receive keyboard focus.");
         }
         public void Start() {
@@ -173,7 +188,8 @@ public static partial class LaqayGuestDesktop {
                     MatrixGuard();form=new Form {Text="Laqay disposable editor fixture",Width=600,Height=400};
                     plain=new TextBox {Multiline=true,Dock=DockStyle.Top,Height=120};rich=new RichTextBox {Dock=DockStyle.Fill};
                     form.Controls.Add(rich);form.Controls.Add(plain);
-                    form.Shown+=delegate {Handle=form.Handle;ready.Set();};Application.Run(form);
+                    form.Shown+=delegate {Handle=form.Handle;ready.Set();};
+                    Application.AddMessageFilter(this);try{Application.Run(form);}finally{Application.RemoveMessageFilter(this);}
                 }catch(Exception failure){error=failure.Message;ready.Set();}
                 finally {if(form!=null) form.Dispose();}
             });thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();
