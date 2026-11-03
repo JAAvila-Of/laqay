@@ -241,7 +241,11 @@ inputs. Each step records its index, native foreground/focus/menu state,
 clipboard sequence, publication result and observed PNG count, including on
 failure. The host requires all twelve observations and the existing exact
 image/content checks; the wait limit and number of inputs are unchanged.
-This fixture revision still requires a fresh guest runtime pass.
+The revised fixture passed all 27 cases on 2026-11-03 with published v0.1.1,
+including twelve successful serial observations, two guest boots, normal
+application exit and complete baseline/preferences/logon restoration. Both
+guests were off and owned helper processes had exited after the run. Earlier
+timeouts remain recorded failures; this pass does not establish their cause.
 The shared image-paste helper also records input state before activation,
 before Ctrl+V and after its publication wait. Structural UI Automation focus,
 modifier state and native clipboard-format availability aid diagnosis without
