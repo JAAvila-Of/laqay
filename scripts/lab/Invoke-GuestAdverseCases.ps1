@@ -123,6 +123,25 @@ try{
                     }catch{$alternate.Error=$_.Exception.Message}finally{
                         $alternate.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorSenderComparison+=@($alternate);Save-Report
                     }
+                    if($enabled){
+                        [LaqayGuestDesktop]::ToggleEnabled()
+                        Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 0} 'The passive-hook reference could not disable Laqay.'
+                        foreach($mode in @('DisabledRecovery','PassiveReferenceHook')){
+                            $reference=[pscustomobject]@{Mode=$mode;LaqayEnabled=$false;Before=$null;After=$null;TextMatched=$false;Hook=$null;Error=$null}
+                            try{
+                                [LaqayGuestDesktop]::FocusMatrixEditor($rich)
+                                [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
+                                if($mode -eq 'PassiveReferenceHook'){[LaqayGuestDesktop]::BeginMatrixReferenceHook()}
+                                $reference.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                                [LaqayGuestDesktop]::PasteMatrixEditor()
+                                Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('The '+$mode+' reference did not receive text.') 3
+                                $reference.TextMatched=$true
+                            }catch{$reference.Error=$_.Exception.Message}finally{
+                                $reference.Hook=[LaqayGuestDesktop]::EndMatrixReferenceHook()
+                                $reference.After=[LaqayGuestDesktop]::MatrixEditorState();$report.ReferenceHookProof+=@($reference);Save-Report
+                            }
+                        }
+                    }
                     throw $pasteFailure
                 }
             }
@@ -135,7 +154,7 @@ try{
             Assert-True (@(Compare-Object $before $after).Count -eq 0) 'A non-Explorer editor wrote into an old Explorer fixture.'
         }
     }
-}finally{[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}
+}finally{[LaqayGuestDesktop]::EndMatrixReferenceHook() | Out-Null;[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}
 Run-Case 'IdleResponsivenessSample' {
     $before=[LaqayGuestDesktop]::MatrixResources()
     for($index=0;$index -lt 8;$index++){Start-Sleep -Milliseconds 500;Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The idle application stopped responding.'}

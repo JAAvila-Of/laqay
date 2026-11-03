@@ -238,5 +238,9 @@ availability remained stable. Cleanup and baseline restoration passed.
 The bounded, non-consuming observer now also covers the fixture's root window.
 After an original failure, a diagnostic comparison submits real Ctrl+V from
 the editor's own UI thread and preserves the original failure regardless of
-the comparison's outcome. This revision needs an authorized guest run; the
-cause remains unresolved.
+the comparison's outcome. That comparison reproduced the failure as well.
+The next diagnostic also repeats the disabled reference after failure, then
+compares it with a minimal forwarding-only hook in the disposable guest. This
+reference hook has a ten-second timer, a dedicated message pump, explicit
+unregistration and owned cleanup; it never queues paste work. Diagnostic
+outcomes do not replace the original assertion. The cause remains unresolved.

@@ -11,6 +11,7 @@ using System.Windows.Forms;
 public static partial class LaqayGuestDesktop {
     static ClipboardLease matrixClipboardLease;
     static MatrixEditor matrixEditor;
+    static MatrixReferenceHook matrixReferenceHook;
     static void MatrixGuard() { LifecycleGuard(); }
     public static int MatrixPixel(int index) {
         var colors=new[]{Color.FromArgb(0,0,0,0),Color.FromArgb(64,255,0,0),Color.FromArgb(128,0,255,0),Color.FromArgb(255,0,0,255)};
@@ -162,6 +163,80 @@ public static partial class LaqayGuestDesktop {
         string text=null;matrixEditor.Invoke(delegate(){text=matrixEditor.Text;});return text;
     }
     public static void EndMatrixEditor() {var owned=matrixEditor;matrixEditor=null;if(owned!=null) owned.Dispose();}
+    public static void BeginMatrixReferenceHook() {
+        MatrixGuard();if(matrixEditor==null || matrixReferenceHook!=null) throw new InvalidOperationException("Unexpected reference-hook context.");
+        matrixReferenceHook=new MatrixReferenceHook(matrixEditor.Handle);matrixReferenceHook.Start();
+    }
+    public static object EndMatrixReferenceHook() {
+        var owned=matrixReferenceHook;matrixReferenceHook=null;if(owned==null) return null;
+        owned.Dispose();return owned.State();
+    }
+    sealed class MatrixReferenceHook : IDisposable {
+        delegate IntPtr HookCallback(int code,IntPtr wparam,IntPtr lparam);
+        [StructLayout(LayoutKind.Sequential)] struct HookMessage {
+            public IntPtr window;public uint message;public UIntPtr wparam;public IntPtr lparam;public uint time;public int x,y;public uint unused;
+        }
+        [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetWindowsHookExW(int kind,HookCallback callback,IntPtr module,uint threadId);
+        [DllImport("user32.dll",SetLastError=true)] static extern bool UnhookWindowsHookEx(IntPtr hook);
+        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook,int code,IntPtr wparam,IntPtr lparam);
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandleW(string name);
+        [DllImport("user32.dll")] static extern bool PeekMessageW(out HookMessage message,IntPtr window,uint first,uint last,uint remove);
+        [DllImport("user32.dll")] static extern int GetMessageW(out HookMessage message,IntPtr window,uint first,uint last);
+        [DllImport("user32.dll",SetLastError=true)] static extern bool PostThreadMessageW(uint thread,uint message,UIntPtr wparam,IntPtr lparam);
+        [DllImport("user32.dll")] static extern UIntPtr SetTimer(IntPtr window,UIntPtr id,uint milliseconds,IntPtr callback);
+        [DllImport("user32.dll")] static extern bool KillTimer(IntPtr window,UIntPtr id);
+        readonly IntPtr target;readonly ManualResetEvent ready=new ManualResetEvent(false);
+        Thread thread;HookCallback callback;uint ownerThread;string error;bool expired,removed;
+        int down,up,blocked;
+        public MatrixReferenceHook(IntPtr targetWindow) {target=targetWindow;}
+        IntPtr Forward(int code,IntPtr wparam,IntPtr lparam) {
+            // Chain immediately. Count only Ctrl/V directed at the owned fixture;
+            // no foreground snapshots, clipboard calls, or paste work are queued.
+            var result=CallNextHookEx(IntPtr.Zero,code,wparam,lparam);
+            if(code==0 && GetForegroundWindow()==target) {
+                int key=Marshal.ReadInt32(lparam);
+                if(key==17 || key==86 || key==162 || key==163) {
+                    long message=wparam.ToInt64();
+                    if(message==0x100 || message==0x104) down++;
+                    if(message==0x101 || message==0x105) up++;
+                    if(result!=IntPtr.Zero) blocked++;
+                }
+            }
+            return result;
+        }
+        public void Start() {
+            thread=new Thread(delegate(){
+                IntPtr hook=IntPtr.Zero;UIntPtr timer=UIntPtr.Zero;
+                try {
+                    MatrixGuard();ownerThread=GetCurrentThreadId();HookMessage message;
+                    PeekMessageW(out message,IntPtr.Zero,0,0,0);
+                    callback=Forward;hook=SetWindowsHookExW(13,callback,GetModuleHandleW(null),0);
+                    if(hook==IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                    timer=SetTimer(IntPtr.Zero,UIntPtr.Zero,10000,IntPtr.Zero);
+                    if(timer==UIntPtr.Zero) throw new InvalidOperationException("Cannot bound the reference hook.");
+                    ready.Set();int status;
+                    while((status=GetMessageW(out message,IntPtr.Zero,0,0))>0) {
+                        if(message.message==0x113 && message.wparam==timer) {expired=true;break;}
+                    }
+                    if(status<0) throw new InvalidOperationException("The reference message pump failed.");
+                }catch(Exception failure){error=failure.Message;ready.Set();}
+                finally {
+                    if(timer!=UIntPtr.Zero) KillTimer(IntPtr.Zero,timer);
+                    if(hook!=IntPtr.Zero) {removed=UnhookWindowsHookEx(hook);if(!removed) error="The reference hook did not unregister.";}
+                    GC.KeepAlive(callback);
+                }
+            });thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();
+            if(!ready.WaitOne(3000) || error!=null) {Dispose();throw new InvalidOperationException("Reference hook setup failed: "+error);}
+        }
+        public object State() {return new {Down=down,Up=up,NextHookBlocked=blocked,Expired=expired,Removed=removed,Error=error};}
+        public void Dispose() {
+            if(thread!=null && thread.IsAlive) {
+                if(!PostThreadMessageW(ownerThread,0x12,UIntPtr.Zero,IntPtr.Zero)) throw new InvalidOperationException("Cannot stop the owned reference hook.");
+                if(!thread.Join(3000)) throw new InvalidOperationException("The owned reference hook did not stop.");
+            }
+            ready.Dispose();if(error!=null) throw new InvalidOperationException(error);
+        }
+    }
     sealed class MatrixEditor : IDisposable,IMessageFilter {
         [DllImport("user32.dll")] static extern IntPtr GetFocus();
         [DllImport("user32.dll")] static extern short GetKeyState(int key);
