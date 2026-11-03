@@ -6,6 +6,7 @@ param(
     [switch]$IncludeUnc,
     [switch]$IncludeRdp,
     [switch]$IncludeLifecycle,
+    [switch]$IncludeAdverse,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -14,7 +15,7 @@ $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assem
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
     [Windows.Automation.AutomationElement].Assembly.Location,[Windows.Automation.ControlType].Assembly.Location,
     [Windows.Rect].Assembly.Location,[System.Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
-Add-Type -Path @((Join-Path $PSScriptRoot 'GuestDesktopControls.cs'),(Join-Path $PSScriptRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
+Add-Type -Path @((Join-Path $PSScriptRoot 'GuestDesktopControls.cs'),(Join-Path $PSScriptRoot 'GuestLifecycleControls.cs'),(Join-Path $PSScriptRoot 'GuestAdverseControls.cs')) -ReferencedAssemblies $references
 if($PrepareOnly){
     $typeNodes=$MyInvocation.MyCommand.ScriptBlock.Ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TypeExpressionAst] -or $node -is [System.Management.Automation.Language.TypeConstraintAst]},$true)
     foreach($node in $typeNodes){if($node.TypeName.FullName -ne 'ordered' -and -not $node.TypeName.GetReflectionType()){throw ('Unresolved PowerShell type: '+$node.TypeName.FullName)}}
@@ -38,12 +39,20 @@ if($PrepareOnly){
     $rejected=$false
     try{[LaqayGuestDesktop]::Arm([guid]::NewGuid().ToString('N'))}catch{$rejected=$true}
     if(-not $rejected){throw 'An unowned lab identity was accepted.'}
+    foreach($operation in @({[LaqayGuestDesktop]::EmptyImageClipboard()},{[LaqayGuestDesktop]::MatrixPngClipboard(2)},
+        {[LaqayGuestDesktop]::BeginClipboardLease()},{[LaqayGuestDesktop]::BeginMatrixEditor()},
+        {[LaqayGuestDesktop]::SecondApplication()},{[LaqayGuestDesktop]::MatrixResources()},{[LaqayGuestDesktop]::MatrixApplicationResponsive()},
+        {[LaqayGuestDesktop]::HeldPaste([IntPtr]::Zero)},{[LaqayGuestDesktop]::FocusMatrixEditor($false)},
+        {[LaqayGuestDesktop]::PasteMatrixEditor()},{[LaqayGuestDesktop]::MatrixEditorText()})){
+        $rejected=$false;try{& $operation | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Unarmed adverse controls were accepted.'}
+    }
     Write-Output 'Guest desktop helper compiled; unarmed input and invalid identity were rejected.'
     return
 }
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256){throw 'A lab identity, run identity, and executable SHA-256 are required.'}
 if($IncludeRdp -and $IncludeUnc){throw 'RDP and UNC scenarios use separate transports.'}
 if($IncludeLifecycle -and ($IncludeRdp -or $IncludeUnc)){throw 'Lifecycle cases require a separate owned console run.'}
+if($IncludeAdverse -and ($IncludeLifecycle -or $IncludeRdp -or $IncludeUnc)){throw 'Adverse cases require a separate owned console run.'}
 $armLimit=[DateTime]::UtcNow.AddSeconds(30)
 while($true){
     try{[LaqayGuestDesktop]::Arm($LabId);break}catch{
@@ -59,7 +68,7 @@ $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
-    IncludeLifecycle=[bool]$IncludeLifecycle;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
+    IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
@@ -338,6 +347,10 @@ try{
         Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
     }
     Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
+    if($IncludeAdverse){
+        # Dot-source only this reviewed guest-local driver, sharing owned fixtures and cleanup.
+        . (Join-Path $PSScriptRoot 'Invoke-GuestAdverseCases.ps1')
+    }
     if($IncludeRdp){
         Run-Case 'RdpSessionImagePaste' {
             $script:rdpImages=New-CaseFolder 'rdp-images'
@@ -499,6 +512,7 @@ try{
     }
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message;$report.ErrorDetail=[pscustomobject]@{Id=$_.FullyQualifiedErrorId;Position=$_.InvocationInfo.PositionMessage;Stack=$_.ScriptStackTrace}}finally{
+    try{[LaqayGuestDesktop]::EndClipboardLease();[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}

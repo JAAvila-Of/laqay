@@ -502,3 +502,36 @@ helpers and parses the scripts in CI without creating a VM or running Laqay.
 That preparation does not prove the interactive cycle passed. This cycle does
 not cover Windows 10, Authenticode signing, every image format, or the complete
 desktop integration matrix.
+
+## Additional console adverse checks
+
+`Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 27-case suite:
+the thirteen Explorer regressions plus empty clipboard, externally locked
+clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window
+responsiveness checks, held-key repeat, rapid paste preservation, a real second
+instance, This PC namespace rejection, native Edit/RichEdit fixtures, and idle/
+serial resource samples. This suite is **prepared, not runtime-validated**.
+
+It reuses the byte-pinned published v0.1.1 executable and the original App/
+preference/logon backup and restoration policy. v0.1.0 is staged only as an
+unexecuted file fixture before installing v0.1.1. Primary uses two normal boots,
+with at most one recovery boot, under RustWork; Peer stays off. Explicitly
+authorize the new administrator process before execution. No host input,
+clipboard, window or session is controlled. Normal application exits, all
+27 named cases, four resource records, owned editor/clipboard-lock teardown,
+baseline restoration and both guests off are required.
+
+The editor fixtures are a separate helper window containing native TextBox and
+RichTextBox controls. They do not stand in for Notepad, VS Code, Rider, Terminal
+or a browser. Resource samples record CPU, memory, handles and threads and
+window-message responsiveness; they do not claim a sustained-load benchmark
+or leak test. Clipboard lock rejection may safely finish with one complete PNG
+after release; no staging files or overwritten images are allowed. Rapid input
+may be safely coalesced, while a held V key must create exactly one image.
+
+Preparation compiles the guarded helper, rejects its unarmed controls, checks
+real launch argument binding and independently decodes the synthetic PNG alpha/
+corner pixels without opening a clipboard or desktop. Actual application
+compatibility, deterministic focus/clipboard races, OLE virtual-file transfer,
+full-volume/disconnected-share recovery and long-running resource tests remain
+separate pending portions of the integration matrix. Windows 10 is not covered.

@@ -7,6 +7,7 @@ param(
     [string]$OutputDirectory,
     [string]$PythonPath,
     [string]$CoordinatorPath,
+    [switch]$AdverseOnly,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
@@ -40,9 +41,10 @@ $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
 $worker=Join-Path $PSScriptRoot 'Invoke-PortableRuntimePhase.ps1'
 $files=Join-Path $PSScriptRoot 'Invoke-PortableGuestFiles.ps1'
 $guestRoot='C:\LaqayLab\Portable\'+$CycleId
+$maximumBoots=if($AdverseOnly){3}else{6}
 $session=$null;$touched=$false;$staged=$false;$stageAttempted=$false;$bootAttempts=0
 $report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Process=$PID;Passed=$false;Error=$null;Phases=@();FileActions=@();
-    BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    AdverseOnly=[bool]$AdverseOnly;BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 function Save-Report {$report.BootAttempts=$script:bootAttempts;$report | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
 function Assert-PeerOff {if((Get-VM -Id ([guid]$peer.Id)).State -ne 'Off'){throw 'Peer must remain off throughout the portable cycle.'}}
 function Connect-Guest {
@@ -64,7 +66,7 @@ function Stop-Guest {
 function Run-Phase([string]$phase,[string]$sha){
     Assert-PeerOff
     if((Get-VM -Id $vm.Id).State -eq 'Off'){
-        if($script:bootAttempts -ge 6){throw 'The six-boot limit, including recovery, was reached.'}
+        if($script:bootAttempts -ge $maximumBoots){throw 'The bounded boot limit, including recovery, was reached.'}
         $script:bootAttempts++
     }
     $script:touched=$true
@@ -103,6 +105,13 @@ try{
     Copy-Item -LiteralPath $NewArchivePath -Destination (Join-Path $guestRoot 'new.zip') -ToSession $session
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'PortablePackageFiles.cs') -Destination $guestRoot -ToSession $session
     $stageAttempted=$true;Run-Files 'Stage';$staged=$true
+    if($AdverseOnly){
+        # Reuse byte-pinned package staging and full baseline restoration. Only
+        # the published new executable is run by this separate console suite.
+        Run-Files 'Upgrade'
+        Next-Boot
+        Run-Phase 'Adverse' $newExe
+    }else{
     Next-Boot
     Run-Phase 'Old' $oldExe
     Run-Files 'Upgrade'
@@ -115,6 +124,7 @@ try{
     Run-Files 'Remove'
     Next-Boot
     Run-Phase 'Removed' $newExe
+    }
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     if($touched){
@@ -138,4 +148,4 @@ try{
     $report.FinishedUtc=[DateTime]::UtcNow.ToString('o');Save-Report
 }
 if(-not $report.Passed){throw ('Portable package cycle failed: '+$report.Error+' '+($report.CleanupErrors -join '; '))}
-Write-Output 'Published portable upgrade, paste, startup, removal and baseline restoration passed; both guests are off.'
+Write-Output 'The selected published-package cycle passed with baseline restoration and both guests off.'

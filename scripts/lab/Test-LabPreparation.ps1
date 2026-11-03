@@ -8,6 +8,19 @@ try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
+    foreach($size in @(2,2048)){
+        $bytes=[LaqayGuestDesktop]::MatrixPng($size)
+        $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)
+        try{
+            Assert-True ($bitmap.Width -eq $size -and $bitmap.Height -eq $size) 'Adverse PNG fixture dimensions changed.'
+            $colors=@('00000000','40FF0000','8000FF00','FF0000FF')
+            $points=@(@(0,0),@(($size-1),0),@(0,($size-1)),@(($size-1),($size-1)))
+            for($index=0;$index -lt 4;$index++){
+                Assert-True ($bitmap.GetPixel($points[$index][0],$points[$index][1]).ToArgb().ToString('X8') -eq $colors[$index]) 'Adverse PNG fixture alpha/colors changed.'
+            }
+            if($size -gt 2){Assert-True ($bitmap.GetPixel(100,100).ToArgb() -eq [Drawing.Color]::White.ToArgb()) 'The large fixture interior changed.'}
+        }finally{$bitmap.Dispose();$stream.Dispose()}
+    }
     Assert-True (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32/mstsc.exe')) 'The native Windows RDP client is missing.'
     Add-Type -Path (Join-Path $PSScriptRoot 'GuestSessionQuery.cs')
     Assert-True ([Runtime.InteropServices.Marshal]::SizeOf([type][LaqayGuestWaitChain+Node]) -eq 280 -and [Runtime.InteropServices.Marshal]::OffsetOf([type][LaqayGuestWaitChain+Node],'ThreadId').ToInt32() -eq 12) 'Unexpected native wait-chain ABI layout.'
