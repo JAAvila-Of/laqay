@@ -126,13 +126,24 @@ public static partial class LaqayGuestDesktop {
     public static void FocusMatrixEditor(bool rich) {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No owned editor fixture.");
         var handle=matrixEditor.Handle;
-        matrixEditor.Invoke(delegate(){matrixEditor.Select(rich);});
         Send(new[]{new Input {type=1,value=new Union {key=new Key {vk=18}}},new Input {type=1,value=new Union {key=new Key {vk=18,flags=2}}}});
         SetForegroundWindow(handle);Thread.Sleep(200);
         if(GetForegroundWindow()!=handle) throw new InvalidOperationException("The owned guest editor is not foreground.");
+        // Select the child after activation, which can otherwise restore a different control.
+        matrixEditor.Invoke(delegate(){matrixEditor.Select(rich);});
+        Thread.Sleep(100);RequireMatrixEditorFocus();
+    }
+    static void RequireMatrixEditorFocus() {
+        bool focused=false;matrixEditor.Invoke(delegate(){focused=matrixEditor.Focused;});
+        if(GetForegroundWindow()!=matrixEditor.Handle || !focused) throw new InvalidOperationException("The selected editor control does not own native keyboard focus.");
+    }
+    public static object MatrixEditorState() {
+        MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No editor fixture.");
+        object state=null;matrixEditor.Invoke(delegate(){state=matrixEditor.State();});return state;
     }
     public static void PasteMatrixEditor() {
         MatrixGuard();if(matrixEditor==null || GetForegroundWindow()!=matrixEditor.Handle) throw new InvalidOperationException("The editor fixture lost foreground.");
+        RequireMatrixEditorFocus();
         Send(new[]{new Input {type=1,value=new Union {key=new Key {vk=17}}},new Input {type=1,value=new Union {key=new Key {vk=86}}},
             new Input {type=1,value=new Union {key=new Key {vk=86,flags=2}}},new Input {type=1,value=new Union {key=new Key {vk=17,flags=2}}}});
     }
@@ -142,11 +153,20 @@ public static partial class LaqayGuestDesktop {
     }
     public static void EndMatrixEditor() {var owned=matrixEditor;matrixEditor=null;if(owned!=null) owned.Dispose();}
     sealed class MatrixEditor : IDisposable {
+        [DllImport("user32.dll")] static extern IntPtr GetFocus();
         readonly ManualResetEvent ready=new ManualResetEvent(false);Thread thread;Form form;TextBox plain;RichTextBox rich;bool selectedRich;string error;
         public IntPtr Handle {get;private set;}
         public string Text {get{return selectedRich?rich.Text:plain.Text;}}
         public void Invoke(Action action) {if(form==null || form.IsDisposed) throw new InvalidOperationException("The editor fixture closed unexpectedly.");form.Invoke(action);}
-        public void Select(bool useRich) {selectedRich=useRich;plain.Clear();rich.Clear();form.Activate();if(useRich) rich.Focus();else plain.Focus();}
+        TextBoxBase Target {get{return selectedRich?(TextBoxBase)rich:plain;}}
+        public bool Focused {get{return Target.Focused && GetFocus()==Target.Handle && form.ActiveControl==Target;}}
+        public object State() {return new {Rich=selectedRich,Foreground=GetForegroundWindow()==Handle,Focused=Focused,
+            ControlWindow=Target.Handle.ToInt64(),FocusWindow=GetFocus().ToInt64(),Visible=Target.Visible,
+            Enabled=Target.Enabled,ReadOnly=Target.ReadOnly,TextLength=Target.TextLength};}
+        public void Select(bool useRich) {
+            selectedRich=useRich;plain.Clear();rich.Clear();form.ActiveControl=Target;Target.Select();
+            if(!Target.Focus() || !Focused) throw new InvalidOperationException("The owned editor child could not receive keyboard focus.");
+        }
         public void Start() {
             thread=new Thread(delegate(){
                 try {

@@ -95,9 +95,20 @@ try{
     foreach($rich in @($false,$true)){
         $prefix=if($rich){'RichEdit'}else{'NativeEdit'}
         Run-Case ($prefix+'NativeText') {
-            [LaqayGuestDesktop]::FocusMatrixEditor($rich);[LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
-            [LaqayGuestDesktop]::PasteMatrixEditor()
-            Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} 'Text did not reach the native editor.'
+            foreach($enabled in @($false,$true)){
+                [LaqayGuestDesktop]::ToggleEnabled()
+                Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The editor reference could not change input state.'
+                $proof=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Before=$null;After=$null;TextMatched=$false}
+                try{
+                    [LaqayGuestDesktop]::FocusMatrixEditor($rich);$proof.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                    [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
+                    [LaqayGuestDesktop]::PasteMatrixEditor()
+                    Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('Text did not reach '+$prefix+'; Laqay enabled='+$enabled)
+                    $proof.TextMatched=$true
+                }finally{
+                    $proof.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorProof+=@($proof);Save-Report
+                }
+            }
         }
         Run-Case ($prefix+'ImageDoesNotWrite') {
             $before=@(Get-ChildItem -LiteralPath (Join-Path $root 'data') -Filter '*.png' -Recurse -File | ForEach-Object FullName)

@@ -243,6 +243,18 @@ exit $LASTEXITCODE
     if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
     if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 4 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
     if($IncludeAdverse){
+        $editors=@($guest.EditorProof)
+        if($editors.Count -ne 4){throw 'The native editor references are incomplete.'}
+        foreach($control in @('NativeEdit','RichEdit')){
+            $pair=@($editors | Where-Object Control -eq $control)
+            if($pair.Count -ne 2 -or $pair[0].LaqayEnabled -or -not $pair[1].LaqayEnabled){throw 'The disabled/enabled editor comparison is missing.'}
+            foreach($entry in $pair){
+                if(-not $entry.TextMatched){throw 'Native editor text did not match.'}
+                foreach($state in @($entry.Before,$entry.After)){
+                    if(-not $state.Foreground -or -not $state.Focused -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus.'}
+                }
+            }
+        }
         $stages=@($guest.ClipboardLeaseProof | ForEach-Object Stage)
         if($stages.Count -ne 3 -or @(Compare-Object @('BeforeKey','AfterKey','AfterObservation') $stages).Count -ne 0 -or @($guest.ClipboardLeaseProof | Where-Object {-not $_.Proof.Held -or -not $_.Proof.ProbeRejected -or $_.Proof.Expired -or $_.Proof.Error -or $_.Proof.OwnerPid -eq $guest.ApplicationPid}).Count -ne 0){throw 'The clipboard-lock test did not preserve its independently observed barrier.'}
     }

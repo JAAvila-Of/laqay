@@ -224,3 +224,9 @@ Enterprise evaluation console, with five guest boots, normal application exits,
 restored baseline/preferences/logon configuration, both guests off and owned
 helper/coordinator processes exited. This is a scoped package-cycle result;
 it does not complete every scenario in the desktop integration matrix.
+
+The separate 27-case adverse suite is still pending a complete runtime pass.
+Its native Edit/RichEdit fixtures select the child after foreground activation,
+require that child's native keyboard focus before Ctrl+V, and retain focus and
+text-match evidence with Laqay disabled and enabled. These reference controls
+do not establish compatibility with the real applications listed above.
