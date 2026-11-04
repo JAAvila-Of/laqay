@@ -1,5 +1,6 @@
 # Loaded only by the armed interactive smoke runner. Never run standalone.
 $adverseStart=if($IncludeRealApplications){17}else{13}
+if($IncludeWindowsTerminal){$adverseStart+=2}
 if(-not $IncludeAdverse -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne $adverseStart){throw 'The adverse cases require the owned smoke context.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
 Assert-True ([LaqayGuestDesktop]::SessionProtocol() -eq 0) 'The adverse cases require the disposable console.'
@@ -300,4 +301,5 @@ Run-Case 'SerialPasteResourceSample' {
     $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
 $expectedCases=if($IncludeRealApplications){33}else{29}
+if($IncludeWindowsTerminal){$expectedCases+=2}
 Assert-True ($report.Cases.Count -eq $expectedCases) 'The complete adverse suite did not execute.'

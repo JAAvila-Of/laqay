@@ -1,35 +1,58 @@
 # Loaded only by the armed adverse runner in its exact owned run directory.
 if(-not $IncludeAdverse -or -not $IncludeRealApplications -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 13){throw 'Real application cases require the owned basic context and explicit opt-in.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
-foreach($kind in @('Notepad','Edge')){
+$realKinds=@('Notepad','Edge');if($IncludeWindowsTerminal){$realKinds+=@('Terminal')}
+foreach($kind in $realKinds){
     $entry=[pscustomobject]@{Kind=$kind;Inventory=$null;Info=$null;Text=@();Image=$null;Cleanup=$null;Error=$null}
     $report.RealApplications+=@($entry)
     try{
         Run-Case ($kind+'RealText') {
             $notepadExecutable='';$packageName=''
-            if($kind -eq 'Notepad'){
-                $packages=@(Get-AppxPackage -Name Microsoft.WindowsNotepad | Where-Object {-not $_.IsResourcePackage -and -not $_.IsFramework})
-                Assert-True ($packages.Count -eq 1 -and [string]$packages[0].Status -eq 'Ok' -and $packages[0].Publisher.Contains('O=Microsoft Corporation')) 'The registered Microsoft Notepad package is unavailable.'
+            if($kind -in @('Notepad','Terminal')){
+                $applicationPackage=if($kind -eq 'Notepad'){'Microsoft.WindowsNotepad'}else{'Microsoft.WindowsTerminal'}
+                $registeredExecutable=if($kind -eq 'Notepad'){'Notepad.exe'}else{'WindowsTerminal.exe'}
+                $packages=@(Get-AppxPackage -Name $applicationPackage | Where-Object {-not $_.IsResourcePackage -and -not $_.IsFramework})
+                Assert-True ($packages.Count -eq 1 -and [string]$packages[0].Status -eq 'Ok' -and $packages[0].Publisher.Contains('O=Microsoft Corporation')) 'The registered Microsoft application package is unavailable.'
                 $package=$packages[0];$manifest=Get-AppxPackageManifest -Package $package.PackageFullName
-                $applications=@($manifest.Package.Applications.Application | Where-Object {$_.Executable -match '(^|\\)Notepad\.exe$'})
-                Assert-True ($applications.Count -eq 1) 'The Notepad package entry point is ambiguous.'
+                $applications=@($manifest.Package.Applications.Application | Where-Object {[IO.Path]::GetFileName([string]$_.Executable) -ieq $registeredExecutable})
+                Assert-True ($applications.Count -eq 1) 'The registered package entry point is ambiguous.'
                 $notepadExecutable=Join-Path $package.InstallLocation $applications[0].Executable;$packageName=$package.PackageFullName
                 $entry.Inventory=[pscustomobject]@{Name=$package.Name;Version=[string]$package.Version;Package=$packageName;Executable=$notepadExecutable}
             }
             $entry.Info=[LaqayGuestDesktop]::BeginRealApplication($kind,$root,$notepadExecutable,$packageName)
+            $terminalPath=Join-Path $root 'real-apps/Terminal/receiver.json'
+            if($kind -eq 'Terminal'){
+                Wait-For {(Test-Path -LiteralPath $terminalPath)} 'The owned Terminal receiver did not become ready.'
+                $receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json
+                $entry | Add-Member -NotePropertyName ReceiverReady -NotePropertyValue $receiver
+                Assert-True ($receiver.LabId -eq $LabId -and $receiver.RunId -eq $RunId -and $receiver.OwnerPid -eq $PID -and $receiver.SessionId -eq $report.SessionId -and $receiver.ScriptSha256 -eq $entry.Info.TerminalReceiverScriptSha256 -and $receiver.Ready -and -not $receiver.Error) 'The Terminal receiver identity does not match its owned fixture.'
+                Assert-True ($receiver.ContainedBeforeReady -and $receiver.JobName -ceq $entry.Info.TerminalReceiverJobName -and $receiver.JobName -ceq [LaqayGuestDesktop]::RealTerminalReceiverJobName($LabId,$RunId,$PID)) 'The receiver did not enter the exact pre-created Job before readiness.'
+                $entry | Add-Member -NotePropertyName Receiver -NotePropertyValue ([LaqayGuestDesktop]::BindRealTerminalReceiver([int]$receiver.Pid))
+            }
+            $terminalIndex=0
             foreach($enabled in @($false,$true)){
                 [LaqayGuestDesktop]::ToggleEnabled()
                 Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The real application reference could not change input state.'
-                $text=[pscustomobject]@{LaqayEnabled=$enabled;Source=$null;Before=$null;After=$null;TextMatched=$false;Saved=$false;Error=$null}
+                $text=[pscustomobject]@{LaqayEnabled=$enabled;Source=$null;Before=$null;After=$null;TextMatched=$false;Saved=$false;Receiver=$null;Error=$null}
                 try{
                     [LaqayGuestDesktop]::FocusRealApplication()
-                    [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(17,65))
-                    [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(8))
-                    Wait-For {[LaqayGuestDesktop]::RealApplicationText() -eq ''} 'The real application fixture did not clear its own editor.'
+                    if($kind -ne 'Terminal'){
+                        [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(17,65))
+                        [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(8))
+                        Wait-For {[LaqayGuestDesktop]::RealApplicationText() -eq ''} 'The real application fixture did not clear its own editor.'
+                    }
                     $text.Source=[LaqayGuestDesktop]::RealApplicationTextClipboard('Laqay real application fixture.')
                     $text.Before=[LaqayGuestDesktop]::RealApplicationState()
                     [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(17,86))
-                    Wait-For {[LaqayGuestDesktop]::RealApplicationText() -ceq 'Laqay real application fixture.'} 'The real application did not receive exact clipboard text.'
+                    if($kind -eq 'Terminal'){
+                        Wait-For {([LaqayGuestDesktop]::RealApplicationText()).Contains('Laqay real application fixture.')} 'The Terminal display did not expose its pasted text.'
+                        [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(13))
+                        $terminalIndex++
+                        Wait-For {$receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json;@($receiver.Inputs).Count -eq $terminalIndex} 'The Terminal receiver did not acknowledge the native input.'
+                        $receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json
+                        Assert-True ($receiver.Pid -eq $entry.Receiver.Pid -and $receiver.Inputs[-1].Index -eq $terminalIndex -and $receiver.Inputs[-1].Text -ceq 'Laqay real application fixture.' -and -not $receiver.Error) 'The Terminal receiver did not get exact clipboard text.'
+                        $text.Receiver=$receiver
+                    }else{Wait-For {[LaqayGuestDesktop]::RealApplicationText() -ceq 'Laqay real application fixture.'} 'The real application did not receive exact clipboard text.'}
                     $text.TextMatched=$true
                     if($kind -eq 'Notepad'){
                         [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(17,83))

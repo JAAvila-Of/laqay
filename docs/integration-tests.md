@@ -477,3 +477,113 @@ executable. Earlier failures remain failures; the successful repetition does
 not establish their cause or prove long-term stability. It does not complete
 the other applications, clipboard/publication races, storage failures,
 Windows 10 or sustained-load matrix.
+
+### Optional Windows Terminal reference: 35-case acceptance
+
+Adding -IncludeWindowsTerminal to -AdverseOnly -IncludeRealApplications
+selects 35 cases, including TerminalRealText and TerminalRealImageDoesNotWrite.
+The default 29 cases and the existing 33-case selection keep their prerequisites
+and commands. The full opt-in suite passed on 2026-11-04 UTC using lab source
+09e53aa and the pinned published v0.1.1 executable. Compilation and planning
+alone do not prove compatibility.
+
+The helper revalidates the registered Microsoft Terminal package and executable,
+requires a new owned window/process and pre-resume Job containment, and refuses
+an existing Terminal session before isolating its guest-user LocalState.
+The reference settings explicitly bind Terminal's native paste action to
+Ctrl+V. Terminal 1.18's default action bindings instead include Ctrl+Shift+V
+and Shift+Insert; shells can also handle Ctrl+V themselves. This fixture tests
+Terminal's native action with an explicit isolated binding, not every shell
+or default user profile.
+
+A PowerShell -NoProfile console receiver inside the owned Terminal reads two
+lines with Console.ReadLine, storing pasted content as data without evaluating
+commands. The test sends actual Ctrl+V, observes Terminal's TermControl text
+pattern, and submits each line to that receiver. Independent receipts must
+match the run, receiver PID/session, contained executable and script hash,
+with exact text while Laqay is disabled/enabled. A later Explorer output fences
+the image reference as in the other app cases. A stop marker requests normal
+receiver exit; acceptance requires zero exit codes, empty Jobs, worker shutdown,
+removed fixtures and the original Terminal LocalState fingerprint restored.
+Other package settings are outside this rollback; if first use creates the
+package data container, the test does not claim to remove that whole container.
+
+The first 35-case attempt stopped after 17 passing cases: Terminal rejected an
+existing session before isolating LocalState. Restoration completed, both VMs
+were off and owned controller Jobs were empty. This attempt did not validate
+Terminal. The opt-in task now explicitly hosts the driver in headless conhost
+with handoff disabled, keeping console delegation separate from the application
+under test. Any remaining prior Terminal process still fails the test, with
+process identity diagnostics; it is never adopted or terminated by this guard.
+The second attempt passed eight cases before ActiveTabSelection failed to
+navigate its new Explorer tab. Terminal cases were not reached. Recovery
+restored the baseline and temporary logon, shut down both VMs and left no owned
+controller processes. This does not validate the console-delegation change.
+Navigation now records focus, clipboard metadata, observed address text,
+selected tab and Shell folder paths, including on failure. It requires the
+exact pasted address before submitting Enter, without retrying input or
+skipping cases.
+
+The third attempt passed 15 cases, including tabs and both Notepad references,
+before report publication failed with a sharing violation in Save-Report.
+Terminal was not reached. Recovery restored the baseline and temporary logon,
+both VMs were off and no owned controller processes remained. The exact reader
+that held the original file was not identified.
+
+The guest report and Terminal receiver now publish complete temporary snapshots
+by atomic replacement, retrying only sharing/lock violations for at most two
+seconds. Other errors and persistent locks still fail. Windows PowerShell uses
+an explicit null string for the absent backup path. Inert preparation tests
+exercise both actual publisher functions: Unicode, an old reader retaining a
+complete snapshot, a persistent incompatible reader, unchanged prior output on
+failure, recovery after reader release and refusal to overwrite a temporary
+publication file.
+
+The fourth attempt passed 17 cases and launched the registered Terminal with
+its tagged window and TermControl text target. Binding the PowerShell receiver
+then failed the combined session/start/image/Job check before any reference
+input was sent. Terminal exited normally and its LocalState fingerprint was
+restored; recovery restored the baseline and temporary logon, both VMs were off
+and no owned controller processes remained. The receiver check now reports each
+observed value and retains the initial receiver receipt before binding, with
+protocol identity validated first. Every ownership requirement still applies.
+That attempt did not establish which condition failed; the next attempt
+collected the individual native Job result.
+
+The fifth attempt isolated that failure: the receiver's session, executable and
+start time matched, and the native Job query succeeded, but it was outside the
+frontend Job. The attempt stopped after 17 passing cases and completed recovery
+with both VMs off and no owned controller processes. This establishes the
+failed condition without identifying Windows' internal launch mechanism.
+
+The controller now creates a unique dedicated receiver Job with kill-on-close
+before launching Terminal. After validating its disposable guest context, the
+receiver assigns itself to that existing Job and verifies membership before
+publishing Ready. The controller independently checks that same Job before
+reference input; the frontend retains its original pre-resume containment.
+Both Jobs must become empty before normal cleanup, and receiver Job closure is
+checked. No unrelated process is adopted.
+
+Preparation exercises the actual enrollment code and controller Job operations
+in owned hidden .NET children: missing Job rejection, name collision rejection,
+verified membership, normal exit accounting and kill-on-close. These tests use
+no desktop input, clipboard or VM.
+
+The complete **35-case suite passed on 2026-11-04 UTC** in two normal guest
+boots, including all twelve serial pastes. Independent report and isolation
+validators confirmed the registered Terminal package 1.18.10301.0 (file version
+1.18.2401.30001), both exact receiver inputs with Laqay disabled/enabled,
+image exclusion with the later Explorer fence, and the dedicated receiver Job
+before readiness. Terminal and the receiver exited normally with code 0;
+both Jobs were empty before closing, the receiver Job closed, automation stopped
+and owned fixtures were removed. Terminal LocalState was restored to its
+original fingerprint. Notepad and Edge also exited normally with their state
+and temporary policies restored. The original Laqay baseline and temporary
+logon were restored, both VMs were off and no owned controllers remained.
+The shared host Rust coordinator was unchanged and its queue was not used.
+
+This acceptance uses the published v0.1.1 executable SHA-256
+3e73ff0b35661c23064101049f481dadeceb41bc31db21a0dcba7ec1aaf9632f.
+It covers these installed application versions and the explicit Terminal
+Ctrl+V profile, not default shell bindings, arbitrary profiles, every real
+application, Windows 10 or sustained load. Earlier failures remain failures.

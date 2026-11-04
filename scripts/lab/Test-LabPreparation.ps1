@@ -7,6 +7,7 @@ function Assert-True($value,[string]$message) { if (-not $value) { throw $messag
 try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
+    & (Join-Path $PSScriptRoot 'Test-LabReportSnapshots.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
     . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
     foreach($probe in @(@('Unexpected',$labId,$labId,('C:\LaqayLab\Runs\'+$labId)),@('Prepare',$labId,$labId,'H:\Projects'),@('Restore','invalid',$labId,('C:\LaqayLab\Runs\'+$labId)))){
@@ -49,6 +50,19 @@ try {
     $nativeProbe=[LaqayGuestDesktop]::RealNativeProbeContract()
     Assert-True ($nativeProbe.Client -ceq '30cbe57d-d9d0-452a-ab13-7ac5ac4825ee' -and $nativeProbe.Element -ceq 'd22108aa-8ac5-49a5-837b-37bbb3d7591e' -and $nativeProbe.ClientPrefix -eq 19 -and $nativeProbe.ElementPrefix -eq 8 -and $nativeProbe.Point -eq 8) 'The native automation probe interop contract changed.'
     $realRun='C:\LaqayLab\Runs\'+$labId
+    Assert-True ([LaqayGuestDesktop]::RealFixturePath('Terminal',$realRun) -ceq ($realRun+'\real-apps\Terminal')) 'The Terminal fixture escaped its owned run.'
+    $terminalSettings=[LaqayGuestDesktop]::RealTerminalSettings() | ConvertFrom-Json
+    Assert-True (@($terminalSettings.actions).Count -eq 1 -and $terminalSettings.actions[0].command -ceq 'paste' -and $terminalSettings.actions[0].keys -ceq 'ctrl+v') 'The owned Terminal profile must bind the native paste action to the tested gesture.'
+    Assert-True ([LaqayGuestDesktop]::RealTerminalStatePath('C:\Users\LaqayLab\AppData\Local') -ceq 'C:\Users\LaqayLab\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState') 'Unexpected disposable Terminal state path.'
+    $receiverAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'GuestTerminalReceiver.ps1'),[ref]$null,[ref]$null)
+    Assert-True (-not $receiverAst.Find({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in @('Invoke-Expression','iex')},$true)) 'The Terminal receiver must never evaluate its pasted input.'
+    $readCalls=@($receiverAst.FindAll({param($node) $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $node.Expression.Extent.Text -eq '[Console]' -and $node.Member.Value -eq 'ReadLine'},$true))
+    Assert-True ($readCalls.Count -eq 1) 'The Terminal receiver must read console data through its single bounded reference loop.'
+    $rejected=$false;try{& (Join-Path $PSScriptRoot 'GuestTerminalReceiver.ps1') -LabId invalid -RunId invalid -OwnerPid 0}catch{$rejected=$_.Exception.Message -eq 'Unexpected Terminal receiver identity.'}
+    Assert-True $rejected 'An unowned Terminal receiver reached console or filesystem operations.'
+    $rejected=$false;try{[LaqayGuestDesktop]::BindRealTerminalReceiver(1) | Out-Null}catch{$rejected=$_.Exception.ToString().Contains('Guest desktop controls are not armed or have expired.')}
+    Assert-True $rejected 'An unarmed Terminal receiver process was accepted.'
+    & (Join-Path $PSScriptRoot 'Test-GuestTerminalJob.ps1')
     Assert-True ([LaqayGuestDesktop]::RealNotepadStatePath('C:\Users\LaqayLab\AppData\Local') -ceq 'C:\Users\LaqayLab\AppData\Local\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState') 'Unexpected disposable Notepad state path.'
     foreach($profile in @($env:LOCALAPPDATA,'C:\Users\LaqayLab\AppData\Local\..\Local','H:\Projects')){
         $rejected=$false;try{[LaqayGuestDesktop]::RealNotepadStatePath($profile) | Out-Null}catch{$rejected=$true}

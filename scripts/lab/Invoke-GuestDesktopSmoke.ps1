@@ -8,9 +8,11 @@ param(
     [switch]$IncludeLifecycle,
     [switch]$IncludeAdverse,
     [switch]$IncludeRealApplications,
+    [switch]$IncludeWindowsTerminal,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
 $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
@@ -76,7 +78,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();IncludeRealApplications=[bool]$IncludeRealApplications;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -88,7 +90,25 @@ $preferencesExisted=$false
 $enabledExisted=$false
 $oldEnabled=$null
 $oldEnabledKind=$null
-function Save-Report { $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8 }
+function Save-Report {
+    $temporary=$reportPath+'.tmp'
+    if([IO.File]::Exists($temporary)){throw 'Refusing an existing report publication file.'}
+    try{
+        [IO.File]::WriteAllText($temporary,($report | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($true))
+        $deadline=[DateTime]::UtcNow.AddSeconds(2)
+        while($true){
+            try{
+                if([IO.File]::Exists($reportPath)){[IO.File]::Replace($temporary,$reportPath,[NullString]::Value)}
+                else{[IO.File]::Move($temporary,$reportPath)}
+                break
+            }catch [IO.IOException]{
+                $code=$_.Exception.GetBaseException().HResult -band 0xFFFF
+                if($code -notin @(32,33) -or [DateTime]::UtcNow -ge $deadline){throw}
+                Start-Sleep -Milliseconds 20
+            }
+        }
+    }finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+}
 function Assert-True($condition,[string]$message){if(-not $condition){throw $message}}
 function Wait-For([scriptblock]$condition,[string]$message,[int]$seconds=10){
     $limit=[DateTime]::UtcNow.AddSeconds($seconds)
@@ -162,12 +182,30 @@ function Check-Png([string]$path){
     }finally{$image.Dispose()}
 }
 function Navigate-Tab([IntPtr]$window,[string]$path){
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
-    [LaqayGuestDesktop]::TextClipboard($path)
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,86))
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(13))
-    Wait-For { $null -ne (Find-Folder $path) } 'The new guest tab did not navigate to its test folder.'
-    Start-Sleep -Milliseconds 300
+    $entry=[pscustomobject]@{Window=$window.ToInt64();Path=$path;Stage='BeforeAddress';StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null;Before=$null;AddressFocus=$null;PastedText=$null;Clipboard=$null;After=$null;SelectedTab=$null;ShellWindows=@();Passed=$false;Error=$null}
+    try{
+        $entry.Before=[LaqayGuestDesktop]::FolderInputState($window)
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
+        $entry.Stage='AddressFocused';$entry.AddressFocus=[LaqayGuestDesktop]::FolderInputState($window)
+        [LaqayGuestDesktop]::TextClipboard($path)
+        $entry.Clipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()
+        $entry.Stage='PasteAddress'
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,86))
+        Wait-For {$entry.PastedText=[LaqayGuestDesktop]::FocusedText($window);$entry.PastedText -ceq $path} 'The guest address bar did not receive the exact navigation path.'
+        $entry.Stage='SubmitAddress'
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(13))
+        Wait-For { $null -ne (Find-Folder $path) } 'The new guest tab did not navigate to its test folder.'
+        $entry.Stage='Navigated';$entry.Passed=$true
+        Start-Sleep -Milliseconds 300
+    }catch{$entry.Error=$_.Exception.Message;throw}finally{
+        try{$entry.After=[LaqayGuestDesktop]::FolderInputState($window)}catch{}
+        try{$entry.SelectedTab=[LaqayGuestDesktop]::SelectedTabName($window)}catch{}
+        try{foreach($candidate in @($shell.Windows())){
+            try{$entry.ShellWindows+=@([pscustomobject]@{Window=[long]$candidate.HWND;Path=[string]$candidate.Document.Folder.Self.Path;LocationUrl=[string]$candidate.LocationURL})}catch{}
+        }}catch{}
+        $entry.FinishedUtc=[DateTime]::UtcNow.ToString('o')
+        $report.TabNavigations+=@($entry);Save-Report
+    }
 }
 try{
     Save-Report

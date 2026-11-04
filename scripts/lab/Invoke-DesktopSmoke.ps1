@@ -11,10 +11,12 @@ param(
     [switch]$IncludeLifecycle,
     [switch]$IncludeAdverse,
     [switch]$IncludeRealApplications,
+    [switch]$IncludeWindowsTerminal,
     [ValidateSet('Old','New','Removed')][string]$PortablePhase,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 $ProgressPreference='SilentlyContinue'
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
 if($IncludeAdverse -and ($IncludeUnc -or $IncludeLifecycle -or $PortablePhase -or $StartupPhase -ne 'Explorer')){throw 'Adverse cases require a separate console Explorer suite.'}
@@ -116,7 +118,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestTerminalReceiver.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -126,8 +128,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications)) -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications)
+    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications),([bool]$IncludeWindowsTerminal)) -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications,$includeWindowsTerminal)
         $ErrorActionPreference='Stop'
         if($includeUnc -isnot [bool] -or $includeLifecycle -isnot [bool]){throw 'Guest launch options must be Boolean values.'}
         if($includeAdverse -isnot [bool]){throw 'The adverse option must be Boolean.'}
@@ -144,11 +146,19 @@ exit $LASTEXITCODE
         if($includeLifecycle){$extra='-IncludeLifecycle'}
         if($includeAdverse){$extra='-IncludeAdverse'}
         if($includeRealApplications){$extra+=' -IncludeRealApplications'}
+        if($includeWindowsTerminal -isnot [bool] -or ($includeWindowsTerminal -and -not $includeRealApplications)){throw 'Unexpected Terminal launch selection.'}
+        if($includeWindowsTerminal){$extra+=' -IncludeWindowsTerminal'}
         if($portablePhase){$driver='Invoke-GuestPortableSession.ps1';$extra="-CycleId '$cycleId' -Phase '$portablePhase'"}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
         if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Refusing to replace an existing task.'}
-        $action=New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument ('-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "'+$runRoot+'\Launch.ps1"')
+        $taskArguments='-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "'+$runRoot+'\Launch.ps1"'
+        if($includeWindowsTerminal){
+            # Keep the test driver out of the Terminal instance being isolated.
+            $action=New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\conhost.exe') -Argument ('-ForceNoHandoff --headless -- "'+(Join-Path $PSHOME 'powershell.exe')+'" '+$taskArguments)
+        }else{
+            $action=New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $taskArguments
+        }
         $principal=New-ScheduledTaskPrincipal -UserId ($env:COMPUTERNAME+'\LaqayLab') -LogonType Interactive -RunLevel Limited
         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(7)) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
@@ -250,6 +260,7 @@ exit $LASTEXITCODE
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
     if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage')}
     if($IncludeRealApplications){$required+=@('NotepadRealText','NotepadRealImageDoesNotWrite','EdgeRealText','EdgeRealImageDoesNotWrite')}
+    if($IncludeWindowsTerminal){$required+=@('TerminalRealText','TerminalRealImageDoesNotWrite')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
@@ -304,10 +315,12 @@ exit $LASTEXITCODE
         }
         $stages=@($guest.ClipboardLeaseProof | ForEach-Object Stage)
         $realApps=@($guest.RealApplications)
+        if([bool]$guest.IncludeWindowsTerminal -ne [bool]$IncludeWindowsTerminal){throw 'The Terminal selection changed across the guest boundary.'}
         if([bool]$guest.IncludeRealApplications -ne [bool]$IncludeRealApplications){throw 'The real application selection changed across the guest boundary.'}
         if(-not $IncludeRealApplications -and $realApps.Count){throw 'Real applications ran without the explicit extension.'}
         if($IncludeRealApplications){
-        if($realApps.Count -ne 2 -or @(Compare-Object @('Notepad','Edge') @($realApps.Kind)).Count){throw 'The actual Notepad and Edge results are incomplete.'}
+        $realKinds=@('Notepad','Edge');if($IncludeWindowsTerminal){$realKinds+=@('Terminal')}
+        if($realApps.Count -ne $realKinds.Count -or @(Compare-Object $realKinds @($realApps.Kind)).Count){throw 'The selected real application results are incomplete.'}
         $realBytes=[Text.Encoding]::Unicode.GetBytes('Laqay real application fixture.'+[char]0)
         $realHasher=[Security.Cryptography.SHA256]::Create()
         try{$realHash=[BitConverter]::ToString($realHasher.ComputeHash($realBytes)).Replace('-','')}finally{$realHasher.Dispose()}
@@ -322,6 +335,21 @@ exit $LASTEXITCODE
             if($real.Kind -eq 'Edge' -and $info.Pid -in @($info.PriorEdgeProcesses | ForEach-Object Pid)){throw 'The real Edge test reused a pre-existing process.'}
             if($real.Kind -eq 'Notepad' -and (-not $info.NotepadState.Isolated -or -not $cleanup.NotepadStateRestored -or $info.NotepadState.OriginalFingerprint -notmatch '^(absent|[A-Fa-f0-9]{64})$' -or $cleanup.NotepadStateFingerprint -cne $info.NotepadState.OriginalFingerprint)){throw 'Notepad LocalState was not isolated and restored with its original fingerprint.'}
             $texts=@($real.Text)
+            if($real.Kind -eq 'Terminal'){
+                $receiverJobName='Local\LaqayTerminalReceiver-'+$LabId+'-'+$RunId+'-'+$proof.ProviderPid
+                if(-not $real.ReceiverReady.Ready -or $real.ReceiverReady.Pid -ne $real.Receiver.Pid -or $real.ReceiverReady.OwnerPid -ne $proof.ProviderPid -or $real.ReceiverReady.ScriptSha256 -ne $info.TerminalReceiverScriptSha256 -or @($real.ReceiverReady.Inputs).Count -ne 0){throw 'The initial Terminal receiver receipt does not precede the reference input.'}
+                if($info.TerminalReceiverJobName -cne $receiverJobName -or $real.Receiver.JobName -cne $receiverJobName -or -not $real.ReceiverReady.ContainedBeforeReady -or $real.ReceiverReady.JobName -cne $receiverJobName -or -not $cleanup.TerminalReceiverJobClosed){throw 'The dedicated Terminal receiver Job was not established before readiness or closed.'}
+                if($info.PackageIdentity -ne $info.ExpectedPackage -or $info.PackageIdentity -ne $real.Inventory.Package -or $real.Inventory.Name -ne 'Microsoft.WindowsTerminal'){throw 'Terminal did not use the registered runtime package.'}
+                if(-not $info.TerminalState.Isolated -or $info.TerminalSettingsSha256 -notmatch '^[A-Fa-f0-9]{64}$' -or -not $cleanup.TerminalStateRestored -or $cleanup.NotepadStateFingerprint -cne $info.TerminalState.OriginalFingerprint -or $cleanup.TerminalReceiverExitCode -ne 0 -or -not $real.Receiver.OwnedJob){throw 'Terminal state or its contained receiver did not restore/close normally.'}
+                $receiver=$cleanup.TerminalReceiverReceiptJson | ConvertFrom-Json
+                if(-not $receiver.ContainedBeforeReady -or $receiver.JobName -cne $receiverJobName){throw 'The finished receiver lost its pre-readiness Job evidence.'}
+                if(-not $receiver.Ready -or -not $receiver.Finished -or $receiver.Error -or $receiver.LabId -ne $LabId -or $receiver.RunId -ne $RunId -or $receiver.SessionId -ne $guest.SessionId -or $receiver.OwnerPid -ne $proof.ProviderPid -or $receiver.Pid -ne $real.Receiver.Pid -or $receiver.ScriptSha256 -ne $info.TerminalReceiverScriptSha256 -or $receiver.Executable -ne $real.Receiver.Executable -or @($receiver.Inputs).Count -ne 2){throw 'The finished Terminal receiver does not match the owned input endpoint.'}
+                for($terminalIndex=0;$terminalIndex -lt 2;$terminalIndex++){
+                    if($receiver.Inputs[$terminalIndex].Index -ne ($terminalIndex+1) -or $receiver.Inputs[$terminalIndex].Text -cne 'Laqay real application fixture.'){throw 'Terminal did not receive both exact native text references.'}
+                    $observed=$texts[$terminalIndex].Receiver
+                    if($observed.Pid -ne $receiver.Pid -or $observed.ScriptSha256 -ne $receiver.ScriptSha256 -or @($observed.Inputs).Count -ne ($terminalIndex+1) -or $observed.Inputs[-1].Text -cne 'Laqay real application fixture.'){throw 'A Terminal input acknowledgement is incomplete.'}
+                }
+            }
             if($texts.Count -ne 2 -or $texts[0].LaqayEnabled -or -not $texts[1].LaqayEnabled){throw 'The real application disabled/enabled references are incomplete.'}
             foreach($text in $texts){
                 if(-not $text.TextMatched -or $text.Error -or ($real.Kind -eq 'Notepad' -and -not $text.Saved)){throw 'Real application text or its owned Notepad save did not match.'}
