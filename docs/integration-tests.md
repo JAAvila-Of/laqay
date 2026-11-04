@@ -1,5 +1,32 @@
 # Windows integration validation
 
+## Acceptance policy
+
+Release acceptance prioritizes core risks: correct Explorer destination and
+input ownership, native file/text/virtual-file precedence, clipboard and image
+validation, cancellation, collision preservation, failed-write cleanup, recovery
+and lifecycle/resource ownership. These requirements remain in force.
+
+Applications provide representative non-interference checks rather than an
+exhaustive compatibility list. Existing bounded Notepad, Edge, Terminal and
+native Edit/RichEdit results remain useful references. VS Code (T08) and Rider
+(T09) are supplementary spot checks, currently unexecuted; neither requires a
+dedicated deep automation fixture or independently blocks release. A spot check
+compares native paste with Laqay disabled/enabled and checks that image paste
+does not create Explorer output. Any observed interference still requires
+investigation; supplementary coverage does not waive the core behavior.
+
+The existing 29/33/35-case suites retain every case and assertion. This policy
+does not turn absent tests into passes or establish compatibility with every
+application, shell profile or version. Windows 10 and Windows 11 platform
+coverage and the remaining core-risk matrix stay separate requirements.
+
+The writer regression for generation cancellation between occupied-name
+publication attempts exercises the real file writer and Activity generation:
+the original file survives, the cancelled operation leaves no staging/output
+file, and a new valid request can publish without replacing the original.
+This deterministic test is not a desktop focus or clipboard-race acceptance.
+
 ## Current automated coverage
 
 The full matrix remains incomplete. The normal tray application has passed
@@ -124,7 +151,9 @@ Start with Windows is unavailable, and preferences are never read or written.
 CI covers normal-mode persistence and startup registration with the actual app
 through native commands; executing it at login still needs separate validation.
 Check icon disappearance and owned process exit after every desktop block.
-Run the matrix on Windows 10 and Windows 11 and record the OS build and results.
+Run applicable core scenarios on Windows 10 and Windows 11 and record the OS
+build and results. Application spot checks follow the representative policy
+above; record unexecuted references explicitly.
 
 ## Preparing real preference trials
 
@@ -180,8 +209,8 @@ checks and actual login behavior remain separate desktop validations.
 | T05 | Multiple copied files | Native paste |
 | T06 | Text clipboard | Native behavior |
 | T07 | Notepad | Native paste |
-| T08 | VS Code | Native paste |
-| T09 | Rider | Native paste |
+| T08 | VS Code (supplementary spot check) | Native paste |
+| T09 | Rider (supplementary spot check) | Native paste |
 | T10 | Windows Terminal | Native paste |
 | T11 | Browser | Native paste |
 | T12 | Explorer address bar | Native paste |
