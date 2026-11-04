@@ -359,6 +359,55 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_generation_stops_collision_retries_and_recovers() {
+        let directory = TestDirectory::new();
+        let original = directory.0.join(time().filename(0));
+        fs::write(&original, b"original").unwrap();
+        let activity = crate::activity::Activity::new(true);
+        let ticket = activity.ticket().unwrap();
+        let mut validations = 0;
+        let result = create_screenshot_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"cancelled image"),
+            || {
+                validations += 1;
+                if !activity.valid(ticket) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Cancelled generation",
+                    ));
+                }
+                // Revoke the first authorization before its occupied name
+                // forces another publication attempt. Re-enabling is a new ticket.
+                activity.set_enabled(false);
+                activity.set_enabled(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(validations, 2);
+        assert_eq!(fs::read(&original).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+        let current = activity.ticket().unwrap();
+        assert!(!activity.valid(ticket));
+        let output = create_screenshot_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"new image"),
+            || {
+                assert!(activity.valid(current));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(output.file_name().unwrap(), time().filename(1).as_str());
+        assert_eq!(fs::read(output).unwrap(), b"new image");
+        assert_eq!(fs::read(original).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
+    }
+
+    #[test]
     fn pause_and_resume_during_staging_cannot_revive_the_write() {
         let directory = TestDirectory::new();
         let activity = crate::activity::Activity::new(true);
