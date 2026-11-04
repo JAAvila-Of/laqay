@@ -253,3 +253,46 @@ reading control text. A failed paste additionally retains clipboard fixture
 diagnostics; it remains a failure and is not retried automatically. The inert
 preparation gate exercises the actual serial invocation expressions with a
 Shell-shaped object, requiring native-handle binding before the unarmed guard.
+
+The next adverse revision adds `RenderedPngReferencePaste` and
+`TabSwitchCancelsPendingImage` (29 cases total). Both passed with the complete
+29-case suite on 2026-11-04 UTC using published v0.1.1. A valid magenta PNG first proves the delayed-render source can publish
+with stable focus. The race then prepares three tabs before publishing that
+source, requires independent native evidence of Laqay waiting for its provider,
+and switches from A to B before releasing bytes. The provider records ownership,
+sequence and release/render state on both sides of the switch.
+The source also publishes a materialized metadata marker before advertising its
+delayed PNG. It records the actual sequence after closing that initial
+publication. This does not assume sequence stability: the reference and every
+race stage must confirm it, since Windows can defer sequence changes until
+[rendering occurs](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboardsequencenumber).
+
+A later paste into C uses the same clipboard without republishing or clearing
+it. For the pinned v0.1.1 single FIFO paste worker, C's exact PNG is a completion
+fence for the earlier request. A and B must then contain no files, including
+staging files. After retiring the provider, a fresh, visually distinct image
+must paste correctly into B. This avoids treating a quiet-time delay or missing
+source bytes as cancellation evidence. The fence must be revised if the worker
+becomes concurrent. The rendering handler follows
+[WM_RENDERFORMAT](https://learn.microsoft.com/en-us/windows/win32/dataxchg/wm-renderformat):
+it supplies its memory handle without opening the consumer's clipboard lock.
+The existing exit-with-pending-work provider retains its cancel-only behavior.
+
+The new held-read cases run before the editor regressions so their evidence is
+retained even if a later case fails; all 29 cases remain required. The first
+expanded run stopped in `NativeEditNativeText` with Laqay disabled, before the
+held-read cases were reached. Its alternate sender-thread diagnostic succeeded,
+but the original run remains failed and does not establish a cause.
+Editor text sources now publish materialized `CF_UNICODETEXT` memory with exact
+native readback, hash, length, owner and pre-input sequence evidence. This
+removes a possible OLE/STA source dependency while retaining the original
+SendInput caller and disabled/enabled text assertions. The revised fixture
+passed all four NativeEdit/RichEdit disabled/enabled references in that run,
+with native source evidence and no diagnostic sender substitution.
+Native thread-context samples confirmed the held clipboard read; Windows wait
+chain traversal did not confirm it. Source ownership and sequence remained
+stable through rendering and the later completion-fence paste. The run used
+two guest boots, normal application exit, full baseline/preferences/logon
+restoration, both guests off and no remaining owned helper processes.
+This covers a tab change during clipboard reading, not every encoding or
+publication race in T29–T30 or the real-application compatibility matrix.

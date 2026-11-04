@@ -164,7 +164,7 @@ exit $LASTEXITCODE
             [pscustomobject]@{State=$task.State.ToString();LastResult=$info.LastTaskResult;Report=$report}
         }
         $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'progress.json') -Encoding UTF8
-        if($IncludeLifecycle -and $result.Report.PendingClipboard.Requested -and -not $result.Report.ProviderStopped -and -not $result.Report.FinishedUtc -and -not $pendingVerified){
+        if(($IncludeLifecycle -or $IncludeAdverse) -and $result.Report.PendingClipboard.Requested -and -not $result.Report.ProviderStopped -and -not $result.Report.FinishedUtc -and -not $pendingVerified){
             $pending=$result.Report.PendingClipboard
             $proofJson=Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$result.Report.ApplicationPid,$pending.ProviderPid,$pending.ProviderThreadId,$result.Report.SessionId -ScriptBlock {
                 param($labId,$runId,$runRoot,$appPid,$providerPid,$providerThread,$sessionId)
@@ -236,13 +236,22 @@ exit $LASTEXITCODE
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
-    if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample')}
+    if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
     if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
     if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 4 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
     if($IncludeAdverse){
+        $race=$guest.TabClipboardRace;$proof=$summary.PendingWaitProof
+        if($race.WindowHandle -eq 0 -or $race.SourceTab -notlike '*pending-tab-a*' -or $race.DestinationTab -notlike '*pending-tab-b*' -or $race.FenceTab -notlike '*pending-tab-fence*'){throw 'The selected tabs and their shared native window were not recorded.'}
+        if(-not $pendingVerified -or -not $proof.Confirmed -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or -not $race.SameWindow -or -not $race.TabChanged -or -not $race.FenceVerified -or -not $race.OriginalFoldersEmpty -or -not $race.FreshPasteVerified -or -not $race.ProviderStopped){throw 'The held clipboard tab-switch proof and recovery are incomplete.'}
+        foreach($state in @($race.Reference,$race.AfterRender,$race.AfterFence)){
+            if(-not $state.Requested -or -not $state.Released -or -not $state.Rendered -or -not $state.MarkerPublished -or -not $state.OwnerMatches -or $state.PayloadBytes -le 0 -or $state.Sequence -ne $state.PublishedSequence -or $state.Error -or $state.TimedOut){throw 'The delayed PNG did not supply valid bytes with unchanged clipboard sequence.'}
+        }
+        foreach($state in @($race.BeforeSwitch,$race.AfterSwitch)){
+            if(-not $state.Requested -or $state.Released -or $state.Rendered -or -not $state.OwnerMatches -or $state.Error -or $state.TimedOut -or $state.Sequence -ne $state.PublishedSequence -or $state.ProviderPid -ne $proof.ProviderPid -or $state.ProviderThreadId -ne $proof.ProviderThreadId -or $proof.ApplicationPid -ne $guest.ApplicationPid -or $proof.SessionId -ne $guest.SessionId){throw 'The observed clipboard barrier did not survive the tab switch.'}
+        }
         if(@($guest.EditorSenderComparison).Count -ne 0){throw 'An editor failure required a diagnostic comparison; it is not a passing suite.'}
         if(@($guest.ReferenceHookProof).Count -ne 0){throw 'A passive-hook diagnostic cannot replace an editor failure.'}
         $imagePastes=@($guest.ImagePastes)
@@ -261,11 +270,16 @@ exit $LASTEXITCODE
         }
         $editors=@($guest.EditorProof)
         if($editors.Count -ne 4){throw 'The native editor references are incomplete.'}
+        $unicodeFixture=[Text.Encoding]::Unicode.GetBytes('Laqay external editor fixture.'+[char]0)
+        $unicodeHasher=[Security.Cryptography.SHA256]::Create()
+        try{$unicodeHash=[BitConverter]::ToString($unicodeHasher.ComputeHash($unicodeFixture)).Replace('-','')}finally{$unicodeHasher.Dispose()}
         foreach($control in @('NativeEdit','RichEdit')){
             $pair=@($editors | Where-Object Control -eq $control)
             if($pair.Count -ne 2 -or $pair[0].LaqayEnabled -or -not $pair[1].LaqayEnabled){throw 'The disabled/enabled editor comparison is missing.'}
             foreach($entry in $pair){
                 if(-not $entry.TextMatched){throw 'Native editor text did not match.'}
+                $source=$entry.Source
+                if($source.Format -ne 13 -or -not $source.ReadbackMatched -or $source.PayloadSha256 -ne $unicodeHash -or $source.ByteLength -ne $unicodeFixture.Length -or $source.Window -eq 0 -or $source.OwnerThread -le 0 -or $source.OwnerPid -ne $proof.ProviderPid -or $source.Sequence -ne $entry.Before.ClipboardSequence){throw 'The editor Unicode source was not fully materialized and verified before input.'}
                 foreach($state in @($entry.Before,$entry.After)){
                     if(-not $state.Foreground -or -not $state.Focused -or -not $state.InputReady -or ($state.GuiFlags -band 0x1e) -ne 0 -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus outside menu/move mode.'}
                 }
@@ -298,7 +312,7 @@ exit $LASTEXITCODE
     $summary.GuestReport=$guest
     $summary.Passed=$true
 }catch{$summary.Error=$_.Exception.Message}finally{
-    if($IncludeLifecycle -and $registered -and $session -and -not $summary.Passed){try{
+    if(($IncludeLifecycle -or $IncludeAdverse) -and $registered -and $session -and -not $summary.Passed){try{
         Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot -ScriptBlock {
             param($labId,$runId,$runRoot)
             $path=Join-Path $runRoot 'pending-abort.json'

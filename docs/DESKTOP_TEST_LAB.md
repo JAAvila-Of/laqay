@@ -505,15 +505,22 @@ desktop integration matrix.
 
 ## Additional console adverse checks
 
-`Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 27-case suite:
+`Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 29-case suite:
 the thirteen Explorer regressions plus empty clipboard, externally locked
 clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window
 responsiveness checks, held-key repeat, rapid paste preservation, a real second
 instance, This PC namespace rejection, native Edit/RichEdit fixtures, and idle/
-serial resource samples. This suite **passed all 27 cases on 2026-11-03** using
+serial resource samples, a held-PNG positive reference and a held-read tab-switch
+race with recovery. The earlier suite **passed all 27 cases on 2026-11-03** using
 published v0.1.1 in the isolated Windows 11 Enterprise evaluation console. The
 normal two-boot cycle completed application exit, baseline/preferences/logon
 restoration, both guest shutdowns and owned helper/coordinator process exit.
+The expanded **29-case suite passed on 2026-11-04 UTC**, including the positive
+rendered-PNG reference, independently confirmed held clipboard read, tab-switch
+cancellation, same-clipboard completion fence and fresh recovery paste. Native
+thread-context samples confirmed the wait; wait-chain traversal did not. All
+four editor off/on references passed with materialized Unicode source evidence.
+Normal two-boot restoration and owned-process/guest shutdown checks also passed.
 
 The lock fixture retires old input requests, opens the clipboard with its
 own message-only window, and records exact window/process/thread ownership plus
@@ -529,7 +536,7 @@ unexecuted file fixture before installing v0.1.1. Primary uses two normal boots,
 with at most one recovery boot, under RustWork; Peer stays off. Explicitly
 authorize the new administrator process before execution. No host input,
 clipboard, window or session is controlled. Normal application exits, all
-27 named cases, four resource records, owned editor/clipboard-lock teardown,
+29 named cases, four resource records, owned editor/clipboard-lock teardown,
 baseline restoration and both guests off are required.
 
 Before queuing any new boot, the mixed orchestrator waits up to two minutes for

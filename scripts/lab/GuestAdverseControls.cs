@@ -12,7 +12,46 @@ public static partial class LaqayGuestDesktop {
     static ClipboardLease matrixClipboardLease;
     static MatrixEditor matrixEditor;
     static MatrixReferenceHook matrixReferenceHook;
+    static NativeWindow matrixTextSource;
+    static uint matrixTextThread;
     static void MatrixGuard() { LifecycleGuard(); }
+    public static byte[] MatrixUnicodeFixture(string text) {
+        if(text==null || text.Length>256 || text.IndexOf('\0')>=0) throw new ArgumentException("A bounded Unicode fixture without embedded nulls is required.");
+        return System.Text.Encoding.Unicode.GetBytes(text+"\0");
+    }
+    public static object MatrixEditorTextClipboard(string text) {
+        MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No owned editor fixture.");
+        var bytes=MatrixUnicodeFixture(text);
+        if(matrixTextSource==null) {
+            matrixTextThread=GetCurrentThreadId();matrixTextSource=new NativeWindow();
+            matrixTextSource.CreateHandle(new CreateParams {Caption="Laqay native Unicode source",Parent=new IntPtr(-3)});
+        }
+        if(matrixTextThread!=GetCurrentThreadId()) throw new InvalidOperationException("The native Unicode source changed publisher thread.");
+        IntPtr memory=GlobalAlloc(2,new UIntPtr((uint)bytes.Length));bool transferred=false,opened=false;
+        if(memory==IntPtr.Zero) throw new InvalidOperationException("The Unicode buffer could not be allocated.");
+        try {
+            IntPtr pointer=GlobalLock(memory);
+            if(pointer==IntPtr.Zero) throw new InvalidOperationException("The Unicode buffer could not be locked.");
+            try {Marshal.Copy(bytes,0,pointer,bytes.Length);} finally {GlobalUnlock(memory);}
+            for(int attempt=0;attempt<10 && !opened;attempt++){opened=OpenClipboard(matrixTextSource.Handle);if(!opened) Thread.Sleep(20);}
+            if(!opened || !EmptyClipboard() || SetClipboardData(13,memory)==IntPtr.Zero) throw new InvalidOperationException("The native Unicode source could not publish.");
+            transferred=true;
+            IntPtr actual=GetClipboardData(13);
+            if(actual==IntPtr.Zero || GlobalSize(actual).ToUInt64()<(ulong)bytes.Length) throw new InvalidOperationException("The published Unicode buffer is incomplete.");
+            pointer=GlobalLock(actual);
+            if(pointer==IntPtr.Zero) throw new InvalidOperationException("The Unicode readback could not be locked.");
+            try {
+                var readback=new byte[bytes.Length];Marshal.Copy(pointer,readback,0,readback.Length);
+                for(int i=0;i<bytes.Length;i++) if(readback[i]!=bytes[i]) throw new InvalidOperationException("The native Unicode readback differs from its fixture.");
+            } finally {GlobalUnlock(actual);}
+        } finally {if(opened) CloseClipboard();if(!transferred) GlobalFree(memory);}
+        uint pid;uint thread=GetWindowThreadProcessId(GetClipboardOwner(),out pid);
+        if(GetClipboardOwner()!=matrixTextSource.Handle || thread!=matrixTextThread || pid!=(uint)Process.GetCurrentProcess().Id)
+            throw new InvalidOperationException("The native Unicode source owner changed before input.");
+        string hash;using(var sha=System.Security.Cryptography.SHA256.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-","");
+        return new {Format=13,ByteLength=bytes.Length,Characters=text.Length,ReadbackMatched=true,PayloadSha256=hash,
+            Window=matrixTextSource.Handle.ToInt64(),OwnerPid=pid,OwnerThread=thread,Sequence=GetClipboardSequenceNumber()};
+    }
     public static int MatrixPixel(int index) {
         var colors=new[]{Color.FromArgb(0,0,0,0),Color.FromArgb(64,255,0,0),Color.FromArgb(128,0,255,0),Color.FromArgb(255,0,0,255)};
         if(index<0 || index>=colors.Length) throw new ArgumentOutOfRangeException("index");
@@ -163,7 +202,11 @@ public static partial class LaqayGuestDesktop {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No editor fixture.");
         string text=null;matrixEditor.Invoke(delegate(){text=matrixEditor.Text;});return text;
     }
-    public static void EndMatrixEditor() {var owned=matrixEditor;matrixEditor=null;if(owned!=null) owned.Dispose();}
+    public static void EndMatrixEditor() {
+        var owned=matrixEditor;matrixEditor=null;
+        try {if(owned!=null) owned.Dispose();}
+        finally {if(matrixTextSource!=null){matrixTextSource.DestroyHandle();matrixTextSource=null;matrixTextThread=0;}}
+    }
     public static void BeginMatrixReferenceHook() {
         MatrixGuard();if(matrixEditor==null || matrixReferenceHook!=null) throw new InvalidOperationException("Unexpected reference-hook context.");
         matrixReferenceHook=new MatrixReferenceHook(matrixEditor.Handle);matrixReferenceHook.Start();
