@@ -304,7 +304,8 @@ exit $LASTEXITCODE
         foreach($real in $realApps){
             $info=$real.Info;$cleanup=$real.Cleanup
             if($real.Error -or -not $info.Ready -or -not $info.LauncherAssignedBeforeResume -or $info.Kind -ne $real.Kind -or $info.Pid -le 0 -or $info.Pid -in @($guest.ApplicationPid,$proof.ProviderPid) -or $info.Window -eq 0 -or -not $info.FileVersion -or $info.ExecutableSha256 -notmatch '^[A-Fa-f0-9]{64}$'){throw 'The installed real application identity or containment did not pass.'}
-            if(-not $cleanup.Passed -or $cleanup.Forced -or $cleanup.Pid -ne $info.Pid -or $cleanup.ExitCode -ne 0 -or $cleanup.ActiveBeforeJobClose -ne 0 -or -not $cleanup.FixtureRemoved){throw 'A real application did not close normally with its Job and owned fixture cleared.'}
+            if(-not $info.Automation -or $info.Automation.Apartment -ne 'MTA' -or $info.Automation.ThreadId -le 0){throw 'The real application did not use its dedicated MTA automation worker.'}
+            if(-not $cleanup.Passed -or $cleanup.Forced -or $cleanup.Pid -ne $info.Pid -or $cleanup.ExitCode -ne 0 -or $cleanup.ActiveBeforeJobClose -ne 0 -or -not $cleanup.FixtureRemoved -or -not $cleanup.AutomationStopped -or $cleanup.CleanupError){throw 'A real application did not close normally with its Job, automation worker and owned fixture cleared.'}
             if($real.Kind -eq 'Notepad' -and ($info.PackageIdentity -ne $info.ExpectedPackage -or $info.PackageIdentity -ne $real.Inventory.Package -or $real.Inventory.Name -ne 'Microsoft.WindowsNotepad')){throw 'The actual Notepad runtime package did not match the current guest inventory.'}
             if($real.Kind -eq 'Edge' -and $info.ProfileScope -ne 'Owned run directory'){throw 'Edge did not use the owned temporary profile scope.'}
             $texts=@($real.Text)

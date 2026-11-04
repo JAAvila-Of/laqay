@@ -39,6 +39,30 @@ public static partial class LaqayGuestDesktop {
             "</title><label for=\"laqay-real-input\">Laqay real application input</label><textarea id=\"laqay-real-input\" aria-label=\"Laqay real application input\" style=\"display:block;width:600px;height:300px\"></textarea></html>";
     }
     public static object RealApplicationAbi() {return new {Startup=Marshal.SizeOf(typeof(RealStartup)),Process=Marshal.SizeOf(typeof(RealProcess)),Accounting=Marshal.SizeOf(typeof(RealAccounting))};}
+    public static object RealAutomationContract() {
+        var worker=new RealAutomation();int caller=Thread.CurrentThread.ManagedThreadId;
+        int first=worker.Call("First",()=>Thread.CurrentThread.ManagedThreadId);
+        bool mta=worker.Call("Apartment",()=>Thread.CurrentThread.GetApartmentState()==ApartmentState.MTA);
+        bool same=worker.Call("Second",()=>Thread.CurrentThread.ManagedThreadId==first);
+        bool propagated=false;try{worker.Call<int>("Failure",()=>{throw new InvalidOperationException("Expected worker rejection.");});}catch(InvalidOperationException){propagated=true;}
+        bool stopped=worker.Stop();bool rejected=false;try{worker.Call("Stopped",()=>0);}catch(InvalidOperationException){rejected=true;}
+        return new {Separate=first!=caller,Mta=mta,Stable=same,ExceptionPropagated=propagated,Stopped=stopped,RejectedAfterStop=rejected};
+    }
+    sealed class RealAutomation {
+        readonly System.Collections.Concurrent.BlockingCollection<Action> queue=new System.Collections.Concurrent.BlockingCollection<Action>();
+        readonly Thread thread;internal string Stage,Failure;
+        public RealAutomation() {thread=new Thread(()=>{foreach(var action in queue.GetConsumingEnumerable()) action();});thread.IsBackground=true;thread.Name="Laqay guest real app automation";thread.SetApartmentState(ApartmentState.MTA);thread.Start();}
+        public T Call<T>(string stage,Func<T> action) {
+            if(queue.IsAddingCompleted) throw new InvalidOperationException("Real application automation has stopped.");
+            var result=new System.Threading.Tasks.TaskCompletionSource<T>();
+            queue.Add(()=>{Stage=stage;try{result.SetResult(action());}catch(Exception failure){Failure=Stage+": "+failure;result.SetException(failure);}});
+            bool completed;try{completed=result.Task.Wait(10000);}catch(AggregateException){return result.Task.GetAwaiter().GetResult();}
+            if(!completed) throw new TimeoutException("Real application automation timed out at "+Stage+".");
+            return result.Task.GetAwaiter().GetResult();
+        }
+        public object Info() {return new {ThreadId=thread.ManagedThreadId,Apartment=thread.GetApartmentState().ToString(),Stage=Stage,Failure=Failure};}
+        public bool Stop() {queue.CompleteAdding();return thread.Join(5000);}
+    }
     static RealApplication OwnedRealApplication() {
         MatrixGuard();if(realApplication==null) throw new InvalidOperationException("No real application is owned.");
         realApplication.RequireReady();return realApplication;
@@ -73,6 +97,7 @@ public static partial class LaqayGuestDesktop {
         readonly string root,runId,target,launcher,expectedPackage,tag,arguments;
         readonly DateTime started=DateTime.UtcNow;
         Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
+        RealAutomation automation;
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
@@ -136,11 +161,12 @@ public static partial class LaqayGuestDesktop {
                 packageIdentity=name.ToString();
             }
             if(Hash(target)!=sha) throw new InvalidOperationException("The executable changed during launch.");
-            ready=true;string last=null;
+            automation=new RealAutomation();ready=true;string last=null;
             while(DateTime.UtcNow<until) {
                 try {Focus();if(kind=="Edge" && !Directory.Exists(Path.Combine(root,"profile","Default"))) throw new InvalidOperationException("The isolated Edge profile was not created.");return;}
                 catch(ElementNotAvailableException failure){last=failure.Message;}
                 catch(InvalidOperationException failure){last=failure.Message;}
+                catch{ready=false;throw;}
                 Thread.Sleep(100);
             }
             ready=false;throw new InvalidOperationException("The real editor did not become ready: "+last);
@@ -174,8 +200,11 @@ public static partial class LaqayGuestDesktop {
             try {bool contained;return IsProcessInJob(process,ownedJob,out contained) && contained;} finally {CloseHandle(process);}
         }
         AutomationElement Target() {
+            automation.Stage="Target.FromHandle";
             var rootElement=AutomationElement.FromHandle(window);
+            automation.Stage="Target.FindTabs";
             if(kind=="Notepad" && rootElement.FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)).Count>1) throw new InvalidOperationException("Notepad restored unrelated tabs.");
+            automation.Stage="Target.FindEditors";
             var candidates=rootElement.FindAll(TreeScope.Descendants,kind=="Edge"?(Condition)new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.NameProperty,"Laqay real application input")):
                 new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Document),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit)));
             AutomationElement targetElement=null;
@@ -191,26 +220,40 @@ public static partial class LaqayGuestDesktop {
             for(int depth=0;focused!=null && depth<16;depth++) {if(Automation.Compare(focused,targetElement)) return true;focused=TreeWalker.ControlViewWalker.GetParent(focused);}return false;
         }
         public void Focus() {
-            RequireReady();if(GetForegroundWindow()!=window){ShowWindowAsync(window,3);SetForegroundWindow(window);Thread.Sleep(200);}
-            Target().SetFocus();RequireFocus();
+            automation.Call("Focus",()=>{FocusCore();return 0;});
         }
-        public void RequireFocus() {RequireReady();if(GetForegroundWindow()!=window || !FocusMatches(Target())) throw new InvalidOperationException("The real application editor lost native/semantic focus.");}
+        void FocusCore() {
+            RequireReady();if(GetForegroundWindow()!=window){ShowWindowAsync(window,3);SetForegroundWindow(window);Thread.Sleep(200);}
+            var targetElement=Target();automation.Stage="Focus.SetFocus";targetElement.SetFocus();RequireFocusCore();
+        }
+        public void RequireFocus() {automation.Call("RequireFocus",()=>{RequireFocusCore();return 0;});}
+        void RequireFocusCore() {RequireReady();if(GetForegroundWindow()!=window || !FocusMatches(Target())) throw new InvalidOperationException("The real application editor lost native/semantic focus.");}
         public string ReadText() {
-            RequireFocus();object pattern;var element=Target();
+            return automation.Call("ReadText",()=>ReadTextCore());
+        }
+        string ReadTextCore() {
+            RequireFocusCore();object pattern;var element=Target();
             if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern)) return ((ValuePattern)pattern).Current.Value;
             return ((TextPattern)element.GetCurrentPattern(TextPattern.Pattern)).DocumentRange.GetText(-1).TrimEnd('\r','\n');
         }
         object[] TargetDiagnostics() {
+            if(automation==null) return new object[0];
+            try{return automation.Call("Diagnostics",()=>TargetDiagnosticsCore());}catch(Exception failure){return new object[]{new {Error=failure.ToString()}};}
+        }
+        object[] TargetDiagnosticsCore() {
             var results=new System.Collections.Generic.List<object>();
             try {
                 if(window==IntPtr.Zero || app==null || app.HasExited) return results.ToArray();
                 var elements=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Document),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)));
                 foreach(AutomationElement element in elements) {if(results.Count>=24) break;var value=element.Current;results.Add(new {Class=value.ClassName,Type=value.ControlType.ProgrammaticName,Id=value.AutomationId,Enabled=value.IsEnabled,Offscreen=value.IsOffscreen,Focusable=value.IsKeyboardFocusable,Pid=value.ProcessId});}
-            }catch(Exception failure){results.Add(new {Error=failure.GetType().Name});}
+            }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=TargetDiagnostics()};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info()};}
         public object State() {
+            return automation.Call("State",()=>StateCore());
+        }
+        object StateCore() {
             RequireReady();var element=Target();var gui=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
             if(!GetGUIThreadInfo(0,ref gui)) throw new InvalidOperationException("Cannot inspect real application native focus.");
             return new {Pid=appPid,Foreground=GetForegroundWindow()==window,Focused=FocusMatches(element),GuiFlags=gui.flags,MenuOwner=gui.menuOwner.ToInt64(),
@@ -227,6 +270,7 @@ public static partial class LaqayGuestDesktop {
             foreach(string path in Directory.GetFileSystemEntries(directory)) {var attrs=File.GetAttributes(path);if((attrs&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A fixture entry is a reparse point.");if((attrs&FileAttributes.Directory)!=0) SafeTree(path);}
         }
         public object Stop() {
+            bool automationStopped=automation==null || automation.Stop();
             bool forced=false;int? exit=null;uint remaining=0;
             try {
                 if(app!=null && !app.HasExited) {uint pid;GetWindowThreadProcessId(window,out pid);if(pid==(uint)appPid) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero);}
@@ -249,7 +293,7 @@ public static partial class LaqayGuestDesktop {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,Passed=!forced && exit==0 && cleanupError==null};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,Passed=!forced && exit==0 && cleanupError==null && automationStopped};
         }
     }
 }

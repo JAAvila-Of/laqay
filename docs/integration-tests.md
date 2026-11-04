@@ -345,3 +345,17 @@ of the expected executable even when their titles do not match. The launcher
 uses the parent run directory as its working directory, and fixture cleanup
 errors are retained alongside the original test failure. A fresh 33-case pass
 is still required.
+
+The third attempt identified the expected Notepad executable, runtime package
+and tagged window, then failed with `E_UNEXPECTED` during UI Automation before
+any real-application paste. Notepad exited normally and its fixture was removed;
+final recovery restored the baseline/logon settings and stopped both guests.
+Real-application UI Automation now runs on a dedicated persistent MTA thread,
+separate from the helper's STA Shell/clipboard work, following Microsoft's
+[threading guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading).
+Automation elements remain on that thread; callers receive plain values.
+Calls have a ten-second bound, diagnostics retain the stage and full exception,
+and acceptance requires the automation thread to stop during cleanup. Native
+clipboard publication and SendInput remain on their original helper thread.
+This design correction does not establish the cause of the earlier COM error;
+the 33-case guest result remains pending.

@@ -39,6 +39,8 @@ try {
     Assert-True $invalidUnicodeRejected 'Embedded Unicode terminators were accepted.'
     $realAbi=[LaqayGuestDesktop]::RealApplicationAbi()
     Assert-True ($realAbi.Startup -eq 104 -and $realAbi.Process -eq 24 -and $realAbi.Accounting -eq 48) 'Unexpected real application process/Job ABI.'
+    $automation=[LaqayGuestDesktop]::RealAutomationContract()
+    Assert-True ($automation.Separate -and $automation.Mta -and $automation.Stable -and $automation.ExceptionPropagated -and $automation.Stopped -and $automation.RejectedAfterStop) 'The real application automation worker lost MTA isolation, exception propagation or shutdown.'
     $realRun='C:\LaqayLab\Runs\'+$labId
     Assert-True ([LaqayGuestDesktop]::RealFixturePath('Edge',$realRun) -ceq ($realRun+'\real-apps\Edge')) 'The real application fixture escaped its exact run.'
     foreach($invalidRoot in @($realRun+'\..\other','C:\Users\LaqayLab','H:\Projects')){
