@@ -75,7 +75,7 @@ share between complete staging and publication, then checks fresh-image
 recovery. Normal Cargo commands do not create shares. Local/self-hosted
 execution is refused. The `laqay-share-validation` artifact records native
 outcome, residue and controller cleanup separately; see the
-[withdrawal scope](integration-tests.md#isolated-smb-withdrawal-regression-ci-pending).
+[withdrawal scope](integration-tests.md#isolated-smb-withdrawal-regression).
 
 The normal-mode application check uses `Invoke-PreferencesProbe.ps1 -Automated`
 for Enabled and Startup. That mode requires a GitHub-hosted runner and refuses
