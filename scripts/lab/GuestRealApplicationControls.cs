@@ -75,7 +75,7 @@ public static partial class LaqayGuestDesktop {
         Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
-        readonly System.Collections.Generic.HashSet<uint> candidatePids=new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
         static string Quote(string value) {if(value.IndexOfAny(new[]{'"','\0','\r','\n'})>=0) throw new ArgumentException("Unsafe fixture argument.");return "\""+value+"\"";}
         static string Hash(string path) {using(var input=File.OpenRead(path)) using(var hash=System.Security.Cryptography.SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(input)).Replace("-","");}
         public RealApplication(string name,string runRoot,string notepad,string package) {
@@ -86,7 +86,7 @@ public static partial class LaqayGuestDesktop {
                 target=Path.GetFullPath(notepad);
                 if(!target.StartsWith(packageRoot+"\\",StringComparison.OrdinalIgnoreCase) || !String.Equals(Path.GetFileName(target),"Notepad.exe",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Unexpected registered Notepad executable.");
                 expectedPackage=package;launcher=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","notepad.exe");
-                document=Path.Combine(root,"Laqay-"+runId+".txt");tag=Path.GetFileName(document);arguments=Quote(document);
+                document=Path.Combine(root,"Laqay-"+runId+".txt");tag=Path.GetFileNameWithoutExtension(document);arguments=Quote(document);
             } else {
                 foreach(var hive in new[]{Registry.LocalMachine,Registry.CurrentUser}) foreach(string suffix in new[]{"",@"\Recommended"})
                     using(var key=hive.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge"+suffix))
@@ -107,7 +107,8 @@ public static partial class LaqayGuestDesktop {
             File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
             ownedJob=NewJob();launcherJob=ownedJob;
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
-            if(!CreateProcessW(launcher,new StringBuilder(Quote(launcher)+" "+arguments),IntPtr.Zero,IntPtr.Zero,false,4,IntPtr.Zero,root,ref startup,out process)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot launch the installed application.");
+            string workingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(root));
+            if(!CreateProcessW(launcher,new StringBuilder(Quote(launcher)+" "+arguments),IntPtr.Zero,IntPtr.Zero,false,4,IntPtr.Zero,workingDirectory,ref startup,out process)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot launch the installed application.");
             try {
                 bootstrap=Process.GetProcessById((int)process.pid);var keepHandle=bootstrap.Handle;
                 bool contained;
@@ -147,15 +148,16 @@ public static partial class LaqayGuestDesktop {
         void FindWindow() {
             EnumWindows((candidate,parameter)=> {
                 var title=new StringBuilder(512);GetWindowTextW(candidate,title,title.Capacity);
-                if(title.ToString().IndexOf(tag,StringComparison.OrdinalIgnoreCase)<0) return true;
+                bool tagged=title.ToString().IndexOf(tag,StringComparison.OrdinalIgnoreCase)>=0;
                 uint pid;GetWindowThreadProcessId(candidate,out pid);Process found=null;
                 try {
                     found=Process.GetProcessById((int)pid);
                     string image=found.MainModule.FileName;
-                    if(candidatePids.Add(pid)) candidates.Add(new {Pid=pid,Image=image,Session=found.SessionId,Started=found.StartTime.ToUniversalTime().ToString("o"),MatchesTarget=String.Equals(image,target,StringComparison.OrdinalIgnoreCase)});
-                    if(found.SessionId!=Process.GetCurrentProcess().SessionId || found.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !String.Equals(image,target,StringComparison.OrdinalIgnoreCase)) return true;
+                    bool matchesTarget=String.Equals(image,target,StringComparison.OrdinalIgnoreCase);
+                    if((tagged || matchesTarget) && candidates.Count<32 && candidateStates.Add(pid+":"+title)) candidates.Add(new {Pid=pid,Image=image,Title=title.ToString(),TagMatched=tagged,Session=found.SessionId,Started=found.StartTime.ToUniversalTime().ToString("o"),MatchesTarget=matchesTarget});
+                    if(!tagged || found.SessionId!=Process.GetCurrentProcess().SessionId || found.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !matchesTarget) return true;
                     app=found;found=null;appPid=(int)pid;window=candidate;return false;
-                }catch(ArgumentException){return true;}catch(System.ComponentModel.Win32Exception failure){if(candidatePids.Add(pid)) candidates.Add(new {Pid=pid,Error=failure.NativeErrorCode});return true;}
+                }catch(ArgumentException){return true;}catch(System.ComponentModel.Win32Exception failure){if(tagged && candidates.Count<32 && candidateStates.Add(pid+":error")) candidates.Add(new {Pid=pid,Error=failure.NativeErrorCode});return true;}
                 finally {if(found!=null) found.Dispose();}
             },IntPtr.Zero);
         }
@@ -242,11 +244,12 @@ public static partial class LaqayGuestDesktop {
                 if(app!=null){if(!app.WaitForExit(5000)){forced=true;app.Kill();if(!app.WaitForExit(5000)) throw new InvalidOperationException("The exact verified real application survived cleanup.");}exit=app.ExitCode;app.Dispose();app=null;}
                 if(bootstrap!=null){if(!bootstrap.WaitForExit(5000)) throw new InvalidOperationException("The exact launcher survived Job cleanup.");bootstrap.Dispose();bootstrap=null;}
             }
-            if(created) {
+            string cleanupError=null;
+            try {if(created) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
-            }
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),Passed=!forced && exit==0};
+            }}catch(Exception failure){cleanupError=failure.Message;}
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,Passed=!forced && exit==0 && cleanupError==null};
         }
     }
 }

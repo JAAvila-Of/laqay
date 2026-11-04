@@ -334,3 +334,14 @@ native/semantic focus, modifier state, PNG availability, Shell folder path,
 application responsiveness and A/B/C file counts even on failure. The single
 Ctrl+V and its publication wait are unchanged; an input-context prerequisite
 failure cannot count as a successful cancellation.
+
+The second expanded attempt passed the thirteen basic cases, then failed to
+identify the tagged Notepad window before any real-application paste. Its
+fixture directory was still in use during cleanup; final recovery restored the
+baseline and logon settings, stopped both guests and left no owned helpers.
+Window matching now uses the unique filename stem while retaining executable,
+package, session and process-start checks. Bounded diagnostics include windows
+of the expected executable even when their titles do not match. The launcher
+uses the parent run directory as its working directory, and fixture cleanup
+errors are retained alongside the original test failure. A fresh 33-case pass
+is still required.

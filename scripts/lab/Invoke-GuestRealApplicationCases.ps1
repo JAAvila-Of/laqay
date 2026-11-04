@@ -70,7 +70,7 @@ foreach($kind in @('Notepad','Edge')){
         }
     }catch{$entry.Error=$_.Exception.Message;throw}finally{
         try{if(-not $entry.Info){$entry.Info=[LaqayGuestDesktop]::RealApplicationDiagnostics()}}catch{}
-        $entry.Cleanup=[LaqayGuestDesktop]::EndRealApplication();Save-Report
-        if($entry.Cleanup -and -not $entry.Cleanup.Passed){throw 'The real application required forced or incomplete cleanup.'}
+        try{$entry.Cleanup=[LaqayGuestDesktop]::EndRealApplication()}finally{Save-Report}
+        if($entry.Cleanup -and -not $entry.Cleanup.Passed -and -not $entry.Error){throw 'The real application required forced or incomplete cleanup.'}
     }
 }
