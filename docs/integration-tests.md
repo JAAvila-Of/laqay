@@ -299,7 +299,9 @@ publication race in T29–T30 or the real-application compatibility matrix.
 
 The optional `-AdverseOnly -IncludeRealApplications` cycle adds four cases
 (`NotepadRealText`, `NotepadRealImageDoesNotWrite`, `EdgeRealText`, and
-`EdgeRealImageDoesNotWrite`) for 33 total. Its guest runtime result is pending.
+`EdgeRealImageDoesNotWrite`) for 33 total. A Windows 11 guest run passed all
+33 cases with independent verification; the final acceptance follows the
+earlier failed attempts recorded below.
 The default adverse suite remains 29 cases, and Cargo/CI commands do not require
 these applications. The extension requires registered Microsoft Notepad and an
 installed Edge executable in the guest; it fails when a prerequisite is missing.
@@ -447,3 +449,31 @@ Shell path, fresh provider state and A/B/C file counts even if the request wait
 fails. It must establish a fresh, stable provider and a ready source folder
 before its single Ctrl+V. No extra input, stabilization delay or longer request
 wait is added. All 33 cases remain mandatory.
+
+### Real-application extension: 33 cases verified
+
+On November 4, 2026, an opt-in guest cycle passed all 33 cases with the
+published v0.1.1 executable, two normal boots and no recovery boot. Microsoft
+Notepad 11.2312.18.0 and Edge 152.0.4191.66 received exact clipboard text with
+Laqay disabled and enabled. Notepad saved the exact document, and both image
+cases preserved previous files with exactly one later Explorer recovery PNG.
+Both applications exited normally with code zero, empty owned Jobs, stopped
+automation workers and removed fixtures/profiles. The original Notepad
+`LocalState` fingerprint was restored; the administrative controller verified
+the original Edge policy values/types and removed its temporary key.
+
+The tab race established the initial input and fresh provider, retained the
+same clipboard owner/sequence across the tab change, completed through the
+same-clipboard fence and recovered with a new image. Native thread contexts
+confirmed the consumer's clipboard read; WCT did not confirm that wait. The
+twelve serial pastes each produced exactly one new image. Independent report
+checks confirmed the required case set, sources, contexts, executable/script
+hashes, real Jobs, resource admission, baseline/logon restoration, both guests
+off and no remaining owned helpers. The shared host Rust coordinator was
+unchanged and its queue was not used by the private VM-only controller.
+
+This is one bounded acceptance of these application versions and the pinned
+executable. Earlier failures remain failures; the successful repetition does
+not establish their cause or prove long-term stability. It does not complete
+the other applications, clipboard/publication races, storage failures,
+Windows 10 or sustained-load matrix.
