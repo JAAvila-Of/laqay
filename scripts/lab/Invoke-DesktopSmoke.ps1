@@ -10,6 +10,7 @@ param(
     [switch]$IncludeUnc,
     [switch]$IncludeLifecycle,
     [switch]$IncludeAdverse,
+    [switch]$IncludeRealApplications,
     [ValidateSet('Old','New','Removed')][string]$PortablePhase,
     [switch]$PrepareOnly
 )
@@ -17,6 +18,7 @@ $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
 if($IncludeAdverse -and ($IncludeUnc -or $IncludeLifecycle -or $PortablePhase -or $StartupPhase -ne 'Explorer')){throw 'Adverse cases require a separate console Explorer suite.'}
+if($IncludeRealApplications -and -not $IncludeAdverse){throw 'Real applications require an explicit adverse extension.'}
 if($PortablePhase -and (-not $CycleId -or $StartupPhase -ne 'Explorer' -or $IncludeUnc -or $IncludeLifecycle -or $StartGuestForStartup)){throw 'Portable phases require their own cycle and running console guest.'}
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256 -or -not $OutputDirectory){throw 'Lab/run IDs, expected executable SHA-256, and a private output directory are required.'}
 if($StartupPhase -ne 'Explorer' -and -not $CycleId){throw 'A startup cycle identity is required.'}
@@ -49,7 +51,8 @@ $peerCredential=$null
 $peerFixtureReserved=$false
 $smbVerified=$false
 $pendingVerified=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;
+$edgeScopeAttempted=$false
+$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;EdgePoliciesPrepared=(-not $IncludeRealApplications);EdgePoliciesRestored=(-not $IncludeRealApplications);EdgePolicyPreparation=$null;EdgePolicyRestoration=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
@@ -113,7 +116,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -123,11 +126,12 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse)) -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse)
+    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications)) -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications)
         $ErrorActionPreference='Stop'
         if($includeUnc -isnot [bool] -or $includeLifecycle -isnot [bool]){throw 'Guest launch options must be Boolean values.'}
         if($includeAdverse -isnot [bool]){throw 'The adverse option must be Boolean.'}
+        if($includeRealApplications -isnot [bool] -or ($includeRealApplications -and -not $includeAdverse)){throw 'The real application option must be Boolean and explicitly adverse.'}
         $launcher=@'
 $ErrorActionPreference='Stop'
 & (Join-Path $PSHOME 'powershell.exe') -NoProfile -STA -ExecutionPolicy RemoteSigned -File '@@ROOT@@\@@DRIVER@@' -LabId '@@LAB@@' -RunId '@@RUN@@' -ExpectedExecutableSha256 '@@SHA@@' @@EXTRA@@ *> '@@ROOT@@\console.log'
@@ -139,6 +143,7 @@ exit $LASTEXITCODE
         if($includeUnc){$extra='-IncludeUnc'}
         if($includeLifecycle){$extra='-IncludeLifecycle'}
         if($includeAdverse){$extra='-IncludeAdverse'}
+        if($includeRealApplications){$extra+=' -IncludeRealApplications'}
         if($portablePhase){$driver='Invoke-GuestPortableSession.ps1';$extra="-CycleId '$cycleId' -Phase '$portablePhase'"}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
@@ -149,6 +154,13 @@ exit $LASTEXITCODE
         Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
     }
     $registered=$true
+    if($IncludeRealApplications){
+        . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
+        $edgeScopeAttempted=$true
+        $summary.EdgePolicyPreparation=Invoke-Command -Session $session -ScriptBlock $GuestEdgePolicyScope -ArgumentList 'Prepare',$LabId,$RunId,$guestRoot
+        $summary.EdgePoliciesPrepared=[bool]$summary.EdgePolicyPreparation.Prepared
+        if(-not $summary.EdgePoliciesPrepared){throw 'Administrative guest Edge policy preparation failed.'}
+    }
     Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {param($taskName) Start-ScheduledTask -TaskName $taskName}
     $limit=[DateTime]::UtcNow.AddMinutes(8)
     $result=$null
@@ -237,6 +249,7 @@ exit $LASTEXITCODE
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
     if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage')}
+    if($IncludeRealApplications){$required+=@('NotepadRealText','NotepadRealImageDoesNotWrite','EdgeRealText','EdgeRealImageDoesNotWrite')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
@@ -244,7 +257,11 @@ exit $LASTEXITCODE
     if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 4 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
     if($IncludeAdverse){
         $race=$guest.TabClipboardRace;$proof=$summary.PendingWaitProof
+        $source=$race.SourceInputBefore;$providerBefore=$race.SourceProviderBefore;$providerAfter=$race.SourceProviderAfter
+        if(-not $race.SourceShellPath -or -not $source.Foreground -or -not $source.FocusWithinWindow -or -not $source.ItemsViewFocused -or -not $source.HasPng -or $source.HasFileDrop -or ($source.GuiFlags -band 0x1e) -ne 0 -or $source.ControlDown -or $source.AltDown -or $source.ShiftDown -or $source.WindowsDown -or $providerBefore.Requested -or $providerBefore.Released -or $providerBefore.Rendered -or -not $providerBefore.OwnerMatches -or -not $providerBefore.MarkerPublished -or $providerBefore.Sequence -ne $source.ClipboardSequence -or $providerBefore.Sequence -ne $providerBefore.PublishedSequence -or -not $providerAfter.Requested -or $providerAfter.Released -or $providerAfter.Rendered -or $providerAfter.ProviderPid -ne $proof.ProviderPid -or $providerAfter.Sequence -ne $providerBefore.Sequence -or $race.SourceCounts.A -ne 0 -or $race.SourceCounts.B -ne 0 -or $race.SourceCounts.C -ne 0){throw 'The initial race input or its fresh held provider was not established.'}
         if($race.WindowHandle -eq 0 -or $race.SourceTab -notlike '*pending-tab-a*' -or $race.DestinationTab -notlike '*pending-tab-b*' -or $race.FenceTab -notlike '*pending-tab-fence*'){throw 'The selected tabs and their shared native window were not recorded.'}
+        $fence=$race.FenceInputBefore
+        if(-not $fence.Foreground -or -not $fence.FocusWithinWindow -or -not $fence.ItemsViewFocused -or -not $fence.HasPng -or ($fence.GuiFlags -band 0x1e) -ne 0 -or $fence.ControlDown -or $fence.AltDown -or $fence.ShiftDown -or $fence.WindowsDown -or -not $race.FenceShellPath -or $race.FenceCounts.A -ne 0 -or $race.FenceCounts.B -ne 0 -or $race.FenceCounts.C -ne 1){throw 'The completion-fence input context or final file counts were not established.'}
         if(-not $pendingVerified -or -not $proof.Confirmed -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or -not $race.SameWindow -or -not $race.TabChanged -or -not $race.FenceVerified -or -not $race.OriginalFoldersEmpty -or -not $race.FreshPasteVerified -or -not $race.ProviderStopped){throw 'The held clipboard tab-switch proof and recovery are incomplete.'}
         foreach($state in @($race.Reference,$race.AfterRender,$race.AfterFence)){
             if(-not $state.Requested -or -not $state.Released -or -not $state.Rendered -or -not $state.MarkerPublished -or -not $state.OwnerMatches -or $state.PayloadBytes -le 0 -or $state.Sequence -ne $state.PublishedSequence -or $state.Error -or $state.TimedOut){throw 'The delayed PNG did not supply valid bytes with unchanged clipboard sequence.'}
@@ -286,6 +303,38 @@ exit $LASTEXITCODE
             }
         }
         $stages=@($guest.ClipboardLeaseProof | ForEach-Object Stage)
+        $realApps=@($guest.RealApplications)
+        if([bool]$guest.IncludeRealApplications -ne [bool]$IncludeRealApplications){throw 'The real application selection changed across the guest boundary.'}
+        if(-not $IncludeRealApplications -and $realApps.Count){throw 'Real applications ran without the explicit extension.'}
+        if($IncludeRealApplications){
+        if($realApps.Count -ne 2 -or @(Compare-Object @('Notepad','Edge') @($realApps.Kind)).Count){throw 'The actual Notepad and Edge results are incomplete.'}
+        $realBytes=[Text.Encoding]::Unicode.GetBytes('Laqay real application fixture.'+[char]0)
+        $realHasher=[Security.Cryptography.SHA256]::Create()
+        try{$realHash=[BitConverter]::ToString($realHasher.ComputeHash($realBytes)).Replace('-','')}finally{$realHasher.Dispose()}
+        foreach($real in $realApps){
+            $info=$real.Info;$cleanup=$real.Cleanup
+            if($real.Error -or -not $info.Ready -or -not $info.LauncherAssignedBeforeResume -or $info.Kind -ne $real.Kind -or $info.Pid -le 0 -or $info.Pid -in @($guest.ApplicationPid,$proof.ProviderPid) -or $info.Window -eq 0 -or -not $info.FileVersion -or $info.ExecutableSha256 -notmatch '^[A-Fa-f0-9]{64}$'){throw 'The installed real application identity or containment did not pass.'}
+            if(-not $info.Automation -or $info.Automation.Apartment -ne 'MTA' -or $info.Automation.ThreadId -le 0){throw 'The real application did not use its dedicated MTA automation worker.'}
+            if(-not $cleanup.Passed -or $cleanup.Forced -or $cleanup.Pid -ne $info.Pid -or $cleanup.ExitCode -ne 0 -or $cleanup.ActiveBeforeJobClose -ne 0 -or -not $cleanup.FixtureRemoved -or -not $cleanup.AutomationStopped -or $cleanup.CleanupError){throw 'A real application did not close normally with its Job, automation worker and owned fixture cleared.'}
+            if($real.Kind -eq 'Notepad' -and ($info.PackageIdentity -ne $info.ExpectedPackage -or $info.PackageIdentity -ne $real.Inventory.Package -or $real.Inventory.Name -ne 'Microsoft.WindowsNotepad')){throw 'The actual Notepad runtime package did not match the current guest inventory.'}
+            if($real.Kind -eq 'Edge' -and $info.ProfileScope -ne 'Owned run directory'){throw 'Edge did not use the owned temporary profile scope.'}
+            if($real.Kind -eq 'Edge' -and (-not $info.EdgePoliciesConfigured -or -not $cleanup.EdgePolicyRestoreDelegated)){throw 'The temporary Edge policies were not read back or their restoration was not delegated to the administrative controller.'}
+            if($real.Kind -eq 'Edge' -and $info.Pid -in @($info.PriorEdgeProcesses | ForEach-Object Pid)){throw 'The real Edge test reused a pre-existing process.'}
+            if($real.Kind -eq 'Notepad' -and (-not $info.NotepadState.Isolated -or -not $cleanup.NotepadStateRestored -or $info.NotepadState.OriginalFingerprint -notmatch '^(absent|[A-Fa-f0-9]{64})$' -or $cleanup.NotepadStateFingerprint -cne $info.NotepadState.OriginalFingerprint)){throw 'Notepad LocalState was not isolated and restored with its original fingerprint.'}
+            $texts=@($real.Text)
+            if($texts.Count -ne 2 -or $texts[0].LaqayEnabled -or -not $texts[1].LaqayEnabled){throw 'The real application disabled/enabled references are incomplete.'}
+            foreach($text in $texts){
+                if(-not $text.TextMatched -or $text.Error -or ($real.Kind -eq 'Notepad' -and -not $text.Saved)){throw 'Real application text or its owned Notepad save did not match.'}
+                $source=$text.Source
+                if($source.Format -ne 13 -or -not $source.ReadbackMatched -or $source.PayloadSha256 -ne $realHash -or $source.ByteLength -ne $realBytes.Length -or $source.OwnerPid -ne $proof.ProviderPid -or $source.OwnerThread -le 0 -or $source.Window -eq 0 -or $source.Sequence -ne $text.Before.ClipboardSequence){throw 'The real application Unicode source was not independently established before input.'}
+                foreach($state in @($text.Before,$text.After)){
+                    if($state.Pid -ne $info.Pid -or -not $state.Foreground -or -not $state.Focused -or -not $state.FocusWithinWindow -or $state.FocusWindow -eq 0 -or ($state.GuiFlags -band 0x1e) -ne 0){throw 'The real application editor did not retain its input context.'}
+                }
+            }
+            $image=$real.Image;$state=$image.Before
+            if($image.Error -or -not $image.FixtureMatched -or -not $image.PreviousFilesPreserved -or -not $image.FenceVerified -or $image.FilesAfter -ne ($image.FilesBefore+1) -or $state.Pid -ne $info.Pid -or -not $state.Foreground -or -not $state.Focused -or -not $state.FocusWithinWindow){throw 'The real application image exclusion and later Explorer completion fence did not pass.'}
+        }
+        }
         if($stages.Count -ne 3 -or @(Compare-Object @('BeforeKey','AfterKey','AfterObservation') $stages).Count -ne 0 -or @($guest.ClipboardLeaseProof | Where-Object {-not $_.Proof.Held -or -not $_.Proof.ProbeRejected -or $_.Proof.Expired -or $_.Proof.Error -or $_.Proof.OwnerPid -eq $guest.ApplicationPid}).Count -ne 0){throw 'The clipboard-lock test did not preserve its independently observed barrier.'}
     }
     }
@@ -348,6 +397,11 @@ exit $LASTEXITCODE
             $summary.TaskRemoved=$true
             }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
+        if($edgeScopeAttempted){try{
+            $summary.EdgePolicyRestoration=Invoke-Command -Session $session -ScriptBlock $GuestEdgePolicyScope -ArgumentList 'Restore',$LabId,$RunId,$guestRoot
+            $summary.EdgePoliciesRestored=[bool]$summary.EdgePolicyRestoration.Restored
+            if(-not $summary.EdgePoliciesRestored){throw 'Administrative guest Edge policy restoration failed.'}
+        }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}}
         if($IncludeUnc){
             try{
                 $summary.CredentialRemoved=[bool](Invoke-Command -Session $session -ArgumentList $guestRoot -ScriptBlock {

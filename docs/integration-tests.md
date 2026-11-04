@@ -296,3 +296,184 @@ two guest boots, normal application exit, full baseline/preferences/logon
 restoration, both guests off and no remaining owned helper processes.
 This covers a tab change during clipboard reading, not every encoding or
 publication race in T29–T30 or the real-application compatibility matrix.
+
+The optional `-AdverseOnly -IncludeRealApplications` cycle adds four cases
+(`NotepadRealText`, `NotepadRealImageDoesNotWrite`, `EdgeRealText`, and
+`EdgeRealImageDoesNotWrite`) for 33 total. A Windows 11 guest run passed all
+33 cases with independent verification; the final acceptance follows the
+earlier failed attempts recorded below.
+The default adverse suite remains 29 cases, and Cargo/CI commands do not require
+these applications. The extension requires registered Microsoft Notepad and an
+installed Edge executable in the guest; it fails when a prerequisite is missing.
+
+Notepad opens an owned temporary text file through the Windows launcher and
+must expose the registered runtime package identity and executable path. It
+uses the disposable guest user's application settings. Edge opens a local HTML
+textarea with a new run-specific profile and accessibility enabled, without a
+browser extension or a debugging connection. A configured
+[UserDataDir policy](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies/userdatadir)
+is rejected before Edge starts, since it can override the profile flag. The
+helper rejects an existing Notepad session and does not use host profiles.
+
+Each app must receive exact native clipboard text with Laqay disabled and
+enabled; Notepad must also save the exact owned document before normal closure.
+An image paste in the real editor is followed by a same-clipboard Explorer
+paste as a completion fence for the pinned FIFO worker. All previous files
+under the Explorer fixtures must retain their hashes, with exactly one new PNG
+in the recovery folder and no extra staging files. The launcher enters a Job
+before resume; any separately activated Notepad process must be independently
+identified and contained before input. Cleanup requires normal application
+exit, empty owned Jobs and removal of the run-specific files/profile. Forced
+cleanup remains a failure. Only the disposable guest's Notepad `LocalState` is
+isolated and restored; this does not claim a rollback of all package settings
+or compatibility with other application versions.
+
+In the opt-in mode, the four real-application cases run immediately after the
+thirteen basic Explorer cases, before the remaining adverse regressions. All
+33 are still required. The first expanded attempt stopped after 22 cases at
+the later same-clipboard completion paste, before reaching either application;
+it remains a failed attempt with restoration complete. The fence now records
+native/semantic focus, modifier state, PNG availability, Shell folder path,
+application responsiveness and A/B/C file counts even on failure. The single
+Ctrl+V and its publication wait are unchanged; an input-context prerequisite
+failure cannot count as a successful cancellation.
+
+The second expanded attempt passed the thirteen basic cases, then failed to
+identify the tagged Notepad window before any real-application paste. Its
+fixture directory was still in use during cleanup; final recovery restored the
+baseline and logon settings, stopped both guests and left no owned helpers.
+Window matching now uses the unique filename stem while retaining executable,
+package, session and process-start checks. Bounded diagnostics include windows
+of the expected executable even when their titles do not match. The launcher
+uses the parent run directory as its working directory, and fixture cleanup
+errors are retained alongside the original test failure. A fresh 33-case pass
+is still required.
+
+The third attempt identified the expected Notepad executable, runtime package
+and tagged window, then failed with `E_UNEXPECTED` during UI Automation before
+any real-application paste. Notepad exited normally and its fixture was removed;
+final recovery restored the baseline/logon settings and stopped both guests.
+Real-application UI Automation now runs on a dedicated persistent MTA thread,
+separate from the helper's STA Shell/clipboard work, following Microsoft's
+[threading guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading).
+Automation elements remain on that thread; callers receive plain values.
+Calls have a ten-second bound, diagnostics retain the stage and full exception,
+and acceptance requires the automation thread to stop during cleanup. Native
+clipboard publication and SendInput remain on their original helper thread.
+This design correction does not establish the cause of the earlier COM error;
+the 33-case guest result remains pending.
+
+A fourth attempt reproduced the error on the dedicated MTA worker. Its full
+stack identifies the managed `FindAll` call while looking for Notepad tabs;
+moving that call to MTA alone did not resolve it. Application and worker cleanup
+were normal, and final recovery restored the guest with both VMs off.
+The next diagnostic probes the same verified application window through native
+`IUIAutomation`, on the same MTA worker, before the managed editor lookup.
+It reads only that window's subtree, records root PID, element count, bounded
+editor/tab metadata and full errors, and releases its COM references on the
+worker. It sends no input and cannot substitute for any of the 33 required
+cases. This comparison is intended to distinguish client paths before changing
+the editor automation; it is not compatibility evidence.
+
+The fifth attempt completed the native probe (33 elements, including the
+Notepad editor). The following managed lookup also succeeded, but correctly
+rejected four restored tabs before any paste. This does not establish why the
+earlier COM failure disappeared. Application/worker cleanup and final recovery
+were normal. The next run temporarily moves the disposable guest's Notepad
+`LocalState` into its owned fixture before launch, preserving the original
+directory/file fingerprint and a recovery journal. It retains the single-tab
+requirement. After the contained app closes, it removes only the generated
+state and restores the original, requiring the same fingerprint. Reparse
+points, unexpected profile paths or a changed backup are rejected. Failed
+restoration retains the backup and fails acceptance; it cannot count as a
+successful cleanup. Package settings outside `LocalState` are not reset.
+
+The sixth attempt passed all four real-application paste cases (17 cases in
+total). Both applications received exact text with Laqay disabled/enabled and
+the image/recovery checks preserved previous files. Notepad saved its document,
+exited normally and restored the original `LocalState` fingerprint. Edge's main
+process exited with code zero, but six processes remained in its owned Job
+after the six-second grace period. Closing the Job forced their cleanup, so
+the suite failed before the remaining regressions; this is not a 33-case pass.
+Final recovery restored the guest and left both VMs off with no owned helpers.
+
+Before another attempt, the helper releases its managed automation references
+and configures temporary guest-user `StartupBoostEnabled=0` and
+`BackgroundModeEnabled=0` policies. See Microsoft's
+[startup boost](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/startupboostenabled)
+and [background mode](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/backgroundmodeenabled)
+documentation. It rejects conflicting mandatory machine policy, journals
+the original user values/types and newly created
+keys, and requires their restoration. Pending Job process IDs/names/images
+are captured before forced cleanup if needed. This does not establish the
+cause of the six remaining processes. The shutdown grace period is unchanged,
+and forced cleanup remains a failure.
+
+The seventh attempt passed fifteen cases, including both Notepad cases, then
+stopped before launching Edge because the initial policy precondition rejected
+an existing Edge process. It did not test the revised Edge shutdown. Final
+recovery restored the guest and left no owned helpers. The helper now records
+pre-existing guest-session Edge process IDs/images and visible-window handles,
+without sending them input, closing them or adopting them. The test must create
+a new process outside that inventory, with the owned profile, unique window
+tag and pre-resume Job containment. Temporary background policies apply to
+the whole disposable guest user and are restored; they never affect the host.
+This permits independent Edge instances while retaining input and cleanup
+ownership checks. A full 33-case pass is still pending.
+
+The eighth attempt passed fifteen cases, then the limited interactive helper
+was denied write access to the Edge policy key before launching the browser.
+No policy value writes were reached. The attempt remains failed; final recovery
+restored the guest and stopped both VMs with no owned helpers.
+Policy preparation/restoration now belongs to the existing administrative
+PowerShell Direct session inside Primary. Its literal scoped block checks the
+guest marker, VM hardware, exact run path, administrative token and the
+`LaqayLab` user SID before accessing that user's policy hive. It journals
+original values/types and created keys before mutation and verifies restoration
+in the controller's `finally`, after task cleanup and before report collection.
+The interactive helper only reads the prepared policies; its token, Laqay's
+token and registry ACLs remain unchanged. Acceptance requires both the guest
+readback and the separate administrative restoration result. Invalid scope
+arguments are rejected locally before any registry operations.
+
+The ninth attempt passed 26 cases, including all four real-application cases
+with normal application/worker closure and empty Jobs. Notepad's original
+`LocalState` fingerprint was restored. Administrative Edge policy restoration
+verified the original values/types and removed its created key. The suite then
+failed before the tab switch because the delayed provider received no render
+request. Its positive PNG reference passed, but the initial race input state
+was not retained, so this result does not establish an input or product cause.
+Final recovery restored the guest and stopped both VMs.
+The initial race input now records native/semantic focus, formats, modifiers,
+Shell path, fresh provider state and A/B/C file counts even if the request wait
+fails. It must establish a fresh, stable provider and a ready source folder
+before its single Ctrl+V. No extra input, stabilization delay or longer request
+wait is added. All 33 cases remain mandatory.
+
+### Real-application extension: 33 cases verified
+
+On November 4, 2026, an opt-in guest cycle passed all 33 cases with the
+published v0.1.1 executable, two normal boots and no recovery boot. Microsoft
+Notepad 11.2312.18.0 and Edge 152.0.4191.66 received exact clipboard text with
+Laqay disabled and enabled. Notepad saved the exact document, and both image
+cases preserved previous files with exactly one later Explorer recovery PNG.
+Both applications exited normally with code zero, empty owned Jobs, stopped
+automation workers and removed fixtures/profiles. The original Notepad
+`LocalState` fingerprint was restored; the administrative controller verified
+the original Edge policy values/types and removed its temporary key.
+
+The tab race established the initial input and fresh provider, retained the
+same clipboard owner/sequence across the tab change, completed through the
+same-clipboard fence and recovered with a new image. Native thread contexts
+confirmed the consumer's clipboard read; WCT did not confirm that wait. The
+twelve serial pastes each produced exactly one new image. Independent report
+checks confirmed the required case set, sources, contexts, executable/script
+hashes, real Jobs, resource admission, baseline/logon restoration, both guests
+off and no remaining owned helpers. The shared host Rust coordinator was
+unchanged and its queue was not used by the private VM-only controller.
+
+This is one bounded acceptance of these application versions and the pinned
+executable. Earlier failures remain failures; the successful repetition does
+not establish their cause or prove long-term stability. It does not complete
+the other applications, clipboard/publication races, storage failures,
+Windows 10 or sustained-load matrix.

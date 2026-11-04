@@ -1,5 +1,6 @@
 # Loaded only by the armed interactive smoke runner. Never run standalone.
-if(-not $IncludeAdverse -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 13){throw 'The adverse cases require the owned smoke context.'}
+$adverseStart=if($IncludeRealApplications){17}else{13}
+if(-not $IncludeAdverse -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne $adverseStart){throw 'The adverse cases require the owned smoke context.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
 Assert-True ([LaqayGuestDesktop]::SessionProtocol() -eq 0) 'The adverse cases require the disposable console.'
 $report.SessionProtocol=[LaqayGuestDesktop]::SessionProtocol()
@@ -106,7 +107,7 @@ function Release-RenderedPng {
 }
 Run-Case 'RenderedPngReferencePaste' {
     $path=New-CaseFolder 'rendered-reference';$window=Open-Folder $path
-    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;ReferenceInput=$null;WindowHandle=0;SourceTab=$null;DestinationTab=$null;FenceTab=$null;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
+    $report.TabClipboardRace=[pscustomobject]@{Reference=$null;ReferenceInput=$null;WindowHandle=0;SourceTab=$null;DestinationTab=$null;FenceTab=$null;FenceInputBefore=$null;FenceInputAfter=$null;FenceShellPath=$null;FenceCounts=$null;ResponsiveBefore=$false;ResponsiveAfter=$false;BeforeSwitch=$null;AfterSwitch=$null;AfterRender=$null;AfterFence=$null;SameWindow=$false;TabChanged=$false;FenceVerified=$false;OriginalFoldersEmpty=$false;FreshPasteVerified=$false;ProviderStopped=$false}
     try{
         [LaqayGuestDesktop]::BeginRenderedDelayedPng()
         $report.TabClipboardRace.ReferenceInput=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
@@ -132,6 +133,7 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         Assert-True ((Find-Folder $path).HWND -eq $window.HWND) 'The pending fixtures are not tabs of one Explorer window.'
     }
     $report.TabClipboardRace.SameWindow=$true
+    foreach($name in @('SourceShellPath','SourceInputBefore','SourceInputAfter','SourceProviderBefore','SourceProviderAfter','SourceCounts')){$report.TabClipboardRace | Add-Member -NotePropertyName $name -NotePropertyValue $null}
     $report.TabClipboardRace.WindowHandle=$handle.ToInt64()
     [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9));[LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9))
     Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-a')} 'The source tab was not selected.'
@@ -139,8 +141,19 @@ Run-Case 'TabSwitchCancelsPendingImage' {
     [LaqayGuestDesktop]::FocusFolder($handle)
     try{
         $report.ProviderStopped=$false;[LaqayGuestDesktop]::BeginRenderedDelayedPng()
-        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
-        Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The race provider did not receive its render request.'
+        try{
+            $report.TabClipboardRace.SourceShellPath=(Find-Folder $pathA).Document.Folder.Self.Path
+            $inputState=[LaqayGuestDesktop]::FolderInputState($handle);$report.TabClipboardRace.SourceInputBefore=$inputState
+            $provider=[LaqayGuestDesktop]::DelayedPngState();$report.TabClipboardRace.SourceProviderBefore=$provider;Save-Report
+            Assert-True ($report.TabClipboardRace.SourceShellPath -eq $pathA -and $inputState.Foreground -and $inputState.FocusWithinWindow -and $inputState.ItemsViewFocused -and $inputState.HasPng -and -not $inputState.HasFileDrop -and ($inputState.GuiFlags -band 0x1e) -eq 0 -and -not $inputState.ControlDown -and -not $inputState.AltDown -and -not $inputState.ShiftDown -and -not $inputState.WindowsDown) 'The source folder was not ready for its single race input.'
+            Assert-True ($provider.OwnerMatches -and $provider.MarkerPublished -and $provider.Sequence -eq $provider.PublishedSequence -and $provider.Sequence -eq $inputState.ClipboardSequence -and -not $provider.Requested -and -not $provider.Rendered -and -not $provider.Released -and -not $provider.Error -and -not $provider.TimedOut) 'The source provider was not fresh and stable before the single race input.'
+            [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
+            Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The race provider did not receive its render request.'
+        }finally{
+            try{$report.TabClipboardRace.SourceInputAfter=[LaqayGuestDesktop]::FolderInputState($handle)}catch{}
+            $report.TabClipboardRace.SourceProviderAfter=[LaqayGuestDesktop]::DelayedPngState()
+            $report.TabClipboardRace.SourceCounts=[pscustomobject]@{A=@(Get-ChildItem -LiteralPath $pathA -Force).Count;B=@(Get-ChildItem -LiteralPath $pathB -Force).Count;C=@(Get-ChildItem -LiteralPath $pathC -Force).Count};Save-Report
+        }
         $report.PendingClipboard=[LaqayGuestDesktop]::DelayedPngState();Save-Report
         $proofPath=Join-Path $root 'pending-proof.json';$abortPath=Join-Path $root 'pending-abort.json'
         Wait-For {(Test-Path -LiteralPath $proofPath) -or (Test-Path -LiteralPath $abortPath)} 'The controller did not verify the held clipboard read.' 25
@@ -164,11 +177,21 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-fence')} 'The completion-fence tab did not become active.'
         $report.TabClipboardRace.FenceTab=[LaqayGuestDesktop]::SelectedTabName($handle)
         [LaqayGuestDesktop]::FocusFolder($handle)
-        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
-        Wait-For {@(Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File).Count -eq 1} 'The later same-clipboard paste did not complete.'
-        Check-RenderedPng (Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File)[0].FullName
-        Assert-True (@(Get-ChildItem -LiteralPath $pathC -Force).Count -eq 1) 'The completion fence left extra files.'
-        $report.TabClipboardRace.AfterFence=[LaqayGuestDesktop]::DelayedPngState()
+        try{
+            $report.TabClipboardRace.FenceShellPath=(Find-Folder $pathC).Document.Folder.Self.Path
+            $inputState=[LaqayGuestDesktop]::FolderInputState($handle);$report.TabClipboardRace.FenceInputBefore=$inputState
+            $report.TabClipboardRace.ResponsiveBefore=[LaqayGuestDesktop]::MatrixApplicationResponsive();Save-Report
+            Assert-True ($report.TabClipboardRace.FenceShellPath -eq $pathC -and $inputState.Foreground -and $inputState.FocusWithinWindow -and $inputState.ItemsViewFocused -and $inputState.HasPng -and ($inputState.GuiFlags -band 0x1e) -eq 0 -and -not $inputState.ControlDown -and -not $inputState.AltDown -and -not $inputState.ShiftDown -and -not $inputState.WindowsDown) 'The completion-fence folder was not ready for its single input.'
+            [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
+            Wait-For {@(Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File).Count -eq 1} 'The later same-clipboard paste did not complete.'
+            Check-RenderedPng (Get-ChildItem -LiteralPath $pathC -Filter '*.png' -File)[0].FullName
+            Assert-True (@(Get-ChildItem -LiteralPath $pathC -Force).Count -eq 1) 'The completion fence left extra files.'
+        }finally{
+            try{$report.TabClipboardRace.FenceInputAfter=[LaqayGuestDesktop]::FolderInputState($handle)}catch{}
+            $report.TabClipboardRace.ResponsiveAfter=[LaqayGuestDesktop]::MatrixApplicationResponsive()
+            $report.TabClipboardRace.FenceCounts=[pscustomobject]@{A=@(Get-ChildItem -LiteralPath $pathA -Force).Count;B=@(Get-ChildItem -LiteralPath $pathB -Force).Count;C=@(Get-ChildItem -LiteralPath $pathC -Force).Count}
+            $report.TabClipboardRace.AfterFence=[LaqayGuestDesktop]::DelayedPngState();Save-Report
+        }
         Assert-True ($report.TabClipboardRace.AfterFence.OwnerMatches -and $report.TabClipboardRace.AfterFence.Sequence -eq $held.PublishedSequence) 'The completion fence changed clipboard ownership or sequence.'
         $report.TabClipboardRace.FenceVerified=$true
         Assert-Empty $pathA;Assert-Empty $pathB;$report.TabClipboardRace.OriginalFoldersEmpty=$true
@@ -276,4 +299,5 @@ Run-Case 'SerialPasteResourceSample' {
     foreach($file in $files){Check-Png $file.FullName}
     $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
-Assert-True ($report.Cases.Count -eq 29) 'The complete adverse suite did not execute.'
+$expectedCases=if($IncludeRealApplications){33}else{29}
+Assert-True ($report.Cases.Count -eq $expectedCases) 'The complete adverse suite did not execute.'

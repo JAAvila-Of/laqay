@@ -505,6 +505,15 @@ desktop integration matrix.
 
 ## Additional console adverse checks
 
+The optional `-IncludeRealApplications` switch, used with `-AdverseOnly`, extends
+the suite from 29 to 33 cases with installed Notepad and Edge. Those four cases
+are prepared but have not yet passed a guest runtime run. They use an owned
+text file, local HTML page and temporary Edge profile inside Primary; Notepad
+uses the disposable guest user's settings. No installation, account sign-in,
+host profile or host desktop control is involved. Missing apps, conflicting
+profile policy, unmatched runtime identity or forced cleanup fail the extension.
+Without this switch, the existing 29-case suite and its prerequisites remain.
+
 `Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 29-case suite:
 the thirteen Explorer regressions plus empty clipboard, externally locked
 clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window

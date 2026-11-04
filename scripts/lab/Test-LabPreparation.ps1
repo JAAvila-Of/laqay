@@ -8,6 +8,11 @@ try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
+    . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
+    foreach($probe in @(@('Unexpected',$labId,$labId,('C:\LaqayLab\Runs\'+$labId)),@('Prepare',$labId,$labId,'H:\Projects'),@('Restore','invalid',$labId,('C:\LaqayLab\Runs\'+$labId)))){
+        $rejected=$false;try{& $GuestEdgePolicyScope @probe | Out-Null}catch{$rejected=$_.Exception.Message -eq 'Unexpected Edge policy scope or action.'}
+        Assert-True $rejected 'An invalid administrative policy scope reached guest metadata or registry operations.'
+    }
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     # Exercise the actual serial input expressions with a Shell-shaped object.
     # Every call must bind successfully and then fail at the unarmed guard.
@@ -37,6 +42,25 @@ try {
     $invalidUnicodeRejected=$false
     try{[LaqayGuestDesktop]::MatrixUnicodeFixture('one'+[char]0+'two') | Out-Null}catch{$invalidUnicodeRejected=$true}
     Assert-True $invalidUnicodeRejected 'Embedded Unicode terminators were accepted.'
+    $realAbi=[LaqayGuestDesktop]::RealApplicationAbi()
+    Assert-True ($realAbi.Startup -eq 104 -and $realAbi.Process -eq 24 -and $realAbi.Accounting -eq 48) 'Unexpected real application process/Job ABI.'
+    $automation=[LaqayGuestDesktop]::RealAutomationContract()
+    Assert-True ($automation.Separate -and $automation.Mta -and $automation.Stable -and $automation.ExceptionPropagated -and $automation.Stopped -and $automation.RejectedAfterStop) 'The real application automation worker lost MTA isolation, exception propagation or shutdown.'
+    $nativeProbe=[LaqayGuestDesktop]::RealNativeProbeContract()
+    Assert-True ($nativeProbe.Client -ceq '30cbe57d-d9d0-452a-ab13-7ac5ac4825ee' -and $nativeProbe.Element -ceq 'd22108aa-8ac5-49a5-837b-37bbb3d7591e' -and $nativeProbe.ClientPrefix -eq 19 -and $nativeProbe.ElementPrefix -eq 8 -and $nativeProbe.Point -eq 8) 'The native automation probe interop contract changed.'
+    $realRun='C:\LaqayLab\Runs\'+$labId
+    Assert-True ([LaqayGuestDesktop]::RealNotepadStatePath('C:\Users\LaqayLab\AppData\Local') -ceq 'C:\Users\LaqayLab\AppData\Local\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState') 'Unexpected disposable Notepad state path.'
+    foreach($profile in @($env:LOCALAPPDATA,'C:\Users\LaqayLab\AppData\Local\..\Local','H:\Projects')){
+        $rejected=$false;try{[LaqayGuestDesktop]::RealNotepadStatePath($profile) | Out-Null}catch{$rejected=$true}
+        Assert-True $rejected 'Notepad state isolation accepted a host or noncanonical profile.'
+    }
+    Assert-True ([LaqayGuestDesktop]::RealFixturePath('Edge',$realRun) -ceq ($realRun+'\real-apps\Edge')) 'The real application fixture escaped its exact run.'
+    foreach($invalidRoot in @($realRun+'\..\other','C:\Users\LaqayLab','H:\Projects')){
+        $rejected=$false;try{[LaqayGuestDesktop]::RealFixturePath('Edge',$invalidRoot) | Out-Null}catch{$rejected=$true}
+        Assert-True $rejected 'An unrelated real application root was accepted.'
+    }
+    $html=[LaqayGuestDesktop]::RealBrowserFixture($labId)
+    Assert-True ($html.Contains('Laqay real app '+$labId) -and [regex]::Matches($html,'<textarea\b').Count -eq 1 -and $html.Contains('aria-label="Laqay real application input"') -and -not $html.Contains('<script')) 'The local browser fixture lost its unique title or plain editable target.'
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)

@@ -8,9 +8,11 @@ param(
     [string]$PythonPath,
     [string]$CoordinatorPath,
     [switch]$AdverseOnly,
+    [switch]$IncludeRealApplications,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+if($IncludeRealApplications -and -not $AdverseOnly){throw 'Real applications require the explicit adverse-only extension.'}
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly;return}
 if(-not $LabId -or -not $CycleId -or -not $OldArchivePath -or -not $NewArchivePath -or -not $OutputDirectory -or -not $PythonPath -or -not $CoordinatorPath){throw 'Cycle identities, verified published archives, output and coordinator paths are required.'}
 if($env:RUST_WORK_JOB){throw 'The mixed orchestrator must run outside a Rust lease.'}
@@ -44,7 +46,7 @@ $guestRoot='C:\LaqayLab\Portable\'+$CycleId
 $maximumBoots=if($AdverseOnly){3}else{6}
 $session=$null;$touched=$false;$staged=$false;$stageAttempted=$false;$bootAttempts=0
 $report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Process=$PID;Passed=$false;Error=$null;Phases=@();FileActions=@();
-    AdverseOnly=[bool]$AdverseOnly;MemoryWaits=@();BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    AdverseOnly=[bool]$AdverseOnly;IncludeRealApplications=[bool]$IncludeRealApplications;MemoryWaits=@();BaselineRestored=$false;AutoLogonRestored=$false;PrimaryOff=$false;PeerOff=$false;CleanupErrors=@();BootAttempts=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 function Save-Report {$report.BootAttempts=$script:bootAttempts;$report | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
 function Assert-PeerOff {if((Get-VM -Id ([guid]$peer.Id)).State -ne 'Off'){throw 'Peer must remain off throughout the portable cycle.'}}
 function Connect-Guest {
@@ -86,12 +88,14 @@ function Run-Phase([string]$phase,[string]$sha){
     $previous=$ErrorActionPreference
     try{
         $ErrorActionPreference='Continue'
-        & $PythonPath $CoordinatorPath --project laqay-portable-cycle --receipt $receipt --family rust -- (Join-Path $PSHOME 'powershell.exe') -NoProfile -File $worker -LabId $LabId -CycleId $CycleId -Phase $phase -ExpectedExecutableSha256 $sha -OutputDirectory $directory *> (Join-Path $directory 'runtime.log')
+        $phaseExtra=@();if($IncludeRealApplications -and $phase -eq 'Adverse'){$phaseExtra=@('-IncludeRealApplications')}
+        & $PythonPath $CoordinatorPath --project laqay-portable-cycle --receipt $receipt --family rust -- (Join-Path $PSHOME 'powershell.exe') -NoProfile -File $worker -LabId $LabId -CycleId $CycleId -Phase $phase -ExpectedExecutableSha256 $sha -OutputDirectory $directory @phaseExtra *> (Join-Path $directory 'runtime.log')
         $code=$LASTEXITCODE
     }finally{$ErrorActionPreference=$previous}
     $path=Join-Path $directory 'phase-report.json';$phaseReport=$null
     if(Test-Path -LiteralPath $path){$phaseReport=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json}
     $report.Phases+=@([pscustomobject]@{Phase=$phase;ExitCode=$code;Report=$phaseReport});Save-Report
+    if([bool]$phaseReport.IncludeRealApplications -ne [bool]($IncludeRealApplications -and $phase -eq 'Adverse')){throw 'The real application selection changed across the runtime phase.'}
     if($code -ne 0 -or -not $phaseReport.Passed){throw ('Portable cycle phase failed: '+$phase)}
 }
 function Next-Boot {Run-Files 'Logon';Stop-Guest}
