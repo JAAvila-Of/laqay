@@ -23,6 +23,7 @@ public static partial class LaqayGuestDesktop {
     [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool contained);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int type,out RealAccounting accounting,uint size,IntPtr needed);
+    [DllImport("kernel32.dll",EntryPoint="QueryInformationJobObject",SetLastError=true)] static extern bool RealQueryJobProcesses(IntPtr job,int type,IntPtr data,uint size,out uint needed);
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern int GetPackageFullName(IntPtr process,ref uint length,StringBuilder name);
     [DllImport("kernel32.dll",EntryPoint="OpenProcess",SetLastError=true)] static extern IntPtr RealOpenProcess(uint access,bool inherit,uint pid);
     [DllImport("kernel32.dll")] static extern bool ProcessIdToSessionId(uint process,out uint session);
@@ -170,6 +171,11 @@ public static partial class LaqayGuestDesktop {
         Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
         RealAutomation automation;object nativeProbe;
         string notepadState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
+        const string edgePolicyPath=@"SOFTWARE\Policies\Microsoft\Edge";
+        sealed class EdgePolicyValue {public string Name;public bool Existed;public int Value;}
+        readonly System.Collections.Generic.List<EdgePolicyValue> edgePolicyValues=new System.Collections.Generic.List<EdgePolicyValue>();
+        readonly System.Collections.Generic.List<string> edgeCreatedKeys=new System.Collections.Generic.List<string>();
+        bool edgePoliciesPrepared,edgePoliciesConfigured,edgePoliciesRestored;
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
@@ -203,6 +209,7 @@ public static partial class LaqayGuestDesktop {
             File.WriteAllText(Path.Combine(root,"owner.txt"),marker);
             File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
             if(kind=="Notepad") IsolateNotepadState();
+            if(kind=="Edge") ConfigureEdgePolicies();
             ownedJob=NewJob();launcherJob=ownedJob;
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
             string workingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(root));
@@ -324,7 +331,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal}};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }
@@ -382,9 +389,58 @@ public static partial class LaqayGuestDesktop {
             stateFinal=StateFingerprint(notepadState);stateRestored=stateFinal==stateOriginal;
             if(!stateRestored) throw new InvalidOperationException("Notepad state restoration did not preserve its fingerprint.");
         }
+        void ConfigureEdgePolicies() {
+            RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            foreach(var process in Process.GetProcessesByName("msedge")) using(process) if(process.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Edge session before temporary policy configuration.");
+            foreach(string name in new[]{"StartupBoostEnabled","BackgroundModeEnabled"}) {
+                using(var machine=Registry.LocalMachine.OpenSubKey(edgePolicyPath)) if(machine!=null && machine.GetValue(name)!=null && (machine.GetValueKind(name)!=RegistryValueKind.DWord || Convert.ToInt32(machine.GetValue(name))!=0)) throw new InvalidOperationException("A machine Edge background policy conflicts with isolated shutdown testing.");
+                using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath)) {
+                    bool existed=user!=null && user.GetValue(name)!=null;
+                    if(existed && user.GetValueKind(name)!=RegistryValueKind.DWord) throw new InvalidOperationException("An Edge background policy has an unexpected registry type.");
+                    edgePolicyValues.Add(new EdgePolicyValue {Name=name,Existed=existed,Value=existed?Convert.ToInt32(user.GetValue(name)):0});
+                }
+            }
+            foreach(string path in new[]{@"SOFTWARE",@"SOFTWARE\Policies",@"SOFTWARE\Policies\Microsoft",edgePolicyPath}) using(var key=Registry.CurrentUser.OpenSubKey(path)) if(key==null) edgeCreatedKeys.Add(path);
+            var journal=new StringBuilder("Scope=Disposable guest HKCU\n");foreach(var value in edgePolicyValues) journal.AppendLine(value.Name+"="+(value.Existed?value.Value.ToString():"absent"));foreach(string path in edgeCreatedKeys) journal.AppendLine("CreatedKey="+path);
+            File.WriteAllText(Path.Combine(root,"edge-policy-journal.txt"),journal.ToString());edgePoliciesPrepared=true;
+            using(var user=Registry.CurrentUser.CreateSubKey(edgePolicyPath)) {
+                foreach(var value in edgePolicyValues) user.SetValue(value.Name,0,RegistryValueKind.DWord);
+                foreach(var value in edgePolicyValues) if(user.GetValueKind(value.Name)!=RegistryValueKind.DWord || Convert.ToInt32(user.GetValue(value.Name))!=0) throw new InvalidOperationException("Cannot establish temporary Edge background policies.");
+            }
+            edgePoliciesConfigured=true;
+        }
+        void RestoreEdgePolicies() {
+            if(!edgePoliciesPrepared) return;
+            using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath,true)) {
+                if(user==null) throw new InvalidOperationException("The temporary Edge policy key disappeared.");
+                foreach(var value in edgePolicyValues) {if(value.Existed) user.SetValue(value.Name,value.Value,RegistryValueKind.DWord);else user.DeleteValue(value.Name,false);}
+                foreach(var value in edgePolicyValues) {var actual=user.GetValue(value.Name);if(value.Existed?(actual==null || user.GetValueKind(value.Name)!=RegistryValueKind.DWord || Convert.ToInt32(actual)!=value.Value):actual!=null) throw new InvalidOperationException("An Edge background policy was not restored.");}
+            }
+            for(int index=edgeCreatedKeys.Count-1;index>=0;index--) {
+                string path=edgeCreatedKeys[index];using(var key=Registry.CurrentUser.OpenSubKey(path)) if(key!=null && (key.ValueCount!=0 || key.SubKeyCount!=0)) throw new InvalidOperationException("A newly created Edge policy key contains unexpected entries.");
+                Registry.CurrentUser.DeleteSubKey(path,false);
+            }
+            edgePoliciesRestored=true;
+        }
+        static object[] PendingJobProcesses(IntPtr job) {
+            if(job==IntPtr.Zero) return new object[0];
+            IntPtr buffer=Marshal.AllocHGlobal(8+256*IntPtr.Size);var results=new System.Collections.Generic.List<object>();
+            try {
+                uint needed;if(!RealQueryJobProcesses(job,3,buffer,(uint)(8+256*IntPtr.Size),out needed)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                int count=Marshal.ReadInt32(buffer,4);if(count<0 || count>256) throw new InvalidOperationException("The owned application Job exceeds its diagnostic bound.");
+                for(int index=0;index<count;index++) {
+                    int pid=checked((int)Marshal.ReadIntPtr(buffer,8+index*IntPtr.Size).ToInt64());
+                    try{using(var process=Process.GetProcessById(pid)){bool contained;if(IsProcessInJob(process.Handle,job,out contained) && contained) results.Add(new {Pid=pid,Name=process.ProcessName,Image=process.MainModule.FileName});}}
+                    catch(Exception failure){results.Add(new {Pid=pid,Error=failure.GetType().Name});}
+                }
+            }catch(Exception failure){results.Add(new {Error=failure.ToString()});}finally{Marshal.FreeHGlobal(buffer);}
+            return results.ToArray();
+        }
         public object Stop() {
+            string releaseError=null;
+            try{if(automation!=null) automation.Call("ReleaseReferences",()=>{GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();return 0;});}catch(Exception failure){releaseError=failure.ToString();}
             bool automationStopped=automation==null || automation.Stop();
-            bool forced=false;int? exit=null;uint remaining=0;
+            bool forced=false;int? exit=null;uint remaining=0;object[] pending=new object[0];
             try {
                 if(app!=null && !app.HasExited) {uint pid;GetWindowThreadProcessId(window,out pid);if(pid==(uint)appPid) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero);}
                 var until=DateTime.UtcNow.AddSeconds(6);
@@ -394,6 +450,7 @@ public static partial class LaqayGuestDesktop {
                     Thread.Sleep(100);
                 }while(DateTime.UtcNow<until);
                 forced=remaining!=0 || (app!=null && !app.HasExited);
+                if(remaining!=0){var processes=new System.Collections.Generic.List<object>(PendingJobProcesses(ownedJob));if(launcherJob!=ownedJob) processes.AddRange(PendingJobProcesses(launcherJob));pending=processes.ToArray();}
             } finally {
                 if(ownedJob!=IntPtr.Zero) CloseHandle(ownedJob);
                 if(launcherJob!=IntPtr.Zero && launcherJob!=ownedJob) CloseHandle(launcherJob);
@@ -401,13 +458,14 @@ public static partial class LaqayGuestDesktop {
                 if(app!=null){if(!app.WaitForExit(5000)){forced=true;app.Kill();if(!app.WaitForExit(5000)) throw new InvalidOperationException("The exact verified real application survived cleanup.");}exit=app.ExitCode;app.Dispose();app=null;}
                 if(bootstrap!=null){if(!bootstrap.WaitForExit(5000)) throw new InvalidOperationException("The exact launcher survived Job cleanup.");bootstrap.Dispose();bootstrap=null;}
             }
-            string cleanupError=null;
+            string cleanupError=releaseError;
             try{RestoreNotepadState();}catch(Exception failure){cleanupError=failure.ToString();}
+            try{RestoreEdgePolicies();}catch(Exception failure){cleanupError=(cleanupError??"")+failure;}
             try {if(created && cleanupError==null) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored)};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,EdgePoliciesRestored=kind!="Edge" || edgePoliciesRestored,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Edge" || edgePoliciesRestored)};
         }
     }
 }

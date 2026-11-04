@@ -385,3 +385,24 @@ state and restores the original, requiring the same fingerprint. Reparse
 points, unexpected profile paths or a changed backup are rejected. Failed
 restoration retains the backup and fails acceptance; it cannot count as a
 successful cleanup. Package settings outside `LocalState` are not reset.
+
+The sixth attempt passed all four real-application paste cases (17 cases in
+total). Both applications received exact text with Laqay disabled/enabled and
+the image/recovery checks preserved previous files. Notepad saved its document,
+exited normally and restored the original `LocalState` fingerprint. Edge's main
+process exited with code zero, but six processes remained in its owned Job
+after the six-second grace period. Closing the Job forced their cleanup, so
+the suite failed before the remaining regressions; this is not a 33-case pass.
+Final recovery restored the guest and left both VMs off with no owned helpers.
+
+Before another attempt, the helper releases its managed automation references
+and configures temporary guest-user `StartupBoostEnabled=0` and
+`BackgroundModeEnabled=0` policies. See Microsoft's
+[startup boost](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/startupboostenabled)
+and [background mode](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/backgroundmodeenabled)
+documentation. It refuses an existing Edge session or conflicting mandatory
+machine policy, journals the original user values/types and newly created
+keys, and requires their restoration. Pending Job process IDs/names/images
+are captured before forced cleanup if needed. This does not establish the
+cause of the six remaining processes. The shutdown grace period is unchanged,
+and forced cleanup remains a failure.
