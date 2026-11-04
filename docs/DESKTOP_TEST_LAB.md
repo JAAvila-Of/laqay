@@ -514,6 +514,16 @@ host profile or host desktop control is involved. Missing apps, conflicting
 profile policy, unmatched runtime identity or forced cleanup fail the extension.
 Without this switch, the existing 29-case suite and its prerequisites remain.
 
+Adding `-IncludeWindowsTerminal` together with `-IncludeRealApplications`
+extends the opt-in suite to 35 cases. It requires an installed Windows Terminal
+package and uses an isolated guest LocalState with an explicit native `paste`
+binding for Ctrl+V. A controlled PowerShell receiver records two exact text
+inputs without executing clipboard content. The additional cases check native
+text paste with Laqay disabled/enabled, image exclusion, Explorer recovery and
+normal receiver/application teardown. The previous Terminal state is restored.
+This extension is prepared for runtime validation; it does not establish
+coverage of default shell bindings, PSReadLine or arbitrary Terminal profiles.
+
 `Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 29-case suite:
 the thirteen Explorer regressions plus empty clipboard, externally locked
 clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window
