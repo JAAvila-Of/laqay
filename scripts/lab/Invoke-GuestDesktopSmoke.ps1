@@ -46,7 +46,8 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::BeginClipboardLease()},{[LaqayGuestDesktop]::ClipboardLeaseState()},{[LaqayGuestDesktop]::BeginMatrixEditor()},
         {[LaqayGuestDesktop]::SecondApplication()},{[LaqayGuestDesktop]::MatrixResources()},{[LaqayGuestDesktop]::MatrixApplicationResponsive()},
         {[LaqayGuestDesktop]::HeldPaste([IntPtr]::Zero)},{[LaqayGuestDesktop]::FocusMatrixEditor($false)},
-        {[LaqayGuestDesktop]::PasteMatrixEditor()},{[LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()},{[LaqayGuestDesktop]::BeginMatrixReferenceHook()},{[LaqayGuestDesktop]::MatrixEditorText()},{[LaqayGuestDesktop]::MatrixEditorState()})){
+        {[LaqayGuestDesktop]::PasteMatrixEditor()},{[LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()},{[LaqayGuestDesktop]::BeginMatrixReferenceHook()},{[LaqayGuestDesktop]::MatrixEditorText()},{[LaqayGuestDesktop]::MatrixEditorState()},
+        {[LaqayGuestDesktop]::MatrixEditorTextClipboard('synthetic')})){
         $rejected=$false;try{& $operation | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Unarmed adverse controls were accepted.'}
     }
     Write-Output 'Guest desktop helper compiled; unarmed input and invalid identity were rejected.'

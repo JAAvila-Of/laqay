@@ -277,3 +277,14 @@ becomes concurrent. The rendering handler follows
 [WM_RENDERFORMAT](https://learn.microsoft.com/en-us/windows/win32/dataxchg/wm-renderformat):
 it supplies its memory handle without opening the consumer's clipboard lock.
 The existing exit-with-pending-work provider retains its cancel-only behavior.
+
+The new held-read cases run before the editor regressions so their evidence is
+retained even if a later case fails; all 29 cases remain required. The first
+expanded run stopped in `NativeEditNativeText` with Laqay disabled, before the
+held-read cases were reached. Its alternate sender-thread diagnostic succeeded,
+but the original run remains failed and does not establish a cause.
+Editor text sources now publish materialized `CF_UNICODETEXT` memory with exact
+native readback, hash, length, owner and pre-input sequence evidence. This
+removes a possible OLE/STA source dependency while retaining the original
+SendInput caller and disabled/enabled text assertions. The fixture revision
+and held-read cases still require a fresh guest run.

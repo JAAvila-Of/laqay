@@ -31,6 +31,12 @@ try {
             Assert-True ($renderedBitmap.GetPixel($x,$y).ToArgb() -eq [Drawing.Color]::Magenta.ToArgb()) 'The delayed fixture cannot distinguish a stale paste from fresh recovery.'
         }}
     }finally{$renderedBitmap.Dispose();$renderedStream.Dispose()}
+    $unicodeText='Laqay '+[char]0x00f1+[char]0x4e2d+[char]0xd83d+[char]0xde42
+    $unicodeBytes=[LaqayGuestDesktop]::MatrixUnicodeFixture($unicodeText)
+    Assert-True ($unicodeBytes.Length -eq ($unicodeText.Length+1)*2 -and $unicodeBytes[-1] -eq 0 -and $unicodeBytes[-2] -eq 0 -and [Text.Encoding]::Unicode.GetString($unicodeBytes,0,$unicodeBytes.Length-2) -ceq $unicodeText) 'The native Unicode fixture lost its encoding or terminator.'
+    $invalidUnicodeRejected=$false
+    try{[LaqayGuestDesktop]::MatrixUnicodeFixture('one'+[char]0+'two') | Out-Null}catch{$invalidUnicodeRejected=$true}
+    Assert-True $invalidUnicodeRejected 'Embedded Unicode terminators were accepted.'
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)

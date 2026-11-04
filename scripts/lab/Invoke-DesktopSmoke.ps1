@@ -270,11 +270,16 @@ exit $LASTEXITCODE
         }
         $editors=@($guest.EditorProof)
         if($editors.Count -ne 4){throw 'The native editor references are incomplete.'}
+        $unicodeFixture=[Text.Encoding]::Unicode.GetBytes('Laqay external editor fixture.'+[char]0)
+        $unicodeHasher=[Security.Cryptography.SHA256]::Create()
+        try{$unicodeHash=[BitConverter]::ToString($unicodeHasher.ComputeHash($unicodeFixture)).Replace('-','')}finally{$unicodeHasher.Dispose()}
         foreach($control in @('NativeEdit','RichEdit')){
             $pair=@($editors | Where-Object Control -eq $control)
             if($pair.Count -ne 2 -or $pair[0].LaqayEnabled -or -not $pair[1].LaqayEnabled){throw 'The disabled/enabled editor comparison is missing.'}
             foreach($entry in $pair){
                 if(-not $entry.TextMatched){throw 'Native editor text did not match.'}
+                $source=$entry.Source
+                if($source.Format -ne 13 -or -not $source.ReadbackMatched -or $source.PayloadSha256 -ne $unicodeHash -or $source.ByteLength -ne $unicodeFixture.Length -or $source.Window -eq 0 -or $source.OwnerThread -le 0 -or $source.OwnerPid -ne $proof.ProviderPid -or $source.Sequence -ne $entry.Before.ClipboardSequence){throw 'The editor Unicode source was not fully materialized and verified before input.'}
                 foreach($state in @($entry.Before,$entry.After)){
                     if(-not $state.Foreground -or -not $state.Focused -or -not $state.InputReady -or ($state.GuiFlags -band 0x1e) -ne 0 -or -not $state.Visible -or -not $state.Enabled -or $state.ReadOnly -or $state.ControlWindow -eq 0 -or $state.ControlWindow -ne $state.FocusWindow){throw 'The editor child did not retain native keyboard focus outside menu/move mode.'}
                 }

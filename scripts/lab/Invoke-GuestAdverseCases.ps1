@@ -90,102 +90,6 @@ Run-Case 'VirtualFolderDeclines' {
     Assert-True (@(Compare-Object $before $after).Count -eq 0 -and [LaqayGuestDesktop]::ClipboardSequence() -eq $sequence) 'A virtual paste changed the clipboard or wrote into a previous fixture.'
     Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The application stopped on a virtual folder.'
 }
-$report.AdverseFixturesClosed=$false
-try{
-    [LaqayGuestDesktop]::BeginMatrixEditor()
-    foreach($rich in @($false,$true)){
-        $prefix=if($rich){'RichEdit'}else{'NativeEdit'}
-        Run-Case ($prefix+'NativeText') {
-            foreach($enabled in @($false,$true)){
-                [LaqayGuestDesktop]::ToggleEnabled()
-                Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The editor reference could not change input state.'
-                $proof=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Before=$null;After=$null;TextMatched=$false}
-                $pasteFailure=$null
-                try{
-                    [LaqayGuestDesktop]::FocusMatrixEditor($rich)
-                    [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
-                    $proof.Before=[LaqayGuestDesktop]::MatrixEditorState()
-                    [LaqayGuestDesktop]::PasteMatrixEditor()
-                    Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('Text did not reach '+$prefix+'; Laqay enabled='+$enabled)
-                    $proof.TextMatched=$true
-                }catch{$pasteFailure=$_}finally{
-                    $proof.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorProof+=@($proof);Save-Report
-                }
-                if($pasteFailure){
-                    # Diagnose sender-thread coupling without replacing the failed assertion.
-                    $alternate=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Sender='EditorThread';Before=$null;After=$null;TextMatched=$false;Error=$null}
-                    try{
-                        [LaqayGuestDesktop]::FocusMatrixEditor($rich)
-                        [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
-                        $alternate.Before=[LaqayGuestDesktop]::MatrixEditorState()
-                        [LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()
-                        Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} 'The editor-thread diagnostic did not receive text.'
-                        $alternate.TextMatched=$true
-                    }catch{$alternate.Error=$_.Exception.Message}finally{
-                        $alternate.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorSenderComparison+=@($alternate);Save-Report
-                    }
-                    if($enabled){
-                        [LaqayGuestDesktop]::ToggleEnabled()
-                        Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 0} 'The passive-hook reference could not disable Laqay.'
-                        foreach($mode in @('DisabledRecovery','PassiveReferenceHook')){
-                            $reference=[pscustomobject]@{Mode=$mode;LaqayEnabled=$false;Before=$null;After=$null;TextMatched=$false;Hook=$null;Error=$null}
-                            try{
-                                [LaqayGuestDesktop]::FocusMatrixEditor($rich)
-                                [LaqayGuestDesktop]::TextClipboard('Laqay external editor fixture.')
-                                if($mode -eq 'PassiveReferenceHook'){[LaqayGuestDesktop]::BeginMatrixReferenceHook()}
-                                $reference.Before=[LaqayGuestDesktop]::MatrixEditorState()
-                                [LaqayGuestDesktop]::PasteMatrixEditor()
-                                Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('The '+$mode+' reference did not receive text.') 3
-                                $reference.TextMatched=$true
-                            }catch{$reference.Error=$_.Exception.Message}finally{
-                                $reference.Hook=[LaqayGuestDesktop]::EndMatrixReferenceHook()
-                                $reference.After=[LaqayGuestDesktop]::MatrixEditorState();$report.ReferenceHookProof+=@($reference);Save-Report
-                            }
-                        }
-                    }
-                    throw $pasteFailure
-                }
-            }
-        }
-        Run-Case ($prefix+'ImageDoesNotWrite') {
-            $before=@(Get-ChildItem -LiteralPath (Join-Path $root 'data') -Filter '*.png' -Recurse -File | ForEach-Object FullName)
-            [LaqayGuestDesktop]::FocusMatrixEditor($rich);[LaqayGuestDesktop]::ImageClipboard();[LaqayGuestDesktop]::PasteMatrixEditor()
-            Start-Sleep -Milliseconds 700
-            $after=@(Get-ChildItem -LiteralPath (Join-Path $root 'data') -Filter '*.png' -Recurse -File | ForEach-Object FullName)
-            Assert-True (@(Compare-Object $before $after).Count -eq 0) 'A non-Explorer editor wrote into an old Explorer fixture.'
-        }
-    }
-}finally{[LaqayGuestDesktop]::EndMatrixReferenceHook() | Out-Null;[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}
-Run-Case 'IdleResponsivenessSample' {
-    $before=[LaqayGuestDesktop]::MatrixResources()
-    for($index=0;$index -lt 8;$index++){Start-Sleep -Milliseconds 500;Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The idle application stopped responding.'}
-    $report.ResourceSamples+=@([pscustomobject]@{Phase='Idle';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
-}
-Run-Case 'SerialPasteResourceSample' {
-    $path=New-CaseFolder 'serial-paste';$window=Open-Folder $path;$before=[LaqayGuestDesktop]::MatrixResources()
-    # Keep the initial Items View focus throughout the serial sample.
-    for($index=1;$index -le 12;$index++){
-        $entry=[pscustomobject]@{Index=$index;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null}
-        try{
-            [LaqayGuestDesktop]::ImageClipboard()
-            $entry.Before=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
-            Assert-True ($entry.Before.Foreground -and $entry.Before.FocusWithinWindow -and ($entry.Before.GuiFlags -band 0x1e) -eq 0 -and $entry.Before.MenuOwner -eq 0) ('Serial paste '+$index+' lost guest folder input focus.')
-            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
-            Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq $index} ('Serial paste '+$index+' did not publish the expected image in the active guest folder.')
-            $entry.Published=$true
-        }catch{$entry.Error=$_.Exception.Message;throw}finally{
-            $entry.Finished=[DateTime]::UtcNow.ToString('o')
-            $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
-            try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
-            $report.SerialPastes+=@($entry);Save-Report
-        }
-        Assert-True (-not $entry.Error) ('Serial paste '+$index+' input inspection failed: '+$entry.Error)
-    }
-    $files=@(Get-ChildItem -LiteralPath $path -Force)
-    Assert-True ($files.Count -eq 12) 'The serial sample lost images or left staging files.'
-    foreach($file in $files){Check-Png $file.FullName}
-    $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
-}
 function Check-RenderedPng([string]$path){
     $image=[Drawing.Bitmap]::new($path)
     try{
@@ -275,5 +179,101 @@ Run-Case 'TabSwitchCancelsPendingImage' {
     Check-Png (Get-ChildItem -LiteralPath $pathB -Filter '*.png' -File)[0].FullName
     Assert-True (@(Get-ChildItem -LiteralPath $pathB -Force).Count -eq 1) 'The fresh recovery paste left extra files.'
     Assert-Empty $pathA;$report.TabClipboardRace.FreshPasteVerified=$true;Save-Report
+}
+$report.AdverseFixturesClosed=$false
+try{
+    [LaqayGuestDesktop]::BeginMatrixEditor()
+    foreach($rich in @($false,$true)){
+        $prefix=if($rich){'RichEdit'}else{'NativeEdit'}
+        Run-Case ($prefix+'NativeText') {
+            foreach($enabled in @($false,$true)){
+                [LaqayGuestDesktop]::ToggleEnabled()
+                Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The editor reference could not change input state.'
+                $proof=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Source=$null;Before=$null;After=$null;TextMatched=$false}
+                $pasteFailure=$null
+                try{
+                    [LaqayGuestDesktop]::FocusMatrixEditor($rich)
+                    $proof.Source=[LaqayGuestDesktop]::MatrixEditorTextClipboard('Laqay external editor fixture.')
+                    $proof.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                    [LaqayGuestDesktop]::PasteMatrixEditor()
+                    Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('Text did not reach '+$prefix+'; Laqay enabled='+$enabled)
+                    $proof.TextMatched=$true
+                }catch{$pasteFailure=$_}finally{
+                    $proof.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorProof+=@($proof);Save-Report
+                }
+                if($pasteFailure){
+                    # Diagnose sender-thread coupling without replacing the failed assertion.
+                    $alternate=[pscustomobject]@{Control=$prefix;LaqayEnabled=$enabled;Sender='EditorThread';Source=$null;Before=$null;After=$null;TextMatched=$false;Error=$null}
+                    try{
+                        [LaqayGuestDesktop]::FocusMatrixEditor($rich)
+                        $alternate.Source=[LaqayGuestDesktop]::MatrixEditorTextClipboard('Laqay external editor fixture.')
+                        $alternate.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                        [LaqayGuestDesktop]::PasteMatrixEditorFromUiThread()
+                        Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} 'The editor-thread diagnostic did not receive text.'
+                        $alternate.TextMatched=$true
+                    }catch{$alternate.Error=$_.Exception.Message}finally{
+                        $alternate.After=[LaqayGuestDesktop]::MatrixEditorState();$report.EditorSenderComparison+=@($alternate);Save-Report
+                    }
+                    if($enabled){
+                        [LaqayGuestDesktop]::ToggleEnabled()
+                        Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 0} 'The passive-hook reference could not disable Laqay.'
+                        foreach($mode in @('DisabledRecovery','PassiveReferenceHook')){
+                            $reference=[pscustomobject]@{Mode=$mode;LaqayEnabled=$false;Source=$null;Before=$null;After=$null;TextMatched=$false;Hook=$null;Error=$null}
+                            try{
+                                [LaqayGuestDesktop]::FocusMatrixEditor($rich)
+                                $reference.Source=[LaqayGuestDesktop]::MatrixEditorTextClipboard('Laqay external editor fixture.')
+                                if($mode -eq 'PassiveReferenceHook'){[LaqayGuestDesktop]::BeginMatrixReferenceHook()}
+                                $reference.Before=[LaqayGuestDesktop]::MatrixEditorState()
+                                [LaqayGuestDesktop]::PasteMatrixEditor()
+                                Wait-For {[LaqayGuestDesktop]::MatrixEditorText() -eq 'Laqay external editor fixture.'} ('The '+$mode+' reference did not receive text.') 3
+                                $reference.TextMatched=$true
+                            }catch{$reference.Error=$_.Exception.Message}finally{
+                                $reference.Hook=[LaqayGuestDesktop]::EndMatrixReferenceHook()
+                                $reference.After=[LaqayGuestDesktop]::MatrixEditorState();$report.ReferenceHookProof+=@($reference);Save-Report
+                            }
+                        }
+                    }
+                    throw $pasteFailure
+                }
+            }
+        }
+        Run-Case ($prefix+'ImageDoesNotWrite') {
+            $before=@(Get-ChildItem -LiteralPath (Join-Path $root 'data') -Filter '*.png' -Recurse -File | ForEach-Object FullName)
+            [LaqayGuestDesktop]::FocusMatrixEditor($rich);[LaqayGuestDesktop]::ImageClipboard();[LaqayGuestDesktop]::PasteMatrixEditor()
+            Start-Sleep -Milliseconds 700
+            $after=@(Get-ChildItem -LiteralPath (Join-Path $root 'data') -Filter '*.png' -Recurse -File | ForEach-Object FullName)
+            Assert-True (@(Compare-Object $before $after).Count -eq 0) 'A non-Explorer editor wrote into an old Explorer fixture.'
+        }
+    }
+}finally{[LaqayGuestDesktop]::EndMatrixReferenceHook() | Out-Null;[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}
+Run-Case 'IdleResponsivenessSample' {
+    $before=[LaqayGuestDesktop]::MatrixResources()
+    for($index=0;$index -lt 8;$index++){Start-Sleep -Milliseconds 500;Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The idle application stopped responding.'}
+    $report.ResourceSamples+=@([pscustomobject]@{Phase='Idle';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
+}
+Run-Case 'SerialPasteResourceSample' {
+    $path=New-CaseFolder 'serial-paste';$window=Open-Folder $path;$before=[LaqayGuestDesktop]::MatrixResources()
+    # Keep the initial Items View focus throughout the serial sample.
+    for($index=1;$index -le 12;$index++){
+        $entry=[pscustomobject]@{Index=$index;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null}
+        try{
+            [LaqayGuestDesktop]::ImageClipboard()
+            $entry.Before=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+            Assert-True ($entry.Before.Foreground -and $entry.Before.FocusWithinWindow -and ($entry.Before.GuiFlags -band 0x1e) -eq 0 -and $entry.Before.MenuOwner -eq 0) ('Serial paste '+$index+' lost guest folder input focus.')
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+            Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq $index} ('Serial paste '+$index+' did not publish the expected image in the active guest folder.')
+            $entry.Published=$true
+        }catch{$entry.Error=$_.Exception.Message;throw}finally{
+            $entry.Finished=[DateTime]::UtcNow.ToString('o')
+            $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
+            try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
+            $report.SerialPastes+=@($entry);Save-Report
+        }
+        Assert-True (-not $entry.Error) ('Serial paste '+$index+' input inspection failed: '+$entry.Error)
+    }
+    $files=@(Get-ChildItem -LiteralPath $path -Force)
+    Assert-True ($files.Count -eq 12) 'The serial sample lost images or left staging files.'
+    foreach($file in $files){Check-Png $file.FullName}
+    $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
 Assert-True ($report.Cases.Count -eq 29) 'The complete adverse suite did not execute.'
