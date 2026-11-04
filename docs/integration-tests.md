@@ -255,8 +255,8 @@ preparation gate exercises the actual serial invocation expressions with a
 Shell-shaped object, requiring native-handle binding before the unarmed guard.
 
 The next adverse revision adds `RenderedPngReferencePaste` and
-`TabSwitchCancelsPendingImage` (29 cases total). Their guest runtime result is
-pending. A valid magenta PNG first proves the delayed-render source can publish
+`TabSwitchCancelsPendingImage` (29 cases total). Both passed with the complete
+29-case suite on 2026-11-04 UTC using published v0.1.1. A valid magenta PNG first proves the delayed-render source can publish
 with stable focus. The race then prepares three tabs before publishing that
 source, requires independent native evidence of Laqay waiting for its provider,
 and switches from A to B before releasing bytes. The provider records ownership,
@@ -286,5 +286,13 @@ but the original run remains failed and does not establish a cause.
 Editor text sources now publish materialized `CF_UNICODETEXT` memory with exact
 native readback, hash, length, owner and pre-input sequence evidence. This
 removes a possible OLE/STA source dependency while retaining the original
-SendInput caller and disabled/enabled text assertions. The fixture revision
-and held-read cases still require a fresh guest run.
+SendInput caller and disabled/enabled text assertions. The revised fixture
+passed all four NativeEdit/RichEdit disabled/enabled references in that run,
+with native source evidence and no diagnostic sender substitution.
+Native thread-context samples confirmed the held clipboard read; Windows wait
+chain traversal did not confirm it. Source ownership and sequence remained
+stable through rendering and the later completion-fence paste. The run used
+two guest boots, normal application exit, full baseline/preferences/logon
+restoration, both guests off and no remaining owned helper processes.
+This covers a tab change during clipboard reading, not every encoding or
+publication race in T29–T30 or the real-application compatibility matrix.

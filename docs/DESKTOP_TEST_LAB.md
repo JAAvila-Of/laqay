@@ -515,6 +515,12 @@ race with recovery. The earlier suite **passed all 27 cases on 2026-11-03** usin
 published v0.1.1 in the isolated Windows 11 Enterprise evaluation console. The
 normal two-boot cycle completed application exit, baseline/preferences/logon
 restoration, both guest shutdowns and owned helper/coordinator process exit.
+The expanded **29-case suite passed on 2026-11-04 UTC**, including the positive
+rendered-PNG reference, independently confirmed held clipboard read, tab-switch
+cancellation, same-clipboard completion fence and fresh recovery paste. Native
+thread-context samples confirmed the wait; wait-chain traversal did not. All
+four editor off/on references passed with materialized Unicode source evidence.
+Normal two-boot restoration and owned-process/guest shutdown checks also passed.
 
 The lock fixture retires old input requests, opens the clipboard with its
 own message-only window, and records exact window/process/thread ownership plus
