@@ -400,9 +400,21 @@ and configures temporary guest-user `StartupBoostEnabled=0` and
 `BackgroundModeEnabled=0` policies. See Microsoft's
 [startup boost](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/startupboostenabled)
 and [background mode](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/backgroundmodeenabled)
-documentation. It refuses an existing Edge session or conflicting mandatory
-machine policy, journals the original user values/types and newly created
+documentation. It rejects conflicting mandatory machine policy, journals
+the original user values/types and newly created
 keys, and requires their restoration. Pending Job process IDs/names/images
 are captured before forced cleanup if needed. This does not establish the
 cause of the six remaining processes. The shutdown grace period is unchanged,
 and forced cleanup remains a failure.
+
+The seventh attempt passed fifteen cases, including both Notepad cases, then
+stopped before launching Edge because the initial policy precondition rejected
+an existing Edge process. It did not test the revised Edge shutdown. Final
+recovery restored the guest and left no owned helpers. The helper now records
+pre-existing guest-session Edge process IDs/images and visible-window handles,
+without sending them input, closing them or adopting them. The test must create
+a new process outside that inventory, with the owned profile, unique window
+tag and pre-resume Job containment. Temporary background policies apply to
+the whole disposable guest user and are restored; they never affect the host.
+This permits independent Edge instances while retaining input and cleanup
+ownership checks. A full 33-case pass is still pending.

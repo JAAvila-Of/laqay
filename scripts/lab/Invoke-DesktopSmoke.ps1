@@ -309,6 +309,7 @@ exit $LASTEXITCODE
             if($real.Kind -eq 'Notepad' -and ($info.PackageIdentity -ne $info.ExpectedPackage -or $info.PackageIdentity -ne $real.Inventory.Package -or $real.Inventory.Name -ne 'Microsoft.WindowsNotepad')){throw 'The actual Notepad runtime package did not match the current guest inventory.'}
             if($real.Kind -eq 'Edge' -and $info.ProfileScope -ne 'Owned run directory'){throw 'Edge did not use the owned temporary profile scope.'}
             if($real.Kind -eq 'Edge' -and (-not $info.EdgePoliciesConfigured -or -not $cleanup.EdgePoliciesRestored)){throw 'The temporary Edge background policies were not configured and restored.'}
+            if($real.Kind -eq 'Edge' -and $info.Pid -in @($info.PriorEdgeProcesses | ForEach-Object Pid)){throw 'The real Edge test reused a pre-existing process.'}
             if($real.Kind -eq 'Notepad' -and (-not $info.NotepadState.Isolated -or -not $cleanup.NotepadStateRestored -or $info.NotepadState.OriginalFingerprint -notmatch '^(absent|[A-Fa-f0-9]{64})$' -or $cleanup.NotepadStateFingerprint -cne $info.NotepadState.OriginalFingerprint)){throw 'Notepad LocalState was not isolated and restored with its original fingerprint.'}
             $texts=@($real.Text)
             if($texts.Count -ne 2 -or $texts[0].LaqayEnabled -or -not $texts[1].LaqayEnabled){throw 'The real application disabled/enabled references are incomplete.'}

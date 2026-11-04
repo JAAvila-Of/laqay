@@ -28,6 +28,7 @@ public static partial class LaqayGuestDesktop {
     [DllImport("kernel32.dll",EntryPoint="OpenProcess",SetLastError=true)] static extern IntPtr RealOpenProcess(uint access,bool inherit,uint pid);
     [DllImport("kernel32.dll")] static extern bool ProcessIdToSessionId(uint process,out uint session);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window,StringBuilder text,int length);
+    [DllImport("user32.dll")] [return:MarshalAs(UnmanagedType.Bool)] static extern bool IsWindowVisible(IntPtr window);
 
     public static string RealFixturePath(string kind,string runRoot) {
         if((kind!="Notepad" && kind!="Edge") || runRoot==null || !Regex.IsMatch(runRoot,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}$"))
@@ -176,6 +177,8 @@ public static partial class LaqayGuestDesktop {
         readonly System.Collections.Generic.List<EdgePolicyValue> edgePolicyValues=new System.Collections.Generic.List<EdgePolicyValue>();
         readonly System.Collections.Generic.List<string> edgeCreatedKeys=new System.Collections.Generic.List<string>();
         bool edgePoliciesPrepared,edgePoliciesConfigured,edgePoliciesRestored;
+        readonly System.Collections.Generic.HashSet<uint> priorEdgePids=new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.List<object> priorEdgeProcesses=new System.Collections.Generic.List<object>();
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
@@ -263,7 +266,7 @@ public static partial class LaqayGuestDesktop {
                     string image=found.MainModule.FileName;
                     bool matchesTarget=String.Equals(image,target,StringComparison.OrdinalIgnoreCase);
                     if((tagged || matchesTarget) && candidates.Count<32 && candidateStates.Add(pid+":"+title)) candidates.Add(new {Pid=pid,Image=image,Title=title.ToString(),TagMatched=tagged,Session=found.SessionId,Started=found.StartTime.ToUniversalTime().ToString("o"),MatchesTarget=matchesTarget});
-                    if(!tagged || found.SessionId!=Process.GetCurrentProcess().SessionId || found.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !matchesTarget) return true;
+                    if(!tagged || found.SessionId!=Process.GetCurrentProcess().SessionId || found.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !matchesTarget || (kind=="Edge" && priorEdgePids.Contains(pid))) return true;
                     app=found;found=null;appPid=(int)pid;window=candidate;return false;
                 }catch(ArgumentException){return true;}catch(System.ComponentModel.Win32Exception failure){if(tagged && candidates.Count<32 && candidateStates.Add(pid+":error")) candidates.Add(new {Pid=pid,Error=failure.NativeErrorCode});return true;}
                 finally {if(found!=null) found.Dispose();}
@@ -331,7 +334,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray()};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }
@@ -391,7 +394,15 @@ public static partial class LaqayGuestDesktop {
         }
         void ConfigureEdgePolicies() {
             RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
-            foreach(var process in Process.GetProcessesByName("msedge")) using(process) if(process.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Edge session before temporary policy configuration.");
+            foreach(var process in Process.GetProcessesByName("msedge")) using(process) {
+                try {
+                    if(process.SessionId!=Process.GetCurrentProcess().SessionId) continue;
+                    uint pid=(uint)process.Id;priorEdgePids.Add(pid);
+                    var windows=new System.Collections.Generic.List<long>();
+                    EnumWindows((handle,parameter)=>{uint owner;GetWindowThreadProcessId(handle,out owner);if(owner==pid && IsWindowVisible(handle)) windows.Add(handle.ToInt64());return true;},IntPtr.Zero);
+                    priorEdgeProcesses.Add(new {Pid=pid,Image=process.MainModule.FileName,VisibleWindows=windows.ToArray()});
+                }catch(InvalidOperationException){}catch(System.ComponentModel.Win32Exception failure){priorEdgeProcesses.Add(new {Pid=process.Id,Error=failure.NativeErrorCode});}
+            }
             foreach(string name in new[]{"StartupBoostEnabled","BackgroundModeEnabled"}) {
                 using(var machine=Registry.LocalMachine.OpenSubKey(edgePolicyPath)) if(machine!=null && machine.GetValue(name)!=null && (machine.GetValueKind(name)!=RegistryValueKind.DWord || Convert.ToInt32(machine.GetValue(name))!=0)) throw new InvalidOperationException("A machine Edge background policy conflicts with isolated shutdown testing.");
                 using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath)) {
