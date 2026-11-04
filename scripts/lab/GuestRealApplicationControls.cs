@@ -39,6 +39,73 @@ public static partial class LaqayGuestDesktop {
             "</title><label for=\"laqay-real-input\">Laqay real application input</label><textarea id=\"laqay-real-input\" aria-label=\"Laqay real application input\" style=\"display:block;width:600px;height:300px\"></textarea></html>";
     }
     public static object RealApplicationAbi() {return new {Startup=Marshal.SizeOf(typeof(RealStartup)),Process=Marshal.SizeOf(typeof(RealProcess)),Accounting=Marshal.SizeOf(typeof(RealAccounting))};}
+    // Prefix declarations follow UIAutomationClient.idl in the Windows SDK.
+    // Unused cache/walker pointers preserve their native vtable positions.
+    [StructLayout(LayoutKind.Sequential)] struct RealUiaPoint {public int x,y;}
+    [ComImport,Guid("352ffba8-0973-437c-a61f-f64cafd81df9"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface RealUiaCondition {}
+    [ComImport,Guid("d22108aa-8ac5-49a5-837b-37bbb3d7591e"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface RealUiaElement {
+        void SetFocus();
+        [return:MarshalAs(UnmanagedType.SafeArray,SafeArraySubType=VarEnum.VT_I4)] int[] GetRuntimeId();
+        RealUiaElement FindFirst(int scope,RealUiaCondition condition);
+        RealUiaElements FindAll(int scope,RealUiaCondition condition);
+        RealUiaElement FindFirstBuildCache(int scope,RealUiaCondition condition,IntPtr cache);
+        RealUiaElements FindAllBuildCache(int scope,RealUiaCondition condition,IntPtr cache);
+        RealUiaElement BuildUpdatedCache(IntPtr cache);
+        [return:MarshalAs(UnmanagedType.Struct)] object GetCurrentPropertyValue(int property);
+    }
+    [ComImport,Guid("14314595-b4bc-4055-95f2-58f2e42c9855"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface RealUiaElements {
+        int GetLength();RealUiaElement GetElement(int index);
+    }
+    [ComImport,Guid("30cbe57d-d9d0-452a-ab13-7ac5ac4825ee"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface RealUiaClient {
+        [return:MarshalAs(UnmanagedType.Bool)] bool CompareElements(RealUiaElement first,RealUiaElement second);
+        [return:MarshalAs(UnmanagedType.Bool)] bool CompareRuntimeIds([MarshalAs(UnmanagedType.SafeArray,SafeArraySubType=VarEnum.VT_I4)] int[] first,[MarshalAs(UnmanagedType.SafeArray,SafeArraySubType=VarEnum.VT_I4)] int[] second);
+        RealUiaElement GetRootElement();RealUiaElement ElementFromHandle(IntPtr handle);
+        RealUiaElement ElementFromPoint(RealUiaPoint point);RealUiaElement GetFocusedElement();
+        RealUiaElement GetRootElementBuildCache(IntPtr cache);
+        RealUiaElement ElementFromHandleBuildCache(IntPtr handle,IntPtr cache);
+        RealUiaElement ElementFromPointBuildCache(RealUiaPoint point,IntPtr cache);
+        RealUiaElement GetFocusedElementBuildCache(IntPtr cache);
+        IntPtr CreateTreeWalker(RealUiaCondition condition);
+        IntPtr GetControlViewWalker();IntPtr GetContentViewWalker();IntPtr GetRawViewWalker();
+        RealUiaCondition GetRawViewCondition();RealUiaCondition GetControlViewCondition();RealUiaCondition GetContentViewCondition();
+        IntPtr CreateCacheRequest();RealUiaCondition CreateTrueCondition();
+    }
+    public static object RealNativeProbeContract() {
+        return new {Client=typeof(RealUiaClient).GUID.ToString(),Element=typeof(RealUiaElement).GUID.ToString(),
+            ClientPrefix=typeof(RealUiaClient).GetMethods().Length,ElementPrefix=typeof(RealUiaElement).GetMethods().Length,Point=Marshal.SizeOf(typeof(RealUiaPoint))};
+    }
+    static void ReleaseRealCom(object value) {if(value!=null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value);}
+    static object ProbeRealNativeWindow(IntPtr window,int expectedPid) {
+        if(Thread.CurrentThread.GetApartmentState()!=ApartmentState.MTA) throw new InvalidOperationException("Native automation probing requires the owned MTA worker.");
+        RealUiaClient client=null;RealUiaElement root=null;RealUiaCondition condition=null;RealUiaElements elements=null;
+        string stage="Activate",error=null;bool completed=false;int count=0,rootPid=0;var controls=new System.Collections.Generic.List<object>();
+        try {
+            client=(RealUiaClient)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"),true));
+            stage="ElementFromHandle";root=client.ElementFromHandle(window);
+            stage="RootProcessId";rootPid=Convert.ToInt32(root.GetCurrentPropertyValue(30002));
+            if(rootPid!=expectedPid) throw new InvalidOperationException("Native automation root differs from the verified application process.");
+            stage="CreateTrueCondition";condition=client.CreateTrueCondition();
+            stage="FindAll";elements=root.FindAll(4,condition);
+            stage="ElementCount";count=elements.GetLength();
+            if(count<0 || count>1024) throw new InvalidOperationException("The native automation subtree exceeds the diagnostic bound.");
+            for(int index=0;index<count;index++) {
+                RealUiaElement element=null;
+                try {
+                    stage="ElementProperties";element=elements.GetElement(index);
+                    int type=Convert.ToInt32(element.GetCurrentPropertyValue(30003));
+                    if(controls.Count<24 && (type==50004 || type==50030 || type==50019)) controls.Add(new {
+                        Type=type,Pid=Convert.ToInt32(element.GetCurrentPropertyValue(30002)),
+                        Class=Convert.ToString(element.GetCurrentPropertyValue(30012)),
+                        Enabled=Convert.ToBoolean(element.GetCurrentPropertyValue(30010)),
+                        Offscreen=Convert.ToBoolean(element.GetCurrentPropertyValue(30022)),
+                        Focusable=Convert.ToBoolean(element.GetCurrentPropertyValue(30009))});
+                }finally{ReleaseRealCom(element);}
+            }
+            stage="Completed";completed=true;
+        }catch(Exception failure){error=failure.ToString();}
+        finally{ReleaseRealCom(elements);ReleaseRealCom(condition);ReleaseRealCom(root);ReleaseRealCom(client);}
+        return new {Completed=completed,Stage=stage,Error=error,RootPid=rootPid,Count=count,Controls=controls.ToArray()};
+    }
     public static object RealAutomationContract() {
         var worker=new RealAutomation();int caller=Thread.CurrentThread.ManagedThreadId;
         int first=worker.Call("First",()=>Thread.CurrentThread.ManagedThreadId);
@@ -97,7 +164,7 @@ public static partial class LaqayGuestDesktop {
         readonly string root,runId,target,launcher,expectedPackage,tag,arguments;
         readonly DateTime started=DateTime.UtcNow;
         Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
-        RealAutomation automation;
+        RealAutomation automation;object nativeProbe;
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
@@ -161,7 +228,9 @@ public static partial class LaqayGuestDesktop {
                 packageIdentity=name.ToString();
             }
             if(Hash(target)!=sha) throw new InvalidOperationException("The executable changed during launch.");
-            automation=new RealAutomation();ready=true;string last=null;
+            automation=new RealAutomation();
+            nativeProbe=automation.Call("NativeProbe",()=>ProbeRealNativeWindow(window,appPid));
+            ready=true;string last=null;
             while(DateTime.UtcNow<until) {
                 try {Focus();if(kind=="Edge" && !Directory.Exists(Path.Combine(root,"profile","Default"))) throw new InvalidOperationException("The isolated Edge profile was not created.");return;}
                 catch(ElementNotAvailableException failure){last=failure.Message;}
@@ -249,7 +318,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info()};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }

@@ -41,6 +41,8 @@ try {
     Assert-True ($realAbi.Startup -eq 104 -and $realAbi.Process -eq 24 -and $realAbi.Accounting -eq 48) 'Unexpected real application process/Job ABI.'
     $automation=[LaqayGuestDesktop]::RealAutomationContract()
     Assert-True ($automation.Separate -and $automation.Mta -and $automation.Stable -and $automation.ExceptionPropagated -and $automation.Stopped -and $automation.RejectedAfterStop) 'The real application automation worker lost MTA isolation, exception propagation or shutdown.'
+    $nativeProbe=[LaqayGuestDesktop]::RealNativeProbeContract()
+    Assert-True ($nativeProbe.Client -ceq '30cbe57d-d9d0-452a-ab13-7ac5ac4825ee' -and $nativeProbe.Element -ceq 'd22108aa-8ac5-49a5-837b-37bbb3d7591e' -and $nativeProbe.ClientPrefix -eq 19 -and $nativeProbe.ElementPrefix -eq 8 -and $nativeProbe.Point -eq 8) 'The native automation probe interop contract changed.'
     $realRun='C:\LaqayLab\Runs\'+$labId
     Assert-True ([LaqayGuestDesktop]::RealFixturePath('Edge',$realRun) -ceq ($realRun+'\real-apps\Edge')) 'The real application fixture escaped its exact run.'
     foreach($invalidRoot in @($realRun+'\..\other','C:\Users\LaqayLab','H:\Projects')){

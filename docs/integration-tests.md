@@ -359,3 +359,15 @@ and acceptance requires the automation thread to stop during cleanup. Native
 clipboard publication and SendInput remain on their original helper thread.
 This design correction does not establish the cause of the earlier COM error;
 the 33-case guest result remains pending.
+
+A fourth attempt reproduced the error on the dedicated MTA worker. Its full
+stack identifies the managed `FindAll` call while looking for Notepad tabs;
+moving that call to MTA alone did not resolve it. Application and worker cleanup
+were normal, and final recovery restored the guest with both VMs off.
+The next diagnostic probes the same verified application window through native
+`IUIAutomation`, on the same MTA worker, before the managed editor lookup.
+It reads only that window's subtree, records root PID, element count, bounded
+editor/tab metadata and full errors, and releases its COM references on the
+worker. It sends no input and cannot substitute for any of the 33 required
+cases. This comparison is intended to distinguish client paths before changing
+the editor automation; it is not compatibility evidence.
