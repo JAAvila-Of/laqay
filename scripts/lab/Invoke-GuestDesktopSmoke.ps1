@@ -8,9 +8,11 @@ param(
     [switch]$IncludeLifecycle,
     [switch]$IncludeAdverse,
     [switch]$IncludeRealApplications,
+    [switch]$IncludeWindowsTerminal,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
 $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
@@ -76,7 +78,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();IncludeRealApplications=[bool]$IncludeRealApplications;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}

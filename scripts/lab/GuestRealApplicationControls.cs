@@ -31,7 +31,7 @@ public static partial class LaqayGuestDesktop {
     [DllImport("user32.dll")] [return:MarshalAs(UnmanagedType.Bool)] static extern bool IsWindowVisible(IntPtr window);
 
     public static string RealFixturePath(string kind,string runRoot) {
-        if((kind!="Notepad" && kind!="Edge") || runRoot==null || !Regex.IsMatch(runRoot,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}$"))
+        if((kind!="Notepad" && kind!="Edge" && kind!="Terminal") || runRoot==null || !Regex.IsMatch(runRoot,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}$"))
             throw new ArgumentException("An exact owned guest run and supported application are required.");
         return Path.Combine(runRoot,"real-apps",kind);
     }
@@ -42,9 +42,14 @@ public static partial class LaqayGuestDesktop {
     }
     public static object RealApplicationAbi() {return new {Startup=Marshal.SizeOf(typeof(RealStartup)),Process=Marshal.SizeOf(typeof(RealProcess)),Accounting=Marshal.SizeOf(typeof(RealAccounting))};}
     public static string RealNotepadStatePath(string localAppData) {
-        if(!String.Equals(localAppData,@"C:\Users\LaqayLab\AppData\Local",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Notepad state isolation requires the exact disposable guest profile.");
+        if(!String.Equals(localAppData,@"C:\Users\LaqayLab\AppData\Local",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Packaged application state isolation requires the exact disposable guest profile.");
         return Path.Combine(localAppData,@"Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState");
     }
+    public static string RealTerminalStatePath(string localAppData) {
+        RealNotepadStatePath(localAppData);
+        return Path.Combine(localAppData,@"Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState");
+    }
+    public static string RealTerminalSettings() {return "{\"actions\":[{\"command\":\"paste\",\"keys\":\"ctrl+v\"}]}";}
     // Prefix declarations follow UIAutomationClient.idl in the Windows SDK.
     // Unused cache/walker pointers preserve their native vtable positions.
     [StructLayout(LayoutKind.Sequential)] struct RealUiaPoint {public int x,y;}
@@ -160,6 +165,7 @@ public static partial class LaqayGuestDesktop {
         var owned=OwnedRealApplication();if(owned.kind!="Notepad") throw new InvalidOperationException("No owned Notepad document.");
         try {return File.ReadAllText(owned.document)==expected;} catch(IOException) {return false;}
     }
+    public static object BindRealTerminalReceiver(int pid) {return OwnedRealApplication().BindReceiver(pid);}
     public static object EndRealApplication() {
         var owned=realApplication;realApplication=null;
         try {return owned==null?null:owned.Stop();}finally {EndNativeUnicodeFixture();}
@@ -169,9 +175,10 @@ public static partial class LaqayGuestDesktop {
         internal readonly string kind,document;
         readonly string root,runId,target,launcher,expectedPackage,tag,arguments;
         readonly DateTime started=DateTime.UtcNow;
-        Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
+        Process bootstrap,app,receiver;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
+        string receiverScriptHash,terminalSettingsHash;
         RealAutomation automation;object nativeProbe;
-        string notepadState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
+        string packageState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
         const string edgePolicyPath=@"SOFTWARE\Policies\Microsoft\Edge";
         bool edgePoliciesConfigured;
         readonly System.Collections.Generic.HashSet<uint> priorEdgePids=new System.Collections.Generic.HashSet<uint>();
@@ -190,6 +197,16 @@ public static partial class LaqayGuestDesktop {
                 if(!target.StartsWith(packageRoot+"\\",StringComparison.OrdinalIgnoreCase) || !String.Equals(Path.GetFileName(target),"Notepad.exe",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Unexpected registered Notepad executable.");
                 expectedPackage=package;launcher=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"System32","notepad.exe");
                 document=Path.Combine(root,"Laqay-"+runId+".txt");tag=Path.GetFileNameWithoutExtension(document);arguments=Quote(document);
+            } else if(kind=="Terminal") {
+                if(package==null || !Regex.IsMatch(package,@"^Microsoft\.WindowsTerminal_[A-Za-z0-9._-]+$")) throw new ArgumentException("The registered Terminal package is required.");
+                string packageRoot=Path.Combine(@"C:\Program Files\WindowsApps",package);
+                target=Path.GetFullPath(notepad);
+                if(!target.StartsWith(packageRoot+"\\",StringComparison.OrdinalIgnoreCase) || !String.Equals(Path.GetFileName(target),"WindowsTerminal.exe",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Unexpected registered Terminal executable.");
+                expectedPackage=package;launcher=target;document=Path.Combine(root,"GuestTerminalReceiver.ps1");tag="Laqay Terminal "+runId;
+                var markerData=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(@"C:\LaqayLab\ready.json"));
+                string lab=(string)markerData["LabId"];if(!Regex.IsMatch(lab,"^[a-f0-9]{32}$")) throw new InvalidOperationException("Unexpected Terminal lab marker.");
+                string powershell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),@"System32\WindowsPowerShell\v1.0\powershell.exe");
+                arguments="--window new new-tab --title "+Quote(tag)+" --suppressApplicationTitle --startingDirectory "+Quote(root)+" "+Quote(powershell)+" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "+Quote(document)+" -LabId "+lab+" -RunId "+runId+" -OwnerPid "+Process.GetCurrentProcess().Id;
             } else {
                 foreach(var hive in new[]{Registry.LocalMachine,Registry.CurrentUser}) foreach(string suffix in new[]{"",@"\Recommended"})
                     using(var key=hive.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge"+suffix))
@@ -204,11 +221,14 @@ public static partial class LaqayGuestDesktop {
             if(!Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(root))) || Directory.Exists(root)) throw new InvalidOperationException("Unexpected or reused real application fixture.");
             if((File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0 || (File.GetAttributes(launcher)&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A real application executable is a reparse point.");
             if(kind=="Notepad") foreach(var existing in Process.GetProcessesByName("Notepad")) using(existing) if(existing.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Notepad session.");
+            if(kind=="Terminal") foreach(var existing in Process.GetProcessesByName("WindowsTerminal")) using(existing) if(existing.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Terminal session before state isolation.");
             version=FileVersionInfo.GetVersionInfo(target).FileVersion;sha=Hash(target);
             Directory.CreateDirectory(root);created=true;marker="LaqayRealApplication:"+runId+":"+kind+":"+Process.GetCurrentProcess().Id;
             File.WriteAllText(Path.Combine(root,"owner.txt"),marker);
-            File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
-            if(kind=="Notepad") IsolateNotepadState();
+            if(kind=="Terminal") {File.Copy(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(root)),"GuestTerminalReceiver.ps1"),document);receiverScriptHash=Hash(document);}
+            else File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
+            if(kind=="Notepad" || kind=="Terminal") IsolatePackagedState();
+            if(kind=="Terminal"){Directory.CreateDirectory(packageState);string settings=Path.Combine(packageState,"settings.json");File.WriteAllText(settings,RealTerminalSettings(),new UTF8Encoding(false));terminalSettingsHash=Hash(settings);}
             if(kind=="Edge") VerifyEdgePolicies();
             ownedJob=NewJob();launcherJob=ownedJob;
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
@@ -233,7 +253,7 @@ public static partial class LaqayGuestDesktop {
                 if(!AssignProcessToJobObject(ownedJob,app.Handle)) throw new InvalidOperationException("Cannot contain the activated Notepad process.");adopted=true;
             }
             if(!IsProcessInJob(app.Handle,ownedJob,out inJob) || !inJob) throw new InvalidOperationException("The actual application is not contained.");
-            if(kind=="Notepad") {
+            if(kind=="Notepad" || kind=="Terminal") {
                 uint length=0;GetPackageFullName(app.Handle,ref length,null);
                 if(length==0 || length>1024) throw new InvalidOperationException("Notepad has no registered runtime package identity.");
                 var name=new StringBuilder((int)length);
@@ -241,6 +261,7 @@ public static partial class LaqayGuestDesktop {
                 packageIdentity=name.ToString();
             }
             if(Hash(target)!=sha) throw new InvalidOperationException("The executable changed during launch.");
+            if(kind=="Terminal" && Hash(document)!=receiverScriptHash) throw new InvalidOperationException("The Terminal receiver changed during launch.");
             automation=new RealAutomation();
             nativeProbe=automation.Call("NativeProbe",()=>ProbeRealNativeWindow(window,appPid));
             ready=true;string last=null;
@@ -287,7 +308,7 @@ public static partial class LaqayGuestDesktop {
             automation.Stage="Target.FindTabs";
             if(kind=="Notepad" && rootElement.FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)).Count>1) throw new InvalidOperationException("Notepad restored unrelated tabs.");
             automation.Stage="Target.FindEditors";
-            var candidates=rootElement.FindAll(TreeScope.Descendants,kind=="Edge"?(Condition)new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.NameProperty,"Laqay real application input")):
+            var candidates=rootElement.FindAll(TreeScope.Descendants,kind=="Terminal"?(Condition)new PropertyCondition(AutomationElement.ClassNameProperty,"TermControl"):kind=="Edge"?(Condition)new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.NameProperty,"Laqay real application input")):
                 new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Document),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit)));
             AutomationElement targetElement=null;
             foreach(AutomationElement element in candidates) {
@@ -326,14 +347,26 @@ public static partial class LaqayGuestDesktop {
             var results=new System.Collections.Generic.List<object>();
             try {
                 if(window==IntPtr.Zero || app==null || app.HasExited) return results.ToArray();
-                var elements=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Document),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)));
+                var elements=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new OrCondition(new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Document),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem),new PropertyCondition(AutomationElement.ClassNameProperty,"TermControl")));
                 foreach(AutomationElement element in elements) {if(results.Count>=24) break;var value=element.Current;results.Add(new {Class=value.ClassName,Type=value.ControlType.ProgrammaticName,Id=value.AutomationId,Enabled=value.IsEnabled,Offscreen=value.IsOffscreen,Focusable=value.IsKeyboardFocusable,Pid=value.ProcessId});}
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray()};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},TerminalSettingsSha256=terminalSettingsHash,TerminalReceiverScriptSha256=receiverScriptHash,TerminalState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray()};}
         public object State() {
             return automation.Call("State",()=>StateCore());
+        }
+        public object BindReceiver(int pid) {
+            RequireReady();if(kind!="Terminal" || pid<=0 || (receiver!=null && receiver.Id!=pid)) throw new InvalidOperationException("Unexpected Terminal receiver process.");
+            if(receiver==null) {
+                var candidate=Process.GetProcessById(pid);bool contained=false;
+                try {
+                    string expected=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),@"System32\WindowsPowerShell\v1.0\powershell.exe");
+                    if(candidate.SessionId!=Process.GetCurrentProcess().SessionId || candidate.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !String.Equals(candidate.MainModule.FileName,expected,StringComparison.OrdinalIgnoreCase) || !IsProcessInJob(candidate.Handle,ownedJob,out contained) || !contained) throw new InvalidOperationException("The Terminal receiver is not a new owned PowerShell process.");
+                    receiver=candidate;candidate=null;
+                }finally{if(candidate!=null) candidate.Dispose();}
+            }
+            return new {Pid=receiver.Id,SessionId=receiver.SessionId,Executable=receiver.MainModule.FileName,OwnedJob=true,ScriptSha256=receiverScriptHash};
         }
         object StateCore() {
             RequireReady();var element=Target();var gui=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
@@ -352,42 +385,45 @@ public static partial class LaqayGuestDesktop {
             foreach(string path in Directory.GetFileSystemEntries(directory)) {var attrs=File.GetAttributes(path);if((attrs&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A fixture entry is a reparse point.");if((attrs&FileAttributes.Directory)!=0) SafeTree(path);}
         }
         static void NoReparseAncestors(string directory) {
-            for(var item=new DirectoryInfo(directory);item!=null;item=item.Parent) if(item.Exists && (item.Attributes&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A Notepad state ancestor is a reparse point.");
+            for(var item=new DirectoryInfo(directory);item!=null;item=item.Parent) if(item.Exists && (item.Attributes&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A Packaged application state ancestor is a reparse point.");
         }
         static string StateFingerprint(string directory) {
-            if(!Directory.Exists(directory)) {if(File.Exists(directory)) throw new InvalidOperationException("The Notepad state path is not a directory.");return "absent";}
+            if(!Directory.Exists(directory)) {if(File.Exists(directory)) throw new InvalidOperationException("The Packaged application state path is not a directory.");return "absent";}
             SafeTree(directory);
             var entries=new System.Collections.Generic.List<string>();long bytes=0;
             foreach(string path in Directory.GetDirectories(directory,"*",SearchOption.AllDirectories)) entries.Add("D:"+path.Substring(directory.Length));
             foreach(string path in Directory.GetFiles(directory,"*",SearchOption.AllDirectories)) {
-                bytes+=new FileInfo(path).Length;if(bytes>128*1024*1024 || entries.Count>=1024) throw new InvalidOperationException("The Notepad state exceeds the fixture budget.");
+                bytes+=new FileInfo(path).Length;if(bytes>128*1024*1024 || entries.Count>=1024) throw new InvalidOperationException("The Packaged application state exceeds the fixture budget.");
                 entries.Add("F:"+path.Substring(directory.Length)+":"+Hash(path));
             }
             entries.Sort(StringComparer.Ordinal);
             using(var digest=System.Security.Cryptography.SHA256.Create()) return BitConverter.ToString(digest.ComputeHash(Encoding.UTF8.GetBytes(String.Join("\n",entries.ToArray())))).Replace("-","");
         }
         void CheckStatePaths() {
-            if(notepadState!=RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) || stateBackup!=Path.Combine(root,"notepad-state-backup")) throw new InvalidOperationException("Unexpected Notepad state backup identity.");
-            NoReparseAncestors(notepadState);NoReparseAncestors(root);
+            string expected=kind=="Terminal"?RealTerminalStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)):RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            if(packageState!=expected || stateBackup!=Path.Combine(root,"packaged-state-backup")) throw new InvalidOperationException("Unexpected packaged application state backup identity.");
+            NoReparseAncestors(packageState);NoReparseAncestors(root);
         }
-        void IsolateNotepadState() {
-            notepadState=RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));stateBackup=Path.Combine(root,"notepad-state-backup");
-            CheckStatePaths();if(!Directory.Exists(Path.GetDirectoryName(notepadState)) || Directory.Exists(stateBackup) || File.Exists(stateBackup)) throw new InvalidOperationException("Unexpected Notepad state package or reused backup.");
-            stateOriginal=StateFingerprint(notepadState);stateExisted=Directory.Exists(notepadState);
-            File.WriteAllText(Path.Combine(root,"notepad-state-journal.txt"),"LocalState="+notepadState+"\nBackup="+stateBackup+"\nOriginalFingerprint="+stateOriginal+"\nExisted="+stateExisted);
-            if(stateExisted) Directory.Move(notepadState,stateBackup);
+        void IsolatePackagedState() {
+            packageState=kind=="Terminal"?RealTerminalStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)):RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));stateBackup=Path.Combine(root,"packaged-state-backup");
+            CheckStatePaths();
+            if(kind=="Terminal" && !Directory.Exists(Path.GetDirectoryName(packageState))) Directory.CreateDirectory(Path.GetDirectoryName(packageState));
+            if(!Directory.Exists(Path.GetDirectoryName(packageState)) || Directory.Exists(stateBackup) || File.Exists(stateBackup)) throw new InvalidOperationException("Unexpected packaged application state package or reused backup.");
+            stateOriginal=StateFingerprint(packageState);stateExisted=Directory.Exists(packageState);
+            File.WriteAllText(Path.Combine(root,"packaged-state-journal.txt"),"LocalState="+packageState+"\nBackup="+stateBackup+"\nOriginalFingerprint="+stateOriginal+"\nExisted="+stateExisted);
+            if(stateExisted) Directory.Move(packageState,stateBackup);
             stateIsolated=true;
         }
-        void RestoreNotepadState() {
+        void RestorePackagedState() {
             if(!stateIsolated) return;
             CheckStatePaths();
-            if(File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("The Notepad state backup lost its fixture owner.");
-            foreach(var process in Process.GetProcessesByName("Notepad")) using(process) if(process.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Cannot restore Notepad state while a Notepad process remains.");
-            if(stateExisted && StateFingerprint(stateBackup)!=stateOriginal) throw new InvalidOperationException("The original Notepad state backup changed.");
-            if(Directory.Exists(notepadState)){SafeTree(notepadState);Directory.Delete(notepadState,true);}
-            if(stateExisted) Directory.Move(stateBackup,notepadState);
-            stateFinal=StateFingerprint(notepadState);stateRestored=stateFinal==stateOriginal;
-            if(!stateRestored) throw new InvalidOperationException("Notepad state restoration did not preserve its fingerprint.");
+            if(File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("The Packaged application state backup lost its fixture owner.");
+            foreach(var process in Process.GetProcessesByName(kind=="Terminal"?"WindowsTerminal":"Notepad")) using(process) if(process.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Cannot restore packaged state while an application process remains.");
+            if(stateExisted && StateFingerprint(stateBackup)!=stateOriginal) throw new InvalidOperationException("The original Packaged application state backup changed.");
+            if(Directory.Exists(packageState)){SafeTree(packageState);Directory.Delete(packageState,true);}
+            if(stateExisted) Directory.Move(stateBackup,packageState);
+            stateFinal=StateFingerprint(packageState);stateRestored=stateFinal==stateOriginal;
+            if(!stateRestored) throw new InvalidOperationException("Packaged application state restoration did not preserve its fingerprint.");
         }
         void VerifyEdgePolicies() {
             RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
@@ -422,12 +458,14 @@ public static partial class LaqayGuestDesktop {
             return results.ToArray();
         }
         public object Stop() {
+            bool terminalStop=kind=="Terminal" && created && receiver!=null;
+            if(terminalStop) File.WriteAllText(Path.Combine(root,"stop.txt"),runId);
             string releaseError=null;
             try{if(automation!=null) automation.Call("ReleaseReferences",()=>{GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();return 0;});}catch(Exception failure){releaseError=failure.ToString();}
             bool automationStopped=automation==null || automation.Stop();
             bool forced=false;int? exit=null;uint remaining=0;object[] pending=new object[0];
             try {
-                if(app!=null && !app.HasExited) {uint pid;GetWindowThreadProcessId(window,out pid);if(pid==(uint)appPid) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero);}
+                if(!terminalStop && app!=null && !app.HasExited) {uint pid;GetWindowThreadProcessId(window,out pid);if(pid==(uint)appPid) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero);}
                 var until=DateTime.UtcNow.AddSeconds(6);
                 do {
                     remaining=Active(ownedJob)+(launcherJob!=ownedJob?Active(launcherJob):0);
@@ -443,13 +481,15 @@ public static partial class LaqayGuestDesktop {
                 if(app!=null){if(!app.WaitForExit(5000)){forced=true;app.Kill();if(!app.WaitForExit(5000)) throw new InvalidOperationException("The exact verified real application survived cleanup.");}exit=app.ExitCode;app.Dispose();app=null;}
                 if(bootstrap!=null){if(!bootstrap.WaitForExit(5000)) throw new InvalidOperationException("The exact launcher survived Job cleanup.");bootstrap.Dispose();bootstrap=null;}
             }
+            int? receiverExit=null;string receiverReceipt=null;
+            if(receiver!=null){try{if(!receiver.WaitForExit(5000)) throw new InvalidOperationException("The owned Terminal receiver survived cleanup.");receiverExit=receiver.ExitCode;receiverReceipt=File.ReadAllText(Path.Combine(root,"receiver.json"));}finally{receiver.Dispose();receiver=null;}}
             string cleanupError=releaseError;
-            try{RestoreNotepadState();}catch(Exception failure){cleanupError=failure.ToString();}
+            try{RestorePackagedState();}catch(Exception failure){cleanupError=failure.ToString();}
             try {if(created && cleanupError==null) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,EdgePolicyRestoreDelegated=kind=="Edge" && edgePoliciesConfigured,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Edge" || edgePoliciesConfigured)};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,TerminalStateRestored=kind!="Terminal" || stateRestored,TerminalReceiverExitCode=receiverExit,TerminalReceiverReceiptJson=receiverReceipt,EdgePolicyRestoreDelegated=kind=="Edge" && edgePoliciesConfigured,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Terminal" || (stateRestored && receiverExit==0)) && (kind!="Edge" || edgePoliciesConfigured)};
         }
     }
 }

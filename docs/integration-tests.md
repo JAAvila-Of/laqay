@@ -477,3 +477,32 @@ executable. Earlier failures remain failures; the successful repetition does
 not establish their cause or prove long-term stability. It does not complete
 the other applications, clipboard/publication races, storage failures,
 Windows 10 or sustained-load matrix.
+
+### Optional Windows Terminal reference: runtime pending
+
+Adding -IncludeWindowsTerminal to -AdverseOnly -IncludeRealApplications
+selects 35 cases, including TerminalRealText and TerminalRealImageDoesNotWrite.
+The default 29 cases and the existing 33-case selection keep their prerequisites
+and commands. The Terminal extension's guest result is pending; compilation
+and planning do not prove compatibility.
+
+The helper revalidates the registered Microsoft Terminal package and executable,
+requires a new owned window/process and pre-resume Job containment, and refuses
+an existing Terminal session before isolating its guest-user LocalState.
+The reference settings explicitly bind Terminal's native paste action to
+Ctrl+V. Terminal 1.18's default action bindings instead include Ctrl+Shift+V
+and Shift+Insert; shells can also handle Ctrl+V themselves. This fixture tests
+Terminal's native action with an explicit isolated binding, not every shell
+or default user profile.
+
+A PowerShell -NoProfile console receiver inside the owned Terminal reads two
+lines with Console.ReadLine, storing pasted content as data without evaluating
+commands. The test sends actual Ctrl+V, observes Terminal's TermControl text
+pattern, and submits each line to that receiver. Independent receipts must
+match the run, receiver PID/session, contained executable and script hash,
+with exact text while Laqay is disabled/enabled. A later Explorer output fences
+the image reference as in the other app cases. A stop marker requests normal
+receiver exit; acceptance requires zero exit codes, empty Jobs, worker shutdown,
+removed fixtures and the original Terminal LocalState fingerprint restored.
+Other package settings are outside this rollback; if first use creates the
+package data container, the test does not claim to remove that whole container.
