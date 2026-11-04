@@ -31,6 +31,171 @@ fn full(error: &io::Error) -> bool {
     matches!(error.raw_os_error(), Some(39 | 112))
 }
 
+fn share_png(value: u8) -> Vec<u8> {
+    let mut dib = vec![0u8; 56];
+    dib[..4].copy_from_slice(&40u32.to_le_bytes());
+    dib[4..8].copy_from_slice(&2i32.to_le_bytes());
+    dib[8..12].copy_from_slice(&2i32.to_le_bytes());
+    dib[12..14].copy_from_slice(&1u16.to_le_bytes());
+    dib[14..16].copy_from_slice(&24u16.to_le_bytes());
+    dib[40..].fill(value);
+    crate::image::to_png(&dib, false).unwrap()
+}
+
+fn share_control(control: &Path, name: &str, contents: &str) {
+    let temporary = control.join(format!("{name}.tmp"));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .unwrap();
+    file.write_all(contents.as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    assert!(!control.join(name).exists());
+    fs::rename(temporary, control.join(name)).unwrap();
+}
+
+fn share_wait(control: &Path, name: &str, token: &str) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if fs::read_to_string(control.join("abort.txt")).is_ok_and(|value| value == token) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Controller aborted",
+            ));
+        }
+        if fs::read_to_string(control.join(name)).is_ok_and(|value| value == token) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Missing share-controller acknowledgement",
+    ))
+}
+
+#[test]
+#[ignore = "Requires the owned loopback SMB share and controller from hosted CI"]
+fn share_withdrawal_before_publication_recovers() {
+    for (name, expected) in [
+        ("GITHUB_ACTIONS", "true"),
+        ("RUNNER_ENVIRONMENT", "github-hosted"),
+        ("RUNNER_OS", "Windows"),
+    ] {
+        assert_eq!(std::env::var(name).as_deref(), Ok(expected));
+    }
+    let token = std::env::var("LAQAY_SHARE_TEST_TOKEN").unwrap();
+    assert_eq!(token.len(), 32);
+    assert!(token.bytes().all(|c| c.is_ascii_hexdigit()));
+    let root = PathBuf::from(std::env::var_os("LAQAY_SHARE_TEST_ROOT").unwrap());
+    let control = PathBuf::from(std::env::var_os("LAQAY_SHARE_TEST_CONTROL").unwrap());
+    let expected = PathBuf::from(std::env::var_os("RUNNER_TEMP").unwrap())
+        .join(format!("Laqay.Share.{token}"))
+        .join("control");
+    assert_eq!(
+        root,
+        PathBuf::from(format!(r"\\127.0.0.1\LaqayShare-{token}"))
+    );
+    assert_eq!(control, expected);
+    for path in [&control, control.parent().unwrap()] {
+        assert_eq!(
+            fs::symlink_metadata(path).unwrap().file_attributes() & 0x400,
+            0
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(control.join("owner.txt")).unwrap(),
+        token
+    );
+    assert_eq!(fs::read_to_string(root.join("owner.txt")).unwrap(), token);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    let original_png = share_png(17);
+    let failed_png = share_png(34);
+    let recovery_png = share_png(51);
+    assert_ne!(failed_png, recovery_png);
+    let original_time = crate::file_writer::ScreenshotTime::new(2026, 11, 4, 1, 2, 3).unwrap();
+    let time = crate::file_writer::ScreenshotTime::new(2026, 11, 4, 1, 2, 4).unwrap();
+    let original = root.join(original_time.filename(0));
+    fs::write(&original, &original_png).unwrap();
+    let mut staging = String::new();
+    let result = crate::file_writer::create_screenshot_checked(
+        &root,
+        time,
+        |file| file.write_all(&failed_png),
+        || {
+            let entries: Vec<_> = fs::read_dir(&root)?
+                .map(|e| e.unwrap())
+                .filter(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with(".laqay-") && name.ends_with(".tmp")
+                })
+                .collect();
+            assert_eq!(entries.len(), 1);
+            staging = entries[0].file_name().into_string().unwrap();
+            assert!(staging.starts_with(&format!(".laqay-{}-", std::process::id())));
+            assert_eq!(fs::read(entries[0].path()).unwrap(), failed_png);
+            share_control(
+                &control,
+                "staged.json",
+                &format!(
+                    "{{\"pid\":{},\"staging\":\"{staging}\",\"original\":\"{}\",\"target\":\"{}\",\"payload_bytes\":{}}}",
+                    std::process::id(),
+                    original_time.filename(0),
+                    time.filename(0),
+                    failed_png.len()
+                ),
+            );
+            share_wait(&control, "withdrawn.txt", &token)?;
+            Ok(())
+        },
+    );
+    let error = result.unwrap_err();
+    let code = error.raw_os_error().unwrap();
+    assert!(
+        matches!(code, 53 | 64 | 67 | 1203 | 1231 | 1232 | 2250),
+        "{error}"
+    );
+    share_control(
+        &control,
+        "failed.json",
+        &format!("{{\"pid\":{},\"error\":{code}}}", std::process::id()),
+    );
+    share_wait(&control, "restored.txt", &token).unwrap();
+    assert_eq!(fs::read_to_string(root.join("owner.txt")).unwrap(), token);
+    assert_eq!(fs::read(&original).unwrap(), original_png);
+    assert!(!root.join(time.filename(0)).exists());
+    let residue: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(residue.len() <= 1);
+    if let Some(entry) = residue.first() {
+        assert_eq!(entry.file_name().to_str().unwrap(), staging);
+        assert_eq!(fs::read(entry.path()).unwrap(), failed_png);
+    }
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 2 + residue.len());
+    let output =
+        crate::file_writer::create_screenshot(&root, time, |file| file.write_all(&recovery_png))
+            .unwrap();
+    assert_eq!(output.file_name().unwrap(), time.filename(0).as_str());
+    assert_eq!(
+        crate::image::to_png(&fs::read(&output).unwrap(), true).unwrap(),
+        recovery_png
+    );
+    assert_eq!(fs::read(&original).unwrap(), original_png);
+    fs::remove_file(output).unwrap();
+    fs::remove_file(original).unwrap();
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1 + residue.len());
+    println!(
+        "LAQAY_SHARE_RESULT {{\"writer_error\":{code},\"staging_after_reconnect\":{},\"no_incomplete_png\":true,\"original_preserved\":true,\"new_image_recovered\":true}}",
+        residue.len()
+    );
+}
+
 #[test]
 #[ignore = "Requires the dedicated 64 MiB NTFS volume from the hosted CI harness"]
 fn disk_full_cleans_failed_write_and_recovers() {

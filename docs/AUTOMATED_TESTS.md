@@ -69,6 +69,14 @@ on failure. See the [storage acceptance and limits](integration-tests.md#isolate
 
 ## Coverage and limits
 
+The explicit hosted share step uses `scripts/Test-ShareFailure.ps1` for a
+separate fixture-dependent ignored test. It withdraws only its own loopback SMB
+share between complete staging and publication, then checks fresh-image
+recovery. Normal Cargo commands do not create shares. Local/self-hosted
+execution is refused. The `laqay-share-validation` artifact records native
+outcome, residue and controller cleanup separately; see the
+[withdrawal scope](integration-tests.md#isolated-smb-withdrawal-regression-ci-pending).
+
 The normal-mode application check uses `Invoke-PreferencesProbe.ps1 -Automated`
 for Enabled and Startup. That mode requires a GitHub-hosted runner and refuses
 local or self-hosted execution. It

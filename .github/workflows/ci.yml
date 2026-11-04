@@ -56,6 +56,20 @@ jobs:
             target/storage-test-results.log
             target/storage-diskpart.log
           if-no-files-found: ignore
+      - name: Check SMB withdrawal before publication and fresh-image recovery
+        shell: pwsh
+        run: ./scripts/Test-ShareFailure.ps1
+      - name: Retain isolated share evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: laqay-share-validation
+          path: |
+            target/share-failure-report.json
+            target/share-test-results.log
+            target/share-test-stderr.log
+            target/share-build.log
+          if-no-files-found: ignore
       - run: cargo build --locked --release
       - name: Check normal-mode preference persistence in the isolated VM
         shell: pwsh
