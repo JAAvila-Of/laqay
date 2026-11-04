@@ -56,6 +56,17 @@ parent tests explicitly execute them with `--exact --ignored` in fresh processes
 and require a successful result containing one executed test. They are not
 optional coverage in the all-features CI run.
 
+## Hosted storage capacity check
+
+An explicit CI step runs `scripts/Test-StorageFailure.ps1` on a disposable
+GitHub-hosted Windows runner. It creates a bounded 64 MiB NTFS scratch VHD,
+executes the real disk-full writer/recovery test, validates its native evidence
+and detaches/removes the fixture. Its environment guard refuses local and
+self-hosted execution before disk operations. Normal Cargo commands above
+leave this additional fixture-dependent test ignored and do not mount disks.
+The `laqay-storage-validation` artifact retains its report and logs, including
+on failure. See the [storage acceptance and limits](integration-tests.md#isolated-storage-capacity-regression).
+
 ## Coverage and limits
 
 The normal-mode application check uses `Invoke-PreferencesProbe.ps1 -Automated`
@@ -78,7 +89,7 @@ through Windows login. The working computer's settings remain separate.
 | Preferences | Defaults without creating keys, DWORD persistence across processes, Unicode/path quoting, startup add/remove, preserving other entries, malformed/empty/oversized values, error propagation; application-level round trips in the CI VM |
 | Clipboard | Empty/text rejection, PNG priority and preservation, native DIB and HBITMAP retrieval, regular/virtual file priority, stale sequences, locked clipboard and recovery |
 | Images | Dimensions, channels, orientation, V5 alpha, opaque HBITMAP snapshots and ownership, malformed metadata/chunks, every truncated input prefix, allocation bounds, PNG padding removal |
-| Files | Collision preservation, concurrent writers, invalid destinations, failed encoding cleanup, cancellation during staging even after re-enabling |
+| Files | Collision preservation, concurrent writers, invalid destinations, failed encoding cleanup, cancellation during staging and collision retries even after re-enabling; real disk-full failure and recovery on the bounded hosted CI volume |
 | Context and keys | Ambiguous/editable/virtual-context rejection, focus stability, modifier handling, key repeat, cancellation generations |
 | Public tooling | Conventional subjects, policy files/links, dependency license collection, missing-notice failures; portable archive content, AMD64 GUI header and checksums, with malformed-package rejection and the actual packaging command |
 
@@ -89,7 +100,7 @@ These are component, controller, and native-API integration results. They do not
 prove real
 Explorer focus/tab behavior, a physical keyboard gesture, RDP clipboard
 redirection, the tray's visual state, execution at login, Windows 10 desktop
-compatibility, writable UNC/OneDrive behavior, or real disk/share failure. Those
+compatibility, writable UNC/OneDrive behavior, or disconnected-share/physical-device failure. Those
 remain separate scenarios in the [integration matrix](integration-tests.md).
 An automated Run-value round trip does not log out or restart Windows.
 

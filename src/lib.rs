@@ -30,6 +30,8 @@ mod settings;
 mod tray;
 
 #[cfg(all(test, windows))]
+mod storage_tests;
+#[cfg(all(test, windows))]
 mod test_support;
 
 #[cfg(windows)]
