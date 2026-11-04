@@ -78,7 +78,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -164,12 +164,30 @@ function Check-Png([string]$path){
     }finally{$image.Dispose()}
 }
 function Navigate-Tab([IntPtr]$window,[string]$path){
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
-    [LaqayGuestDesktop]::TextClipboard($path)
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,86))
-    [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(13))
-    Wait-For { $null -ne (Find-Folder $path) } 'The new guest tab did not navigate to its test folder.'
-    Start-Sleep -Milliseconds 300
+    $entry=[pscustomobject]@{Window=$window.ToInt64();Path=$path;Stage='BeforeAddress';StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null;Before=$null;AddressFocus=$null;PastedText=$null;Clipboard=$null;After=$null;SelectedTab=$null;ShellWindows=@();Passed=$false;Error=$null}
+    try{
+        $entry.Before=[LaqayGuestDesktop]::FolderInputState($window)
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
+        $entry.Stage='AddressFocused';$entry.AddressFocus=[LaqayGuestDesktop]::FolderInputState($window)
+        [LaqayGuestDesktop]::TextClipboard($path)
+        $entry.Clipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()
+        $entry.Stage='PasteAddress'
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,86))
+        Wait-For {$entry.PastedText=[LaqayGuestDesktop]::FocusedText($window);$entry.PastedText -ceq $path} 'The guest address bar did not receive the exact navigation path.'
+        $entry.Stage='SubmitAddress'
+        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(13))
+        Wait-For { $null -ne (Find-Folder $path) } 'The new guest tab did not navigate to its test folder.'
+        $entry.Stage='Navigated';$entry.Passed=$true
+        Start-Sleep -Milliseconds 300
+    }catch{$entry.Error=$_.Exception.Message;throw}finally{
+        try{$entry.After=[LaqayGuestDesktop]::FolderInputState($window)}catch{}
+        try{$entry.SelectedTab=[LaqayGuestDesktop]::SelectedTabName($window)}catch{}
+        try{foreach($candidate in @($shell.Windows())){
+            try{$entry.ShellWindows+=@([pscustomobject]@{Window=[long]$candidate.HWND;Path=[string]$candidate.Document.Folder.Self.Path;LocationUrl=[string]$candidate.LocationURL})}catch{}
+        }}catch{}
+        $entry.FinishedUtc=[DateTime]::UtcNow.ToString('o')
+        $report.TabNavigations+=@($entry);Save-Report
+    }
 }
 try{
     Save-Report

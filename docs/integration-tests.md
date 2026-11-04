@@ -514,4 +514,11 @@ Terminal. The opt-in task now explicitly hosts the driver in headless conhost
 with handoff disabled, keeping console delegation separate from the application
 under test. Any remaining prior Terminal process still fails the test, with
 process identity diagnostics; it is never adopted or terminated by this guard.
-The revised runtime run remains pending.
+The second attempt passed eight cases before ActiveTabSelection failed to
+navigate its new Explorer tab. Terminal cases were not reached. Recovery
+restored the baseline and temporary logon, shut down both VMs and left no owned
+controller processes. This does not validate the console-delegation change.
+Navigation now records focus, clipboard metadata, observed address text,
+selected tab and Shell folder paths, including on failure. It requires the
+exact pasted address before submitting Enter, without retrying input or
+skipping cases. The revised full runtime run remains pending.
