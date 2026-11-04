@@ -370,7 +370,18 @@ public static partial class LaqayGuestDesktop {
                 var candidate=Process.GetProcessById(pid);bool contained=false;
                 try {
                     string expected=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),@"System32\WindowsPowerShell\v1.0\powershell.exe");
-                    if(candidate.SessionId!=Process.GetCurrentProcess().SessionId || candidate.StartTime.ToUniversalTime()<started.AddSeconds(-1) || !String.Equals(candidate.MainModule.FileName,expected,StringComparison.OrdinalIgnoreCase) || !IsProcessInJob(candidate.Handle,ownedJob,out contained) || !contained) throw new InvalidOperationException("The Terminal receiver is not a new owned PowerShell process.");
+                    int actualSession=candidate.SessionId,expectedSession=Process.GetCurrentProcess().SessionId;
+                    DateTime actualStart=candidate.StartTime.ToUniversalTime(),earliestStart=started.AddSeconds(-1);
+                    string actualImage=candidate.MainModule.FileName;
+                    bool queried=IsProcessInJob(candidate.Handle,ownedJob,out contained);
+                    int queryError=queried?0:Marshal.GetLastWin32Error();
+                    if(actualSession!=expectedSession || actualStart<earliestStart || !String.Equals(actualImage,expected,StringComparison.OrdinalIgnoreCase) || !queried || !contained) {
+                        string proof=new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(new {
+                            Pid=pid,SessionId=actualSession,ExpectedSessionId=expectedSession,StartedUtc=actualStart.ToString("o"),
+                            EarliestStartUtc=earliestStart.ToString("o"),Executable=actualImage,ExpectedExecutable=expected,
+                            JobQuerySucceeded=queried,JobQueryError=queryError,Contained=contained});
+                        throw new InvalidOperationException("The Terminal receiver is not a new owned PowerShell process: "+proof);
+                    }
                     receiver=candidate;candidate=null;
                 }finally{if(candidate!=null) candidate.Dispose();}
             }

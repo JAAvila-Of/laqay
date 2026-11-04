@@ -536,4 +536,15 @@ an explicit null string for the absent backup path. Inert preparation tests
 exercise both actual publisher functions: Unicode, an old reader retaining a
 complete snapshot, a persistent incompatible reader, unchanged prior output on
 failure, recovery after reader release and refusal to overwrite a temporary
-publication file. The revised full runtime run remains pending.
+publication file.
+
+The fourth attempt passed 17 cases and launched the registered Terminal with
+its tagged window and TermControl text target. Binding the PowerShell receiver
+then failed the combined session/start/image/Job check before any reference
+input was sent. Terminal exited normally and its LocalState fingerprint was
+restored; recovery restored the baseline and temporary logon, both VMs were off
+and no owned controller processes remained. The receiver check now reports each
+observed value and retains the initial receiver receipt before binding, with
+protocol identity validated first. Every ownership requirement still applies.
+This attempt does not establish which condition failed. The revised full
+runtime run remains pending.
