@@ -418,3 +418,18 @@ tag and pre-resume Job containment. Temporary background policies apply to
 the whole disposable guest user and are restored; they never affect the host.
 This permits independent Edge instances while retaining input and cleanup
 ownership checks. A full 33-case pass is still pending.
+
+The eighth attempt passed fifteen cases, then the limited interactive helper
+was denied write access to the Edge policy key before launching the browser.
+No policy value writes were reached. The attempt remains failed; final recovery
+restored the guest and stopped both VMs with no owned helpers.
+Policy preparation/restoration now belongs to the existing administrative
+PowerShell Direct session inside Primary. Its literal scoped block checks the
+guest marker, VM hardware, exact run path, administrative token and the
+`LaqayLab` user SID before accessing that user's policy hive. It journals
+original values/types and created keys before mutation and verifies restoration
+in the controller's `finally`, after task cleanup and before report collection.
+The interactive helper only reads the prepared policies; its token, Laqay's
+token and registry ACLs remain unchanged. Acceptance requires both the guest
+readback and the separate administrative restoration result. Invalid scope
+arguments are rejected locally before any registry operations.

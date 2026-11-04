@@ -173,10 +173,7 @@ public static partial class LaqayGuestDesktop {
         RealAutomation automation;object nativeProbe;
         string notepadState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
         const string edgePolicyPath=@"SOFTWARE\Policies\Microsoft\Edge";
-        sealed class EdgePolicyValue {public string Name;public bool Existed;public int Value;}
-        readonly System.Collections.Generic.List<EdgePolicyValue> edgePolicyValues=new System.Collections.Generic.List<EdgePolicyValue>();
-        readonly System.Collections.Generic.List<string> edgeCreatedKeys=new System.Collections.Generic.List<string>();
-        bool edgePoliciesPrepared,edgePoliciesConfigured,edgePoliciesRestored;
+        bool edgePoliciesConfigured;
         readonly System.Collections.Generic.HashSet<uint> priorEdgePids=new System.Collections.Generic.HashSet<uint>();
         readonly System.Collections.Generic.List<object> priorEdgeProcesses=new System.Collections.Generic.List<object>();
         string marker,version,sha,packageIdentity;int appPid;
@@ -212,7 +209,7 @@ public static partial class LaqayGuestDesktop {
             File.WriteAllText(Path.Combine(root,"owner.txt"),marker);
             File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
             if(kind=="Notepad") IsolateNotepadState();
-            if(kind=="Edge") ConfigureEdgePolicies();
+            if(kind=="Edge") VerifyEdgePolicies();
             ownedJob=NewJob();launcherJob=ownedJob;
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
             string workingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(root));
@@ -392,7 +389,7 @@ public static partial class LaqayGuestDesktop {
             stateFinal=StateFingerprint(notepadState);stateRestored=stateFinal==stateOriginal;
             if(!stateRestored) throw new InvalidOperationException("Notepad state restoration did not preserve its fingerprint.");
         }
-        void ConfigureEdgePolicies() {
+        void VerifyEdgePolicies() {
             RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
             foreach(var process in Process.GetProcessesByName("msedge")) using(process) {
                 try {
@@ -403,35 +400,12 @@ public static partial class LaqayGuestDesktop {
                     priorEdgeProcesses.Add(new {Pid=pid,Image=process.MainModule.FileName,VisibleWindows=windows.ToArray()});
                 }catch(InvalidOperationException){}catch(System.ComponentModel.Win32Exception failure){priorEdgeProcesses.Add(new {Pid=process.Id,Error=failure.NativeErrorCode});}
             }
-            foreach(string name in new[]{"StartupBoostEnabled","BackgroundModeEnabled"}) {
-                using(var machine=Registry.LocalMachine.OpenSubKey(edgePolicyPath)) if(machine!=null && machine.GetValue(name)!=null && (machine.GetValueKind(name)!=RegistryValueKind.DWord || Convert.ToInt32(machine.GetValue(name))!=0)) throw new InvalidOperationException("A machine Edge background policy conflicts with isolated shutdown testing.");
-                using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath)) {
-                    bool existed=user!=null && user.GetValue(name)!=null;
-                    if(existed && user.GetValueKind(name)!=RegistryValueKind.DWord) throw new InvalidOperationException("An Edge background policy has an unexpected registry type.");
-                    edgePolicyValues.Add(new EdgePolicyValue {Name=name,Existed=existed,Value=existed?Convert.ToInt32(user.GetValue(name)):0});
-                }
-            }
-            foreach(string path in new[]{@"SOFTWARE",@"SOFTWARE\Policies",@"SOFTWARE\Policies\Microsoft",edgePolicyPath}) using(var key=Registry.CurrentUser.OpenSubKey(path)) if(key==null) edgeCreatedKeys.Add(path);
-            var journal=new StringBuilder("Scope=Disposable guest HKCU\n");foreach(var value in edgePolicyValues) journal.AppendLine(value.Name+"="+(value.Existed?value.Value.ToString():"absent"));foreach(string path in edgeCreatedKeys) journal.AppendLine("CreatedKey="+path);
-            File.WriteAllText(Path.Combine(root,"edge-policy-journal.txt"),journal.ToString());edgePoliciesPrepared=true;
-            using(var user=Registry.CurrentUser.CreateSubKey(edgePolicyPath)) {
-                foreach(var value in edgePolicyValues) user.SetValue(value.Name,0,RegistryValueKind.DWord);
-                foreach(var value in edgePolicyValues) if(user.GetValueKind(value.Name)!=RegistryValueKind.DWord || Convert.ToInt32(user.GetValue(value.Name))!=0) throw new InvalidOperationException("Cannot establish temporary Edge background policies.");
+            if(!File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(root)),"edge-policy-scope.json"))) throw new InvalidOperationException("Missing administrative guest policy scope.");
+            using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath)) {
+                foreach(string name in new[]{"StartupBoostEnabled","BackgroundModeEnabled"})
+                    if(user==null || user.GetValue(name)==null || user.GetValueKind(name)!=RegistryValueKind.DWord || Convert.ToInt32(user.GetValue(name))!=0) throw new InvalidOperationException("The administrative controller did not establish temporary Edge background policies.");
             }
             edgePoliciesConfigured=true;
-        }
-        void RestoreEdgePolicies() {
-            if(!edgePoliciesPrepared) return;
-            using(var user=Registry.CurrentUser.OpenSubKey(edgePolicyPath,true)) {
-                if(user==null) throw new InvalidOperationException("The temporary Edge policy key disappeared.");
-                foreach(var value in edgePolicyValues) {if(value.Existed) user.SetValue(value.Name,value.Value,RegistryValueKind.DWord);else user.DeleteValue(value.Name,false);}
-                foreach(var value in edgePolicyValues) {var actual=user.GetValue(value.Name);if(value.Existed?(actual==null || user.GetValueKind(value.Name)!=RegistryValueKind.DWord || Convert.ToInt32(actual)!=value.Value):actual!=null) throw new InvalidOperationException("An Edge background policy was not restored.");}
-            }
-            for(int index=edgeCreatedKeys.Count-1;index>=0;index--) {
-                string path=edgeCreatedKeys[index];using(var key=Registry.CurrentUser.OpenSubKey(path)) if(key!=null && (key.ValueCount!=0 || key.SubKeyCount!=0)) throw new InvalidOperationException("A newly created Edge policy key contains unexpected entries.");
-                Registry.CurrentUser.DeleteSubKey(path,false);
-            }
-            edgePoliciesRestored=true;
         }
         static object[] PendingJobProcesses(IntPtr job) {
             if(job==IntPtr.Zero) return new object[0];
@@ -471,12 +445,11 @@ public static partial class LaqayGuestDesktop {
             }
             string cleanupError=releaseError;
             try{RestoreNotepadState();}catch(Exception failure){cleanupError=failure.ToString();}
-            try{RestoreEdgePolicies();}catch(Exception failure){cleanupError=(cleanupError??"")+failure;}
             try {if(created && cleanupError==null) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,EdgePoliciesRestored=kind!="Edge" || edgePoliciesRestored,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Edge" || edgePoliciesRestored)};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,EdgePolicyRestoreDelegated=kind=="Edge" && edgePoliciesConfigured,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Edge" || edgePoliciesConfigured)};
         }
     }
 }

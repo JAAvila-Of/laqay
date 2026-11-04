@@ -51,7 +51,8 @@ $peerCredential=$null
 $peerFixtureReserved=$false
 $smbVerified=$false
 $pendingVerified=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;
+$edgeScopeAttempted=$false
+$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;EdgePoliciesPrepared=(-not $IncludeRealApplications);EdgePoliciesRestored=(-not $IncludeRealApplications);EdgePolicyPreparation=$null;EdgePolicyRestoration=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
@@ -153,6 +154,13 @@ exit $LASTEXITCODE
         Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
     }
     $registered=$true
+    if($IncludeRealApplications){
+        . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
+        $edgeScopeAttempted=$true
+        $summary.EdgePolicyPreparation=Invoke-Command -Session $session -ScriptBlock $GuestEdgePolicyScope -ArgumentList 'Prepare',$LabId,$RunId,$guestRoot
+        $summary.EdgePoliciesPrepared=[bool]$summary.EdgePolicyPreparation.Prepared
+        if(-not $summary.EdgePoliciesPrepared){throw 'Administrative guest Edge policy preparation failed.'}
+    }
     Invoke-Command -Session $session -ArgumentList $taskName -ScriptBlock {param($taskName) Start-ScheduledTask -TaskName $taskName}
     $limit=[DateTime]::UtcNow.AddMinutes(8)
     $result=$null
@@ -308,7 +316,7 @@ exit $LASTEXITCODE
             if(-not $cleanup.Passed -or $cleanup.Forced -or $cleanup.Pid -ne $info.Pid -or $cleanup.ExitCode -ne 0 -or $cleanup.ActiveBeforeJobClose -ne 0 -or -not $cleanup.FixtureRemoved -or -not $cleanup.AutomationStopped -or $cleanup.CleanupError){throw 'A real application did not close normally with its Job, automation worker and owned fixture cleared.'}
             if($real.Kind -eq 'Notepad' -and ($info.PackageIdentity -ne $info.ExpectedPackage -or $info.PackageIdentity -ne $real.Inventory.Package -or $real.Inventory.Name -ne 'Microsoft.WindowsNotepad')){throw 'The actual Notepad runtime package did not match the current guest inventory.'}
             if($real.Kind -eq 'Edge' -and $info.ProfileScope -ne 'Owned run directory'){throw 'Edge did not use the owned temporary profile scope.'}
-            if($real.Kind -eq 'Edge' -and (-not $info.EdgePoliciesConfigured -or -not $cleanup.EdgePoliciesRestored)){throw 'The temporary Edge background policies were not configured and restored.'}
+            if($real.Kind -eq 'Edge' -and (-not $info.EdgePoliciesConfigured -or -not $cleanup.EdgePolicyRestoreDelegated)){throw 'The temporary Edge policies were not read back or their restoration was not delegated to the administrative controller.'}
             if($real.Kind -eq 'Edge' -and $info.Pid -in @($info.PriorEdgeProcesses | ForEach-Object Pid)){throw 'The real Edge test reused a pre-existing process.'}
             if($real.Kind -eq 'Notepad' -and (-not $info.NotepadState.Isolated -or -not $cleanup.NotepadStateRestored -or $info.NotepadState.OriginalFingerprint -notmatch '^(absent|[A-Fa-f0-9]{64})$' -or $cleanup.NotepadStateFingerprint -cne $info.NotepadState.OriginalFingerprint)){throw 'Notepad LocalState was not isolated and restored with its original fingerprint.'}
             $texts=@($real.Text)
@@ -387,6 +395,11 @@ exit $LASTEXITCODE
             $summary.TaskRemoved=$true
             }
         }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}
+        if($edgeScopeAttempted){try{
+            $summary.EdgePolicyRestoration=Invoke-Command -Session $session -ScriptBlock $GuestEdgePolicyScope -ArgumentList 'Restore',$LabId,$RunId,$guestRoot
+            $summary.EdgePoliciesRestored=[bool]$summary.EdgePolicyRestoration.Restored
+            if(-not $summary.EdgePoliciesRestored){throw 'Administrative guest Edge policy restoration failed.'}
+        }catch{$summary.CleanupErrors+=@($_.Exception.Message);$summary.Passed=$false}}
         if($IncludeUnc){
             try{
                 $summary.CredentialRemoved=[bool](Invoke-Command -Session $session -ArgumentList $guestRoot -ScriptBlock {

@@ -8,6 +8,11 @@ try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
+    . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
+    foreach($probe in @(@('Unexpected',$labId,$labId,('C:\LaqayLab\Runs\'+$labId)),@('Prepare',$labId,$labId,'H:\Projects'),@('Restore','invalid',$labId,('C:\LaqayLab\Runs\'+$labId)))){
+        $rejected=$false;try{& $GuestEdgePolicyScope @probe | Out-Null}catch{$rejected=$_.Exception.Message -eq 'Unexpected Edge policy scope or action.'}
+        Assert-True $rejected 'An invalid administrative policy scope reached guest metadata or registry operations.'
+    }
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
     # Exercise the actual serial input expressions with a Shell-shaped object.
     # Every call must bind successfully and then fail at the unarmed guard.
