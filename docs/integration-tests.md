@@ -29,6 +29,30 @@ This deterministic test is not a desktop focus or clipboard-race acceptance.
 
 ## Current automated coverage
 
+### Isolated storage capacity regression: CI pending
+
+The explicit hosted-Windows CI storage step creates a unique 64 MiB scratch
+VHD and formats only that image as NTFS. The harness refuses local and
+self-hosted runners before disk operations, uses an unused R-Z drive letter,
+and verifies image/partition/volume identity. Pure preparation tests exercise
+its actual guards and command plan without mounting or filling any disk.
+
+An opt-in Rust test validates the hosted-runner environment, owner marker,
+volume label, filesystem and small capacity before writing. It fills only the
+owned volume with a bounded filler, requires a real Windows disk-full error,
+and exercises the real image encoder and file writer. It checks that a failed
+write preserves an existing PNG and leaves no staging or final output, then
+releases the filler and verifies a new PNG without overwriting the original.
+The controller validates native evidence, detaches the image and removes its
+owned fixture in a finally block; cleanup failure fails CI. Logs and the JSON
+report are retained separately from distributable artifacts.
+
+Normal cargo test runs leave this fixture-dependent test ignored. Only the
+explicit CI harness enables it; developer commands do not mount disks or gain
+new local tool requirements. The actual capacity run remains pending until CI
+has accepted both the native result and cleanup. This is a writer regression,
+not an Explorer gesture, disconnected-share or Windows 10 acceptance.
+
 The full matrix remains incomplete. The normal tray application has passed
 thirteen local Explorer cases in an isolated Windows 11 Enterprise evaluation
 guest (build 26300): image paste, preservation of existing output, multiple native

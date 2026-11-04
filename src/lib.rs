@@ -31,6 +31,8 @@ mod tray;
 
 #[cfg(all(test, windows))]
 mod test_support;
+#[cfg(all(test, windows))]
+mod storage_tests;
 
 #[cfg(windows)]
 mod probe_environment;

@@ -43,6 +43,19 @@ jobs:
           name: laqay-validation-log
           path: target/test-results.log
           if-no-files-found: ignore
+      - name: Check real disk-full writer failure and recovery
+        shell: pwsh
+        run: ./scripts/Test-StorageFailure.ps1
+      - name: Retain isolated storage evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: laqay-storage-validation
+          path: |
+            target/storage-failure-report.json
+            target/storage-test-results.log
+            target/storage-diskpart.log
+          if-no-files-found: ignore
       - run: cargo build --locked --release
       - name: Check normal-mode preference persistence in the isolated VM
         shell: pwsh
