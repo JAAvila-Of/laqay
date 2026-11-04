@@ -7,6 +7,7 @@ function Assert-True($value,[string]$message) { if (-not $value) { throw $messag
 try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
+    & (Join-Path $PSScriptRoot 'Test-LabReportSnapshots.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
     . (Join-Path $PSScriptRoot 'GuestEdgePolicyScope.ps1')
     foreach($probe in @(@('Unexpected',$labId,$labId,('C:\LaqayLab\Runs\'+$labId)),@('Prepare',$labId,$labId,'H:\Projects'),@('Restore','invalid',$labId,('C:\LaqayLab\Runs\'+$labId)))){

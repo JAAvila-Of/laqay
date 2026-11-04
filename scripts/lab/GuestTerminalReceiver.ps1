@@ -17,9 +17,24 @@ if(Test-Path -LiteralPath $reportPath){throw 'Refusing a reused Terminal receive
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Pid=$PID;OwnerPid=$OwnerPid;SessionId=$process.SessionId;Executable=$process.MainModule.FileName;ScriptSha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash;Ready=$true;Inputs=@();Finished=$false;Error=$null}
 function Save-Receiver {
     $temporary=$reportPath+'.tmp'
-    $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
-    if(Test-Path -LiteralPath $reportPath){[IO.File]::Replace($temporary,$reportPath,$null)}else{[IO.File]::Move($temporary,$reportPath)}
+    if([IO.File]::Exists($temporary)){throw 'Refusing an existing report publication file.'}
+    try{
+        [IO.File]::WriteAllText($temporary,($report | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($true))
+        $deadline=[DateTime]::UtcNow.AddSeconds(2)
+        while($true){
+            try{
+                if([IO.File]::Exists($reportPath)){[IO.File]::Replace($temporary,$reportPath,[NullString]::Value)}
+                else{[IO.File]::Move($temporary,$reportPath)}
+                break
+            }catch [IO.IOException]{
+                $code=$_.Exception.GetBaseException().HResult -band 0xFFFF
+                if($code -notin @(32,33) -or [DateTime]::UtcNow -ge $deadline){throw}
+                Start-Sleep -Milliseconds 20
+            }
+        }
+    }finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
 }
+function Assert-True($condition,[string]$message){if(-not $condition){throw $message}}
 try{
     [Console]::WriteLine('Laqay Terminal clipboard receiver. Input is stored as data only.')
     Save-Receiver

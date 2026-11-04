@@ -521,4 +521,19 @@ controller processes. This does not validate the console-delegation change.
 Navigation now records focus, clipboard metadata, observed address text,
 selected tab and Shell folder paths, including on failure. It requires the
 exact pasted address before submitting Enter, without retrying input or
-skipping cases. The revised full runtime run remains pending.
+skipping cases.
+
+The third attempt passed 15 cases, including tabs and both Notepad references,
+before report publication failed with a sharing violation in Save-Report.
+Terminal was not reached. Recovery restored the baseline and temporary logon,
+both VMs were off and no owned controller processes remained. The exact reader
+that held the original file was not identified.
+
+The guest report and Terminal receiver now publish complete temporary snapshots
+by atomic replacement, retrying only sharing/lock violations for at most two
+seconds. Other errors and persistent locks still fail. Windows PowerShell uses
+an explicit null string for the absent backup path. Inert preparation tests
+exercise both actual publisher functions: Unicode, an old reader retaining a
+complete snapshot, a persistent incompatible reader, unchanged prior output on
+failure, recovery after reader release and refusal to overwrite a temporary
+publication file. The revised full runtime run remains pending.

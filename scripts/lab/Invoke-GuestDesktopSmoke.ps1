@@ -90,7 +90,25 @@ $preferencesExisted=$false
 $enabledExisted=$false
 $oldEnabled=$null
 $oldEnabledKind=$null
-function Save-Report { $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8 }
+function Save-Report {
+    $temporary=$reportPath+'.tmp'
+    if([IO.File]::Exists($temporary)){throw 'Refusing an existing report publication file.'}
+    try{
+        [IO.File]::WriteAllText($temporary,($report | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($true))
+        $deadline=[DateTime]::UtcNow.AddSeconds(2)
+        while($true){
+            try{
+                if([IO.File]::Exists($reportPath)){[IO.File]::Replace($temporary,$reportPath,[NullString]::Value)}
+                else{[IO.File]::Move($temporary,$reportPath)}
+                break
+            }catch [IO.IOException]{
+                $code=$_.Exception.GetBaseException().HResult -band 0xFFFF
+                if($code -notin @(32,33) -or [DateTime]::UtcNow -ge $deadline){throw}
+                Start-Sleep -Milliseconds 20
+            }
+        }
+    }finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+}
 function Assert-True($condition,[string]$message){if(-not $condition){throw $message}}
 function Wait-For([scriptblock]$condition,[string]$message,[int]$seconds=10){
     $limit=[DateTime]::UtcNow.AddSeconds($seconds)
