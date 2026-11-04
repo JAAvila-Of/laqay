@@ -29,7 +29,7 @@ This deterministic test is not a desktop focus or clipboard-race acceptance.
 
 ## Current automated coverage
 
-### Isolated storage capacity regression: CI pending
+### Isolated storage capacity regression
 
 The explicit hosted-Windows CI storage step creates a unique 64 MiB scratch
 VHD and formats only that image as NTFS. The harness refuses local and
@@ -49,9 +49,16 @@ report are retained separately from distributable artifacts.
 
 Normal cargo test runs leave this fixture-dependent test ignored. Only the
 explicit CI harness enables it; developer commands do not mount disks or gain
-new local tool requirements. The actual capacity run remains pending until CI
-has accepted both the native result and cleanup. This is a writer regression,
-not an Explorer gesture, disconnected-share or Windows 10 acceptance.
+new local tool requirements.
+
+The real-capacity test passed on 2026-11-04 UTC on the hosted windows-2022
+runner. Both the bounded filler and the real writer returned Windows error 112
+(disk full), with 12,288 bytes free. The original PNG remained unchanged, no
+staging or incomplete output remained, and a new PNG passed validation after
+the filler was removed. The harness confirmed the NTFS volume mapping, detached
+the image and removed the image and owned directory without cleanup errors.
+The image was bounded to 64 MiB plus its container metadata. This is a writer
+regression, not an Explorer gesture, disconnected-share or Windows 10 acceptance.
 
 The full matrix remains incomplete. The normal tray application has passed
 thirteen local Explorer cases in an isolated Windows 11 Enterprise evaluation
