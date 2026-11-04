@@ -507,7 +507,7 @@ desktop integration matrix.
 
 The optional `-IncludeRealApplications` switch, used with `-AdverseOnly`, extends
 the suite from 29 to 33 cases with installed Notepad and Edge. Those four cases
-are prepared but have not yet passed a guest runtime run. They use an owned
+passed on 2026-11-04 UTC. They use an owned
 text file, local HTML page and temporary Edge profile inside Primary; Notepad
 uses the disposable guest user's settings. No installation, account sign-in,
 host profile or host desktop control is involved. Missing apps, conflicting
@@ -521,8 +521,11 @@ binding for Ctrl+V. A controlled PowerShell receiver records two exact text
 inputs without executing clipboard content. The additional cases check native
 text paste with Laqay disabled/enabled, image exclusion, Explorer recovery and
 normal receiver/application teardown. The previous Terminal state is restored.
-This extension is prepared for runtime validation; it does not establish
-coverage of default shell bindings, PSReadLine or arbitrary Terminal profiles.
+The complete 35-case extension passed on 2026-11-04 UTC with independent
+verification of normal exit, empty frontend/receiver Jobs and restored state.
+The receiver enters its dedicated controller-created Job before readiness;
+the frontend keeps its pre-resume containment. This does not establish coverage
+of default shell bindings, PSReadLine or arbitrary Terminal profiles.
 
 `Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 29-case suite:
 the thirteen Explorer regressions plus empty clipboard, externally locked

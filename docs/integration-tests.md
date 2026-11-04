@@ -478,13 +478,14 @@ not establish their cause or prove long-term stability. It does not complete
 the other applications, clipboard/publication races, storage failures,
 Windows 10 or sustained-load matrix.
 
-### Optional Windows Terminal reference: runtime pending
+### Optional Windows Terminal reference: 35-case acceptance
 
 Adding -IncludeWindowsTerminal to -AdverseOnly -IncludeRealApplications
 selects 35 cases, including TerminalRealText and TerminalRealImageDoesNotWrite.
 The default 29 cases and the existing 33-case selection keep their prerequisites
-and commands. The Terminal extension's guest result is pending; compilation
-and planning do not prove compatibility.
+and commands. The full opt-in suite passed on 2026-11-04 UTC using lab source
+09e53aa and the pinned published v0.1.1 executable. Compilation and planning
+alone do not prove compatibility.
 
 The helper revalidates the registered Microsoft Terminal package and executable,
 requires a new owned window/process and pre-resume Job containment, and refuses
@@ -546,8 +547,8 @@ restored; recovery restored the baseline and temporary logon, both VMs were off
 and no owned controller processes remained. The receiver check now reports each
 observed value and retains the initial receiver receipt before binding, with
 protocol identity validated first. Every ownership requirement still applies.
-This attempt does not establish which condition failed. The revised full
-runtime run remains pending.
+That attempt did not establish which condition failed; the next attempt
+collected the individual native Job result.
 
 The fifth attempt isolated that failure: the receiver's session, executable and
 start time matched, and the native Job query succeeded, but it was outside the
@@ -566,5 +567,23 @@ checked. No unrelated process is adopted.
 Preparation exercises the actual enrollment code and controller Job operations
 in owned hidden .NET children: missing Job rejection, name collision rejection,
 verified membership, normal exit accounting and kill-on-close. These tests use
-no desktop input, clipboard or VM. The full 35-case guest acceptance remains
-pending.
+no desktop input, clipboard or VM.
+
+The complete **35-case suite passed on 2026-11-04 UTC** in two normal guest
+boots, including all twelve serial pastes. Independent report and isolation
+validators confirmed the registered Terminal package 1.18.10301.0 (file version
+1.18.2401.30001), both exact receiver inputs with Laqay disabled/enabled,
+image exclusion with the later Explorer fence, and the dedicated receiver Job
+before readiness. Terminal and the receiver exited normally with code 0;
+both Jobs were empty before closing, the receiver Job closed, automation stopped
+and owned fixtures were removed. Terminal LocalState was restored to its
+original fingerprint. Notepad and Edge also exited normally with their state
+and temporary policies restored. The original Laqay baseline and temporary
+logon were restored, both VMs were off and no owned controllers remained.
+The shared host Rust coordinator was unchanged and its queue was not used.
+
+This acceptance uses the published v0.1.1 executable SHA-256
+3e73ff0b35661c23064101049f481dadeceb41bc31db21a0dcba7ec1aaf9632f.
+It covers these installed application versions and the explicit Terminal
+Ctrl+V profile, not default shell bindings, arbitrary profiles, every real
+application, Windows 10 or sustained load. Earlier failures remain failures.
