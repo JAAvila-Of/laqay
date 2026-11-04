@@ -29,6 +29,36 @@ This deterministic test is not a desktop focus or clipboard-race acceptance.
 
 ## Current automated coverage
 
+### Isolated SMB withdrawal regression
+
+An explicit hosted-Windows CI step creates a uniquely named temporary SMB
+share over synthetic data and accesses it only through loopback. Local and
+self-hosted execution is rejected before SMB changes. It neither stops the
+server service nor changes adapters, firewall rules, credentials or other shares.
+
+The real writer finishes encoding and closes its staging file before an owned
+native test signals the controller through a separate local directory. After
+observing the SMB connection and complete staging data, the controller removes
+only its share and confirms the UNC path is unavailable. Publication must fail
+with a native network-path error and leave the original PNG unchanged without
+publishing an incomplete PNG. The controller recreates the same owned share;
+a fresh request must publish a different valid image after access returns.
+
+An unavailable destination can prevent best-effort staging deletion. The test
+records any staging left after reconnection, and controller removal is reported
+separately from core cleanup. It does not claim automatic deferred cleanup.
+The native process has bounded acknowledgements and owned-process teardown;
+cleanup must remove the share and fixture.
+
+The hosted run for PR #30 passed over SMB 3.1.1: both the unavailable-path
+probe and publication returned Windows error 67. The original PNG survived and
+a new image was published after restoration. One complete staging `.tmp`
+remained after reconnection and was removed by the controller. Share and fixture
+removal passed without forced termination. This does not establish automatic
+core cleanup after disconnection or complete failed-write cleanup acceptance.
+This tests share withdrawal,
+not packet loss, a physical network outage, Explorer input or Windows 10.
+
 ### Isolated storage capacity regression
 
 The explicit hosted-Windows CI storage step creates a unique 64 MiB scratch
