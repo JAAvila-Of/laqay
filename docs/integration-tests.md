@@ -322,8 +322,9 @@ in the recovery folder and no extra staging files. The launcher enters a Job
 before resume; any separately activated Notepad process must be independently
 identified and contained before input. Cleanup requires normal application
 exit, empty owned Jobs and removal of the run-specific files/profile. Forced
-cleanup remains a failure. This does not claim a rollback of Notepad's settings
-inside the disposable guest, nor compatibility with other application versions.
+cleanup remains a failure. Only the disposable guest's Notepad `LocalState` is
+isolated and restored; this does not claim a rollback of all package settings
+or compatibility with other application versions.
 
 In the opt-in mode, the four real-application cases run immediately after the
 thirteen basic Explorer cases, before the remaining adverse regressions. All
@@ -371,3 +372,16 @@ editor/tab metadata and full errors, and releases its COM references on the
 worker. It sends no input and cannot substitute for any of the 33 required
 cases. This comparison is intended to distinguish client paths before changing
 the editor automation; it is not compatibility evidence.
+
+The fifth attempt completed the native probe (33 elements, including the
+Notepad editor). The following managed lookup also succeeded, but correctly
+rejected four restored tabs before any paste. This does not establish why the
+earlier COM failure disappeared. Application/worker cleanup and final recovery
+were normal. The next run temporarily moves the disposable guest's Notepad
+`LocalState` into its owned fixture before launch, preserving the original
+directory/file fingerprint and a recovery journal. It retains the single-tab
+requirement. After the contained app closes, it removes only the generated
+state and restores the original, requiring the same fingerprint. Reparse
+points, unexpected profile paths or a changed backup are rejected. Failed
+restoration retains the backup and fails acceptance; it cannot count as a
+successful cleanup. Package settings outside `LocalState` are not reset.

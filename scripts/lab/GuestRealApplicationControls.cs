@@ -39,6 +39,10 @@ public static partial class LaqayGuestDesktop {
             "</title><label for=\"laqay-real-input\">Laqay real application input</label><textarea id=\"laqay-real-input\" aria-label=\"Laqay real application input\" style=\"display:block;width:600px;height:300px\"></textarea></html>";
     }
     public static object RealApplicationAbi() {return new {Startup=Marshal.SizeOf(typeof(RealStartup)),Process=Marshal.SizeOf(typeof(RealProcess)),Accounting=Marshal.SizeOf(typeof(RealAccounting))};}
+    public static string RealNotepadStatePath(string localAppData) {
+        if(!String.Equals(localAppData,@"C:\Users\LaqayLab\AppData\Local",StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Notepad state isolation requires the exact disposable guest profile.");
+        return Path.Combine(localAppData,@"Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState");
+    }
     // Prefix declarations follow UIAutomationClient.idl in the Windows SDK.
     // Unused cache/walker pointers preserve their native vtable positions.
     [StructLayout(LayoutKind.Sequential)] struct RealUiaPoint {public int x,y;}
@@ -165,6 +169,7 @@ public static partial class LaqayGuestDesktop {
         readonly DateTime started=DateTime.UtcNow;
         Process bootstrap,app;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
         RealAutomation automation;object nativeProbe;
+        string notepadState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.HashSet<string> candidateStates=new System.Collections.Generic.HashSet<string>();
@@ -197,6 +202,7 @@ public static partial class LaqayGuestDesktop {
             Directory.CreateDirectory(root);created=true;marker="LaqayRealApplication:"+runId+":"+kind+":"+Process.GetCurrentProcess().Id;
             File.WriteAllText(Path.Combine(root,"owner.txt"),marker);
             File.WriteAllText(document,kind=="Edge"?RealBrowserFixture(runId):"",new UTF8Encoding(false));
+            if(kind=="Notepad") IsolateNotepadState();
             ownedJob=NewJob();launcherJob=ownedJob;
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
             string workingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(root));
@@ -318,7 +324,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal}};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }
@@ -337,6 +343,44 @@ public static partial class LaqayGuestDesktop {
         static void SafeTree(string directory) {
             if((File.GetAttributes(directory)&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A fixture directory is a reparse point.");
             foreach(string path in Directory.GetFileSystemEntries(directory)) {var attrs=File.GetAttributes(path);if((attrs&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A fixture entry is a reparse point.");if((attrs&FileAttributes.Directory)!=0) SafeTree(path);}
+        }
+        static void NoReparseAncestors(string directory) {
+            for(var item=new DirectoryInfo(directory);item!=null;item=item.Parent) if(item.Exists && (item.Attributes&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A Notepad state ancestor is a reparse point.");
+        }
+        static string StateFingerprint(string directory) {
+            if(!Directory.Exists(directory)) {if(File.Exists(directory)) throw new InvalidOperationException("The Notepad state path is not a directory.");return "absent";}
+            SafeTree(directory);
+            var entries=new System.Collections.Generic.List<string>();long bytes=0;
+            foreach(string path in Directory.GetDirectories(directory,"*",SearchOption.AllDirectories)) entries.Add("D:"+path.Substring(directory.Length));
+            foreach(string path in Directory.GetFiles(directory,"*",SearchOption.AllDirectories)) {
+                bytes+=new FileInfo(path).Length;if(bytes>128*1024*1024 || entries.Count>=1024) throw new InvalidOperationException("The Notepad state exceeds the fixture budget.");
+                entries.Add("F:"+path.Substring(directory.Length)+":"+Hash(path));
+            }
+            entries.Sort(StringComparer.Ordinal);
+            using(var digest=System.Security.Cryptography.SHA256.Create()) return BitConverter.ToString(digest.ComputeHash(Encoding.UTF8.GetBytes(String.Join("\n",entries.ToArray())))).Replace("-","");
+        }
+        void CheckStatePaths() {
+            if(notepadState!=RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)) || stateBackup!=Path.Combine(root,"notepad-state-backup")) throw new InvalidOperationException("Unexpected Notepad state backup identity.");
+            NoReparseAncestors(notepadState);NoReparseAncestors(root);
+        }
+        void IsolateNotepadState() {
+            notepadState=RealNotepadStatePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));stateBackup=Path.Combine(root,"notepad-state-backup");
+            CheckStatePaths();if(!Directory.Exists(Path.GetDirectoryName(notepadState)) || Directory.Exists(stateBackup) || File.Exists(stateBackup)) throw new InvalidOperationException("Unexpected Notepad state package or reused backup.");
+            stateOriginal=StateFingerprint(notepadState);stateExisted=Directory.Exists(notepadState);
+            File.WriteAllText(Path.Combine(root,"notepad-state-journal.txt"),"LocalState="+notepadState+"\nBackup="+stateBackup+"\nOriginalFingerprint="+stateOriginal+"\nExisted="+stateExisted);
+            if(stateExisted) Directory.Move(notepadState,stateBackup);
+            stateIsolated=true;
+        }
+        void RestoreNotepadState() {
+            if(!stateIsolated) return;
+            CheckStatePaths();
+            if(File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("The Notepad state backup lost its fixture owner.");
+            foreach(var process in Process.GetProcessesByName("Notepad")) using(process) if(process.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Cannot restore Notepad state while a Notepad process remains.");
+            if(stateExisted && StateFingerprint(stateBackup)!=stateOriginal) throw new InvalidOperationException("The original Notepad state backup changed.");
+            if(Directory.Exists(notepadState)){SafeTree(notepadState);Directory.Delete(notepadState,true);}
+            if(stateExisted) Directory.Move(stateBackup,notepadState);
+            stateFinal=StateFingerprint(notepadState);stateRestored=stateFinal==stateOriginal;
+            if(!stateRestored) throw new InvalidOperationException("Notepad state restoration did not preserve its fingerprint.");
         }
         public object Stop() {
             bool automationStopped=automation==null || automation.Stop();
@@ -358,11 +402,12 @@ public static partial class LaqayGuestDesktop {
                 if(bootstrap!=null){if(!bootstrap.WaitForExit(5000)) throw new InvalidOperationException("The exact launcher survived Job cleanup.");bootstrap.Dispose();bootstrap=null;}
             }
             string cleanupError=null;
-            try {if(created) {
+            try{RestoreNotepadState();}catch(Exception failure){cleanupError=failure.ToString();}
+            try {if(created && cleanupError==null) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,Passed=!forced && exit==0 && cleanupError==null && automationStopped};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored)};
         }
     }
 }
