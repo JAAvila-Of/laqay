@@ -433,3 +433,17 @@ The interactive helper only reads the prepared policies; its token, Laqay's
 token and registry ACLs remain unchanged. Acceptance requires both the guest
 readback and the separate administrative restoration result. Invalid scope
 arguments are rejected locally before any registry operations.
+
+The ninth attempt passed 26 cases, including all four real-application cases
+with normal application/worker closure and empty Jobs. Notepad's original
+`LocalState` fingerprint was restored. Administrative Edge policy restoration
+verified the original values/types and removed its created key. The suite then
+failed before the tab switch because the delayed provider received no render
+request. Its positive PNG reference passed, but the initial race input state
+was not retained, so this result does not establish an input or product cause.
+Final recovery restored the guest and stopped both VMs.
+The initial race input now records native/semantic focus, formats, modifiers,
+Shell path, fresh provider state and A/B/C file counts even if the request wait
+fails. It must establish a fresh, stable provider and a ready source folder
+before its single Ctrl+V. No extra input, stabilization delay or longer request
+wait is added. All 33 cases remain mandatory.

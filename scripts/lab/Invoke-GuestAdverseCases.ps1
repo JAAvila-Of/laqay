@@ -133,6 +133,7 @@ Run-Case 'TabSwitchCancelsPendingImage' {
         Assert-True ((Find-Folder $path).HWND -eq $window.HWND) 'The pending fixtures are not tabs of one Explorer window.'
     }
     $report.TabClipboardRace.SameWindow=$true
+    foreach($name in @('SourceShellPath','SourceInputBefore','SourceInputAfter','SourceProviderBefore','SourceProviderAfter','SourceCounts')){$report.TabClipboardRace | Add-Member -NotePropertyName $name -NotePropertyValue $null}
     $report.TabClipboardRace.WindowHandle=$handle.ToInt64()
     [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9));[LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,16,9))
     Wait-For {[LaqayGuestDesktop]::SelectedTabName($handle).Contains('pending-tab-a')} 'The source tab was not selected.'
@@ -140,8 +141,19 @@ Run-Case 'TabSwitchCancelsPendingImage' {
     [LaqayGuestDesktop]::FocusFolder($handle)
     try{
         $report.ProviderStopped=$false;[LaqayGuestDesktop]::BeginRenderedDelayedPng()
-        [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
-        Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The race provider did not receive its render request.'
+        try{
+            $report.TabClipboardRace.SourceShellPath=(Find-Folder $pathA).Document.Folder.Self.Path
+            $inputState=[LaqayGuestDesktop]::FolderInputState($handle);$report.TabClipboardRace.SourceInputBefore=$inputState
+            $provider=[LaqayGuestDesktop]::DelayedPngState();$report.TabClipboardRace.SourceProviderBefore=$provider;Save-Report
+            Assert-True ($report.TabClipboardRace.SourceShellPath -eq $pathA -and $inputState.Foreground -and $inputState.FocusWithinWindow -and $inputState.ItemsViewFocused -and $inputState.HasPng -and -not $inputState.HasFileDrop -and ($inputState.GuiFlags -band 0x1e) -eq 0 -and -not $inputState.ControlDown -and -not $inputState.AltDown -and -not $inputState.ShiftDown -and -not $inputState.WindowsDown) 'The source folder was not ready for its single race input.'
+            Assert-True ($provider.OwnerMatches -and $provider.MarkerPublished -and $provider.Sequence -eq $provider.PublishedSequence -and $provider.Sequence -eq $inputState.ClipboardSequence -and -not $provider.Requested -and -not $provider.Rendered -and -not $provider.Released -and -not $provider.Error -and -not $provider.TimedOut) 'The source provider was not fresh and stable before the single race input.'
+            [LaqayGuestDesktop]::Chord($handle,[UInt16[]]@(17,86))
+            Wait-For {([LaqayGuestDesktop]::DelayedPngState()).Requested} 'The race provider did not receive its render request.'
+        }finally{
+            try{$report.TabClipboardRace.SourceInputAfter=[LaqayGuestDesktop]::FolderInputState($handle)}catch{}
+            $report.TabClipboardRace.SourceProviderAfter=[LaqayGuestDesktop]::DelayedPngState()
+            $report.TabClipboardRace.SourceCounts=[pscustomobject]@{A=@(Get-ChildItem -LiteralPath $pathA -Force).Count;B=@(Get-ChildItem -LiteralPath $pathB -Force).Count;C=@(Get-ChildItem -LiteralPath $pathC -Force).Count};Save-Report
+        }
         $report.PendingClipboard=[LaqayGuestDesktop]::DelayedPngState();Save-Report
         $proofPath=Join-Path $root 'pending-proof.json';$abortPath=Join-Path $root 'pending-abort.json'
         Wait-For {(Test-Path -LiteralPath $proofPath) -or (Test-Path -LiteralPath $abortPath)} 'The controller did not verify the held clipboard read.' 25
