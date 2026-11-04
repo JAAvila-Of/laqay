@@ -548,3 +548,23 @@ observed value and retains the initial receiver receipt before binding, with
 protocol identity validated first. Every ownership requirement still applies.
 This attempt does not establish which condition failed. The revised full
 runtime run remains pending.
+
+The fifth attempt isolated that failure: the receiver's session, executable and
+start time matched, and the native Job query succeeded, but it was outside the
+frontend Job. The attempt stopped after 17 passing cases and completed recovery
+with both VMs off and no owned controller processes. This establishes the
+failed condition without identifying Windows' internal launch mechanism.
+
+The controller now creates a unique dedicated receiver Job with kill-on-close
+before launching Terminal. After validating its disposable guest context, the
+receiver assigns itself to that existing Job and verifies membership before
+publishing Ready. The controller independently checks that same Job before
+reference input; the frontend retains its original pre-resume containment.
+Both Jobs must become empty before normal cleanup, and receiver Job closure is
+checked. No unrelated process is adopted.
+
+Preparation exercises the actual enrollment code and controller Job operations
+in owned hidden .NET children: missing Job rejection, name collision rejection,
+verified membership, normal exit accounting and kill-on-close. These tests use
+no desktop input, clipboard or VM. The full 35-case guest acceptance remains
+pending.

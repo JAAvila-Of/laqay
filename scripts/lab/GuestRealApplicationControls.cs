@@ -50,6 +50,10 @@ public static partial class LaqayGuestDesktop {
         return Path.Combine(localAppData,@"Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState");
     }
     public static string RealTerminalSettings() {return "{\"actions\":[{\"command\":\"paste\",\"keys\":\"ctrl+v\"}]}";}
+    public static string RealTerminalReceiverJobName(string labId,string runId,int ownerPid) {
+        if(labId==null || runId==null || !Regex.IsMatch(labId,"^[a-f0-9]{32}$") || !Regex.IsMatch(runId,"^[a-f0-9]{32}$") || ownerPid<=0) throw new ArgumentException("Unexpected Terminal receiver Job identity.");
+        return @"Local\LaqayTerminalReceiver-"+labId+"-"+runId+"-"+ownerPid;
+    }
     // Prefix declarations follow UIAutomationClient.idl in the Windows SDK.
     // Unused cache/walker pointers preserve their native vtable positions.
     [StructLayout(LayoutKind.Sequential)] struct RealUiaPoint {public int x,y;}
@@ -175,7 +179,7 @@ public static partial class LaqayGuestDesktop {
         internal readonly string kind,document;
         readonly string root,runId,target,launcher,expectedPackage,tag,arguments;
         readonly DateTime started=DateTime.UtcNow;
-        Process bootstrap,app,receiver;IntPtr ownedJob,launcherJob,window;bool created,assignedBeforeResume,adopted,ready;
+        Process bootstrap,app,receiver;IntPtr ownedJob,launcherJob,receiverJob,window;string receiverJobName;bool created,assignedBeforeResume,adopted,ready;
         string receiverScriptHash,terminalSettingsHash;
         RealAutomation automation;object nativeProbe;
         string packageState,stateBackup,stateOriginal,stateFinal;bool stateExisted,stateIsolated,stateRestored;
@@ -206,6 +210,7 @@ public static partial class LaqayGuestDesktop {
                 expectedPackage=package;launcher=target;document=Path.Combine(root,"GuestTerminalReceiver.ps1");tag="Laqay Terminal "+runId;
                 var markerData=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(@"C:\LaqayLab\ready.json"));
                 string lab=(string)markerData["LabId"];if(!Regex.IsMatch(lab,"^[a-f0-9]{32}$")) throw new InvalidOperationException("Unexpected Terminal lab marker.");
+                receiverJobName=RealTerminalReceiverJobName(lab,runId,Process.GetCurrentProcess().Id);
                 string powershell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),@"System32\WindowsPowerShell\v1.0\powershell.exe");
                 arguments="--window new new-tab --title "+Quote(tag)+" --suppressApplicationTitle --startingDirectory "+Quote(root)+" "+Quote(powershell)+" -NoLogo -NoProfile -ExecutionPolicy RemoteSigned -File "+Quote(document)+" -LabId "+lab+" -RunId "+runId+" -OwnerPid "+Process.GetCurrentProcess().Id;
             } else {
@@ -239,6 +244,7 @@ public static partial class LaqayGuestDesktop {
             if(kind=="Terminal"){Directory.CreateDirectory(packageState);string settings=Path.Combine(packageState,"settings.json");File.WriteAllText(settings,RealTerminalSettings(),new UTF8Encoding(false));terminalSettingsHash=Hash(settings);}
             if(kind=="Edge") VerifyEdgePolicies();
             ownedJob=NewJob();launcherJob=ownedJob;
+            if(kind=="Terminal") receiverJob=NewJob(receiverJobName);
             var startup=new RealStartup {size=(uint)Marshal.SizeOf(typeof(RealStartup)),flags=1,show=1};RealProcess process;
             string workingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(root));
             if(!CreateProcessW(launcher,new StringBuilder(Quote(launcher)+" "+arguments),IntPtr.Zero,IntPtr.Zero,false,4,IntPtr.Zero,workingDirectory,ref startup,out process)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot launch the installed application.");
@@ -360,7 +366,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},TerminalSettingsSha256=terminalSettingsHash,TerminalReceiverScriptSha256=receiverScriptHash,TerminalState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray(),PriorTerminalProcesses=priorTerminalProcesses.ToArray()};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},TerminalSettingsSha256=terminalSettingsHash,TerminalReceiverScriptSha256=receiverScriptHash,TerminalReceiverJobName=receiverJobName,TerminalState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray(),PriorTerminalProcesses=priorTerminalProcesses.ToArray()};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }
@@ -373,19 +379,19 @@ public static partial class LaqayGuestDesktop {
                     int actualSession=candidate.SessionId,expectedSession=Process.GetCurrentProcess().SessionId;
                     DateTime actualStart=candidate.StartTime.ToUniversalTime(),earliestStart=started.AddSeconds(-1);
                     string actualImage=candidate.MainModule.FileName;
-                    bool queried=IsProcessInJob(candidate.Handle,ownedJob,out contained);
+                    bool queried=IsProcessInJob(candidate.Handle,receiverJob,out contained);
                     int queryError=queried?0:Marshal.GetLastWin32Error();
                     if(actualSession!=expectedSession || actualStart<earliestStart || !String.Equals(actualImage,expected,StringComparison.OrdinalIgnoreCase) || !queried || !contained) {
                         string proof=new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(new {
                             Pid=pid,SessionId=actualSession,ExpectedSessionId=expectedSession,StartedUtc=actualStart.ToString("o"),
                             EarliestStartUtc=earliestStart.ToString("o"),Executable=actualImage,ExpectedExecutable=expected,
-                            JobQuerySucceeded=queried,JobQueryError=queryError,Contained=contained});
+                            JobName=receiverJobName,JobQuerySucceeded=queried,JobQueryError=queryError,Contained=contained});
                         throw new InvalidOperationException("The Terminal receiver is not a new owned PowerShell process: "+proof);
                     }
                     receiver=candidate;candidate=null;
                 }finally{if(candidate!=null) candidate.Dispose();}
             }
-            return new {Pid=receiver.Id,SessionId=receiver.SessionId,Executable=receiver.MainModule.FileName,OwnedJob=true,ScriptSha256=receiverScriptHash};
+            return new {Pid=receiver.Id,SessionId=receiver.SessionId,Executable=receiver.MainModule.FileName,OwnedJob=true,JobName=receiverJobName,ScriptSha256=receiverScriptHash};
         }
         object StateCore() {
             RequireReady();var element=Target();var gui=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
@@ -393,8 +399,10 @@ public static partial class LaqayGuestDesktop {
             return new {Pid=appPid,Foreground=GetForegroundWindow()==window,Focused=FocusMatches(element),GuiFlags=gui.flags,MenuOwner=gui.menuOwner.ToInt64(),
                 FocusWindow=gui.focus.ToInt64(),FocusWithinWindow=gui.focus==window || IsChild(window,gui.focus),TargetClass=element.Current.ClassName,TargetType=element.Current.ControlType.ProgrammaticName,ClipboardSequence=GetClipboardSequenceNumber()};
         }
-        static IntPtr NewJob() {
-            IntPtr value=CreateJobObjectW(IntPtr.Zero,null);if(value==IntPtr.Zero) throw new InvalidOperationException("Cannot create a real application Job.");
+        static IntPtr NewJob(string name=null) {
+            IntPtr value=CreateJobObjectW(IntPtr.Zero,name);int error=Marshal.GetLastWin32Error();
+            if(value==IntPtr.Zero) throw new InvalidOperationException("Cannot create a real application Job.");
+            if(name!=null && error==183){CloseHandle(value);throw new InvalidOperationException("Refusing an existing receiver Job.");}
             var limits=new JobLimits();limits.basic.flags=0x2000;
             if(!SetInformationJobObject(value,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) {CloseHandle(value);throw new InvalidOperationException("Cannot configure the real application Job.");}return value;
         }
@@ -482,33 +490,35 @@ public static partial class LaqayGuestDesktop {
             string releaseError=null;
             try{if(automation!=null) automation.Call("ReleaseReferences",()=>{GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();return 0;});}catch(Exception failure){releaseError=failure.ToString();}
             bool automationStopped=automation==null || automation.Stop();
-            bool forced=false;int? exit=null;uint remaining=0;object[] pending=new object[0];
+            bool forced=false,receiverJobClosed=receiverJob==IntPtr.Zero;int? exit=null;uint remaining=0;object[] pending=new object[0];
             try {
                 if(!terminalStop && app!=null && !app.HasExited) {uint pid;GetWindowThreadProcessId(window,out pid);if(pid==(uint)appPid) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero);}
                 var until=DateTime.UtcNow.AddSeconds(6);
                 do {
-                    remaining=Active(ownedJob)+(launcherJob!=ownedJob?Active(launcherJob):0);
+                    remaining=Active(ownedJob)+(launcherJob!=ownedJob?Active(launcherJob):0)+Active(receiverJob);
                     if(remaining==0 && (app==null || app.HasExited) && (bootstrap==null || bootstrap.HasExited)) break;
                     Thread.Sleep(100);
                 }while(DateTime.UtcNow<until);
                 forced=remaining!=0 || (app!=null && !app.HasExited);
-                if(remaining!=0){var processes=new System.Collections.Generic.List<object>(PendingJobProcesses(ownedJob));if(launcherJob!=ownedJob) processes.AddRange(PendingJobProcesses(launcherJob));pending=processes.ToArray();}
+                if(remaining!=0){var processes=new System.Collections.Generic.List<object>(PendingJobProcesses(ownedJob));if(launcherJob!=ownedJob) processes.AddRange(PendingJobProcesses(launcherJob));processes.AddRange(PendingJobProcesses(receiverJob));pending=processes.ToArray();}
             } finally {
                 if(ownedJob!=IntPtr.Zero) CloseHandle(ownedJob);
                 if(launcherJob!=IntPtr.Zero && launcherJob!=ownedJob) CloseHandle(launcherJob);
-                ownedJob=IntPtr.Zero;launcherJob=IntPtr.Zero;
+                if(receiverJob!=IntPtr.Zero) receiverJobClosed=CloseHandle(receiverJob);
+                ownedJob=IntPtr.Zero;launcherJob=IntPtr.Zero;receiverJob=IntPtr.Zero;
                 if(app!=null){if(!app.WaitForExit(5000)){forced=true;app.Kill();if(!app.WaitForExit(5000)) throw new InvalidOperationException("The exact verified real application survived cleanup.");}exit=app.ExitCode;app.Dispose();app=null;}
                 if(bootstrap!=null){if(!bootstrap.WaitForExit(5000)) throw new InvalidOperationException("The exact launcher survived Job cleanup.");bootstrap.Dispose();bootstrap=null;}
             }
             int? receiverExit=null;string receiverReceipt=null;
             if(receiver!=null){try{if(!receiver.WaitForExit(5000)) throw new InvalidOperationException("The owned Terminal receiver survived cleanup.");receiverExit=receiver.ExitCode;receiverReceipt=File.ReadAllText(Path.Combine(root,"receiver.json"));}finally{receiver.Dispose();receiver=null;}}
+            if(kind=="Terminal" && created && File.Exists(Path.Combine(root,"receiver.json"))) receiverReceipt=File.ReadAllText(Path.Combine(root,"receiver.json"));
             string cleanupError=releaseError;
             try{RestorePackagedState();}catch(Exception failure){cleanupError=failure.ToString();}
             try {if(created && cleanupError==null) {
                 if(root!=RealFixturePath(kind,Path.GetDirectoryName(Path.GetDirectoryName(root))) || File.ReadAllText(Path.Combine(root,"owner.txt"))!=marker) throw new InvalidOperationException("Unexpected fixture cleanup identity.");
                 SafeTree(root);Directory.Delete(root,true);
             }}catch(Exception failure){cleanupError=failure.Message;}
-            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,TerminalStateRestored=kind!="Terminal" || stateRestored,TerminalReceiverExitCode=receiverExit,TerminalReceiverReceiptJson=receiverReceipt,EdgePolicyRestoreDelegated=kind=="Edge" && edgePoliciesConfigured,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Terminal" || (stateRestored && receiverExit==0)) && (kind!="Edge" || edgePoliciesConfigured)};
+            return new {Kind=kind,Pid=appPid,ExitCode=exit,Forced=forced,ActiveBeforeJobClose=remaining,PendingProcesses=pending,FixtureRemoved=!Directory.Exists(root),CleanupError=cleanupError,AutomationStopped=automationStopped,NotepadStateRestored=kind!="Notepad" || stateRestored,NotepadStateFingerprint=stateFinal,TerminalStateRestored=kind!="Terminal" || stateRestored,TerminalReceiverExitCode=receiverExit,TerminalReceiverJobClosed=receiverJobClosed,TerminalReceiverReceiptJson=receiverReceipt,EdgePolicyRestoreDelegated=kind=="Edge" && edgePoliciesConfigured,Passed=!forced && exit==0 && cleanupError==null && automationStopped && (kind!="Notepad" || stateRestored) && (kind!="Terminal" || (stateRestored && receiverExit==0 && receiverJobClosed)) && (kind!="Edge" || edgePoliciesConfigured)};
         }
     }
 }

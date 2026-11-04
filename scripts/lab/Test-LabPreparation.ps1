@@ -62,6 +62,7 @@ try {
     Assert-True $rejected 'An unowned Terminal receiver reached console or filesystem operations.'
     $rejected=$false;try{[LaqayGuestDesktop]::BindRealTerminalReceiver(1) | Out-Null}catch{$rejected=$_.Exception.ToString().Contains('Guest desktop controls are not armed or have expired.')}
     Assert-True $rejected 'An unarmed Terminal receiver process was accepted.'
+    & (Join-Path $PSScriptRoot 'Test-GuestTerminalJob.ps1')
     Assert-True ([LaqayGuestDesktop]::RealNotepadStatePath('C:\Users\LaqayLab\AppData\Local') -ceq 'C:\Users\LaqayLab\AppData\Local\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState') 'Unexpected disposable Notepad state path.'
     foreach($profile in @($env:LOCALAPPDATA,'C:\Users\LaqayLab\AppData\Local\..\Local','H:\Projects')){
         $rejected=$false;try{[LaqayGuestDesktop]::RealNotepadStatePath($profile) | Out-Null}catch{$rejected=$true}

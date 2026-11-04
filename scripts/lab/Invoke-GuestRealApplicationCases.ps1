@@ -26,6 +26,7 @@ foreach($kind in $realKinds){
                 $receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json
                 $entry | Add-Member -NotePropertyName ReceiverReady -NotePropertyValue $receiver
                 Assert-True ($receiver.LabId -eq $LabId -and $receiver.RunId -eq $RunId -and $receiver.OwnerPid -eq $PID -and $receiver.SessionId -eq $report.SessionId -and $receiver.ScriptSha256 -eq $entry.Info.TerminalReceiverScriptSha256 -and $receiver.Ready -and -not $receiver.Error) 'The Terminal receiver identity does not match its owned fixture.'
+                Assert-True ($receiver.ContainedBeforeReady -and $receiver.JobName -ceq $entry.Info.TerminalReceiverJobName -and $receiver.JobName -ceq [LaqayGuestDesktop]::RealTerminalReceiverJobName($LabId,$RunId,$PID)) 'The receiver did not enter the exact pre-created Job before readiness.'
                 $entry | Add-Member -NotePropertyName Receiver -NotePropertyValue ([LaqayGuestDesktop]::BindRealTerminalReceiver([int]$receiver.Pid))
             }
             $terminalIndex=0

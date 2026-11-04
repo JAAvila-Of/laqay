@@ -14,7 +14,34 @@ $owner=Get-Process -Id $OwnerPid
 if($owner.SessionId -ne $process.SessionId -or $owner.ProcessName -ne 'powershell'){throw 'The Terminal receiver has no matching guest helper.'}
 $reportPath=Join-Path $PSScriptRoot 'receiver.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing a reused Terminal receiver report.'}
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Pid=$PID;OwnerPid=$OwnerPid;SessionId=$process.SessionId;Executable=$process.MainModule.FileName;ScriptSha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash;Ready=$true;Inputs=@();Finished=$false;Error=$null}
+$jobName='Local\LaqayTerminalReceiver-'+$LabId+'-'+$RunId+'-'+$OwnerPid
+$containmentSource=@'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+public static class LaqayTerminalSelfContainment {
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenJobObjectW(uint access,bool inherit,string name);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool contained);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static bool Enter(string name) {
+        if(name==null || !Regex.IsMatch(name,@"^Local\\LaqayTerminalReceiver-[a-f0-9]{32}-[a-f0-9]{32}-[1-9][0-9]*$")) throw new ArgumentException("Unexpected receiver Job name.");
+        IntPtr job=OpenJobObjectW(5,false,name);
+        if(job==IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(),"The pre-created receiver Job is unavailable.");
+        try {
+            if(!AssignProcessToJobObject(job,GetCurrentProcess())) throw new Win32Exception(Marshal.GetLastWin32Error(),"Cannot enter the pre-created receiver Job.");
+            bool contained;
+            if(!IsProcessInJob(GetCurrentProcess(),job,out contained) || !contained) throw new InvalidOperationException("The receiver did not enter its dedicated Job.");
+            return true;
+        }finally{CloseHandle(job);}
+    }
+}
+'@
+Add-Type -TypeDefinition $containmentSource
+$contained=[LaqayTerminalSelfContainment]::Enter($jobName)
+$report=[ordered]@{LabId=$LabId;RunId=$RunId;Pid=$PID;OwnerPid=$OwnerPid;SessionId=$process.SessionId;Executable=$process.MainModule.FileName;ScriptSha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash;JobName=$jobName;ContainedBeforeReady=$contained;Ready=$true;Inputs=@();Finished=$false;Error=$null}
 function Save-Receiver {
     $temporary=$reportPath+'.tmp'
     if([IO.File]::Exists($temporary)){throw 'Refusing an existing report publication file.'}
