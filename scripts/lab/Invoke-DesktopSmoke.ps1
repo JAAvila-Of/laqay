@@ -250,6 +250,8 @@ exit $LASTEXITCODE
     if($IncludeAdverse){
         $race=$guest.TabClipboardRace;$proof=$summary.PendingWaitProof
         if($race.WindowHandle -eq 0 -or $race.SourceTab -notlike '*pending-tab-a*' -or $race.DestinationTab -notlike '*pending-tab-b*' -or $race.FenceTab -notlike '*pending-tab-fence*'){throw 'The selected tabs and their shared native window were not recorded.'}
+        $fence=$race.FenceInputBefore
+        if(-not $fence.Foreground -or -not $fence.FocusWithinWindow -or -not $fence.ItemsViewFocused -or -not $fence.HasPng -or ($fence.GuiFlags -band 0x1e) -ne 0 -or $fence.ControlDown -or $fence.AltDown -or $fence.ShiftDown -or $fence.WindowsDown -or -not $race.FenceShellPath -or $race.FenceCounts.A -ne 0 -or $race.FenceCounts.B -ne 0 -or $race.FenceCounts.C -ne 1){throw 'The completion-fence input context or final file counts were not established.'}
         if(-not $pendingVerified -or -not $proof.Confirmed -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or -not $race.SameWindow -or -not $race.TabChanged -or -not $race.FenceVerified -or -not $race.OriginalFoldersEmpty -or -not $race.FreshPasteVerified -or -not $race.ProviderStopped){throw 'The held clipboard tab-switch proof and recovery are incomplete.'}
         foreach($state in @($race.Reference,$race.AfterRender,$race.AfterFence)){
             if(-not $state.Requested -or -not $state.Released -or -not $state.Rendered -or -not $state.MarkerPublished -or -not $state.OwnerMatches -or $state.PayloadBytes -le 0 -or $state.Sequence -ne $state.PublishedSequence -or $state.Error -or $state.TimedOut){throw 'The delayed PNG did not supply valid bytes with unchanged clipboard sequence.'}

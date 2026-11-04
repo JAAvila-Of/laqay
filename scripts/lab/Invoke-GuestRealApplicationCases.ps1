@@ -1,5 +1,5 @@
 # Loaded only by the armed adverse runner in its exact owned run directory.
-if(-not $IncludeAdverse -or -not $IncludeRealApplications -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 29){throw 'Real application cases require the complete owned adverse context and explicit opt-in.'}
+if(-not $IncludeAdverse -or -not $IncludeRealApplications -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 13){throw 'Real application cases require the owned basic context and explicit opt-in.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
 foreach($kind in @('Notepad','Edge')){
     $entry=[pscustomobject]@{Kind=$kind;Inventory=$null;Info=$null;Text=@();Image=$null;Cleanup=$null;Error=$null}

@@ -371,6 +371,7 @@ try{
     Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
     if($IncludeAdverse){
         # Dot-source only this reviewed guest-local driver, sharing owned fixtures and cleanup.
+        if($IncludeRealApplications){. (Join-Path $PSScriptRoot 'Invoke-GuestRealApplicationCases.ps1')}
         . (Join-Path $PSScriptRoot 'Invoke-GuestAdverseCases.ps1')
     }
     if($IncludeRdp){

@@ -324,3 +324,13 @@ identified and contained before input. Cleanup requires normal application
 exit, empty owned Jobs and removal of the run-specific files/profile. Forced
 cleanup remains a failure. This does not claim a rollback of Notepad's settings
 inside the disposable guest, nor compatibility with other application versions.
+
+In the opt-in mode, the four real-application cases run immediately after the
+thirteen basic Explorer cases, before the remaining adverse regressions. All
+33 are still required. The first expanded attempt stopped after 22 cases at
+the later same-clipboard completion paste, before reaching either application;
+it remains a failed attempt with restoration complete. The fence now records
+native/semantic focus, modifier state, PNG availability, Shell folder path,
+application responsiveness and A/B/C file counts even on failure. The single
+Ctrl+V and its publication wait are unchanged; an input-context prerequisite
+failure cannot count as a successful cancellation.

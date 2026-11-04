@@ -638,7 +638,7 @@ public static partial class LaqayGuestDesktop {
             ControlDown=(GetAsyncKeyState(17)&0x8000)!=0,AltDown=(GetAsyncKeyState(18)&0x8000)!=0,
             ShiftDown=(GetAsyncKeyState(16)&0x8000)!=0,WindowsDown=((GetAsyncKeyState(91)|GetAsyncKeyState(92))&0x8000)!=0,
             HasBitmap=IsClipboardFormatAvailable(2),HasDib=IsClipboardFormatAvailable(8),
-            HasDibV5=IsClipboardFormatAvailable(17),HasFileDrop=IsClipboardFormatAvailable(15)};
+            HasDibV5=IsClipboardFormatAvailable(17),HasFileDrop=IsClipboardFormatAvailable(15),HasPng=IsClipboardFormatAvailable(RegisterClipboardFormatW("PNG"))};
     }
     public static void FocusFolder(IntPtr window) {
         Guard(); ExplorerWindow(window);
