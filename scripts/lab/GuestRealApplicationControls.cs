@@ -182,6 +182,7 @@ public static partial class LaqayGuestDesktop {
         const string edgePolicyPath=@"SOFTWARE\Policies\Microsoft\Edge";
         bool edgePoliciesConfigured;
         readonly System.Collections.Generic.HashSet<uint> priorEdgePids=new System.Collections.Generic.HashSet<uint>();
+        readonly System.Collections.Generic.List<object> priorTerminalProcesses=new System.Collections.Generic.List<object>();
         readonly System.Collections.Generic.List<object> priorEdgeProcesses=new System.Collections.Generic.List<object>();
         string marker,version,sha,packageIdentity;int appPid;
         readonly System.Collections.Generic.List<object> candidates=new System.Collections.Generic.List<object>();
@@ -221,7 +222,14 @@ public static partial class LaqayGuestDesktop {
             if(!Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(root))) || Directory.Exists(root)) throw new InvalidOperationException("Unexpected or reused real application fixture.");
             if((File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0 || (File.GetAttributes(launcher)&FileAttributes.ReparsePoint)!=0) throw new InvalidOperationException("A real application executable is a reparse point.");
             if(kind=="Notepad") foreach(var existing in Process.GetProcessesByName("Notepad")) using(existing) if(existing.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Notepad session.");
-            if(kind=="Terminal") foreach(var existing in Process.GetProcessesByName("WindowsTerminal")) using(existing) if(existing.SessionId==Process.GetCurrentProcess().SessionId) throw new InvalidOperationException("Refusing an existing Terminal session before state isolation.");
+            if(kind=="Terminal") {
+                foreach(var existing in Process.GetProcessesByName("WindowsTerminal")) using(existing) {
+                    if(existing.SessionId!=Process.GetCurrentProcess().SessionId) continue;
+                    try {priorTerminalProcesses.Add(new {Pid=existing.Id,SessionId=existing.SessionId,Executable=existing.MainModule.FileName,StartedUtc=existing.StartTime.ToUniversalTime().ToString("o"),Window=existing.MainWindowHandle.ToInt64()});}
+                    catch(System.ComponentModel.Win32Exception failure){priorTerminalProcesses.Add(new {Pid=existing.Id,Error=failure.NativeErrorCode});}
+                }
+                if(priorTerminalProcesses.Count!=0) throw new InvalidOperationException("Refusing an existing Terminal session before state isolation.");
+            }
             version=FileVersionInfo.GetVersionInfo(target).FileVersion;sha=Hash(target);
             Directory.CreateDirectory(root);created=true;marker="LaqayRealApplication:"+runId+":"+kind+":"+Process.GetCurrentProcess().Id;
             File.WriteAllText(Path.Combine(root,"owner.txt"),marker);
@@ -352,7 +360,7 @@ public static partial class LaqayGuestDesktop {
             }catch(Exception failure){results.Add(new {Error=failure.ToString()});}
             return results.ToArray();
         }
-        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},TerminalSettingsSha256=terminalSettingsHash,TerminalReceiverScriptSha256=receiverScriptHash,TerminalState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray()};}
+        public object Info() {var targets=TargetDiagnostics();return new {Kind=kind,Executable=target,FileVersion=version,ExecutableSha256=sha,PackageIdentity=packageIdentity,ExpectedPackage=expectedPackage,Pid=appPid,BootstrapPid=bootstrap==null?0:bootstrap.Id,Window=window.ToInt64(),LauncherAssignedBeforeResume=assignedBeforeResume,PackageProcessAdopted=adopted,Ready=ready,FixtureRoot=root,ProfileScope=kind=="Edge"?"Owned run directory":"Disposable guest user",Candidates=candidates.ToArray(),Targets=targets,Automation=automation==null?null:automation.Info(),NativeProbe=nativeProbe,NotepadState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},TerminalSettingsSha256=terminalSettingsHash,TerminalReceiverScriptSha256=receiverScriptHash,TerminalState=new {Isolated=stateIsolated,Existed=stateExisted,OriginalFingerprint=stateOriginal},EdgePoliciesConfigured=edgePoliciesConfigured,PriorEdgeProcesses=priorEdgeProcesses.ToArray(),PriorTerminalProcesses=priorTerminalProcesses.ToArray()};}
         public object State() {
             return automation.Call("State",()=>StateCore());
         }

@@ -506,3 +506,12 @@ receiver exit; acceptance requires zero exit codes, empty Jobs, worker shutdown,
 removed fixtures and the original Terminal LocalState fingerprint restored.
 Other package settings are outside this rollback; if first use creates the
 package data container, the test does not claim to remove that whole container.
+
+The first 35-case attempt stopped after 17 passing cases: Terminal rejected an
+existing session before isolating LocalState. Restoration completed, both VMs
+were off and owned controller Jobs were empty. This attempt did not validate
+Terminal. The opt-in task now explicitly hosts the driver in headless conhost
+with handoff disabled, keeping console delegation separate from the application
+under test. Any remaining prior Terminal process still fails the test, with
+process identity diagnostics; it is never adopted or terminated by this guard.
+The revised runtime run remains pending.
