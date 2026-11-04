@@ -296,3 +296,31 @@ two guest boots, normal application exit, full baseline/preferences/logon
 restoration, both guests off and no remaining owned helper processes.
 This covers a tab change during clipboard reading, not every encoding or
 publication race in T29–T30 or the real-application compatibility matrix.
+
+The optional `-AdverseOnly -IncludeRealApplications` cycle adds four cases
+(`NotepadRealText`, `NotepadRealImageDoesNotWrite`, `EdgeRealText`, and
+`EdgeRealImageDoesNotWrite`) for 33 total. Its guest runtime result is pending.
+The default adverse suite remains 29 cases, and Cargo/CI commands do not require
+these applications. The extension requires registered Microsoft Notepad and an
+installed Edge executable in the guest; it fails when a prerequisite is missing.
+
+Notepad opens an owned temporary text file through the Windows launcher and
+must expose the registered runtime package identity and executable path. It
+uses the disposable guest user's application settings. Edge opens a local HTML
+textarea with a new run-specific profile and accessibility enabled, without a
+browser extension or a debugging connection. A configured
+[UserDataDir policy](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies/userdatadir)
+is rejected before Edge starts, since it can override the profile flag. The
+helper rejects an existing Notepad session and does not use host profiles.
+
+Each app must receive exact native clipboard text with Laqay disabled and
+enabled; Notepad must also save the exact owned document before normal closure.
+An image paste in the real editor is followed by a same-clipboard Explorer
+paste as a completion fence for the pinned FIFO worker. All previous files
+under the Explorer fixtures must retain their hashes, with exactly one new PNG
+in the recovery folder and no extra staging files. The launcher enters a Job
+before resume; any separately activated Notepad process must be independently
+identified and contained before input. Cleanup requires normal application
+exit, empty owned Jobs and removal of the run-specific files/profile. Forced
+cleanup remains a failure. This does not claim a rollback of Notepad's settings
+inside the disposable guest, nor compatibility with other application versions.

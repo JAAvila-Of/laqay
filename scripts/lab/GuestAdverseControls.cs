@@ -21,6 +21,10 @@ public static partial class LaqayGuestDesktop {
     }
     public static object MatrixEditorTextClipboard(string text) {
         MatrixGuard();if(matrixEditor==null) throw new InvalidOperationException("No owned editor fixture.");
+        return PublishNativeUnicodeFixture(text);
+    }
+    static object PublishNativeUnicodeFixture(string text) {
+        MatrixGuard();
         var bytes=MatrixUnicodeFixture(text);
         if(matrixTextSource==null) {
             matrixTextThread=GetCurrentThreadId();matrixTextSource=new NativeWindow();
@@ -205,8 +209,9 @@ public static partial class LaqayGuestDesktop {
     public static void EndMatrixEditor() {
         var owned=matrixEditor;matrixEditor=null;
         try {if(owned!=null) owned.Dispose();}
-        finally {if(matrixTextSource!=null){matrixTextSource.DestroyHandle();matrixTextSource=null;matrixTextThread=0;}}
+        finally {EndNativeUnicodeFixture();}
     }
+    static void EndNativeUnicodeFixture() {if(matrixTextSource!=null){matrixTextSource.DestroyHandle();matrixTextSource=null;matrixTextThread=0;}}
     public static void BeginMatrixReferenceHook() {
         MatrixGuard();if(matrixEditor==null || matrixReferenceHook!=null) throw new InvalidOperationException("Unexpected reference-hook context.");
         matrixReferenceHook=new MatrixReferenceHook(matrixEditor.Handle);matrixReferenceHook.Start();

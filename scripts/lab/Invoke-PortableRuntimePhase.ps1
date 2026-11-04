@@ -4,13 +4,15 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
     [Parameter(Mandatory=$true)][ValidateSet('Boot','Old','New','Enable','Verify','Absent','Removed','Adverse')][string]$Phase,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
-    [Parameter(Mandatory=$true)][string]$OutputDirectory
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [switch]$IncludeRealApplications
 )
 $ErrorActionPreference='Stop'
+if($IncludeRealApplications -and $Phase -ne 'Adverse'){throw 'Real applications require the explicit adverse phase.'}
 if(-not $env:RUST_WORK_JOB){throw 'A RustWork runtime lease is required before any guest boot or application suite.'}
 $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
 $suite=Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1'
-$report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Phase=$Phase;Passed=$false;BootPerformed=$false;Suites=@();Error=$null}
+$report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Phase=$Phase;IncludeRealApplications=[bool]$IncludeRealApplications;Passed=$false;BootPerformed=$false;Suites=@();Error=$null}
 $reportPath=Join-Path $OutputDirectory 'phase-report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing a reused runtime phase.'}
 function Run-Suite([string]$name,[hashtable]$extra){
@@ -58,7 +60,7 @@ try{
         Verify {Run-Suite 'startup' @{StartupPhase='Verify'}}
         Absent {Run-Suite 'startup' @{StartupPhase='Absent'}}
         Removed {Run-Suite 'portable' @{PortablePhase='Removed'}}
-        Adverse {Run-Suite 'adverse' @{IncludeAdverse=$true}}
+        Adverse {Run-Suite 'adverse' @{IncludeAdverse=$true;IncludeRealApplications=[bool]$IncludeRealApplications}}
     }
     $report.Passed=$true
 }catch{

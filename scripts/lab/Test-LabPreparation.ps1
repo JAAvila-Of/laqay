@@ -37,6 +37,16 @@ try {
     $invalidUnicodeRejected=$false
     try{[LaqayGuestDesktop]::MatrixUnicodeFixture('one'+[char]0+'two') | Out-Null}catch{$invalidUnicodeRejected=$true}
     Assert-True $invalidUnicodeRejected 'Embedded Unicode terminators were accepted.'
+    $realAbi=[LaqayGuestDesktop]::RealApplicationAbi()
+    Assert-True ($realAbi.Startup -eq 104 -and $realAbi.Process -eq 24 -and $realAbi.Accounting -eq 48) 'Unexpected real application process/Job ABI.'
+    $realRun='C:\LaqayLab\Runs\'+$labId
+    Assert-True ([LaqayGuestDesktop]::RealFixturePath('Edge',$realRun) -ceq ($realRun+'\real-apps\Edge')) 'The real application fixture escaped its exact run.'
+    foreach($invalidRoot in @($realRun+'\..\other','C:\Users\LaqayLab','H:\Projects')){
+        $rejected=$false;try{[LaqayGuestDesktop]::RealFixturePath('Edge',$invalidRoot) | Out-Null}catch{$rejected=$true}
+        Assert-True $rejected 'An unrelated real application root was accepted.'
+    }
+    $html=[LaqayGuestDesktop]::RealBrowserFixture($labId)
+    Assert-True ($html.Contains('Laqay real app '+$labId) -and [regex]::Matches($html,'<textarea\b').Count -eq 1 -and $html.Contains('aria-label="Laqay real application input"') -and -not $html.Contains('<script')) 'The local browser fixture lost its unique title or plain editable target.'
     foreach($size in @(2,2048)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)

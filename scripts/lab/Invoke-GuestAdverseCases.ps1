@@ -276,4 +276,6 @@ Run-Case 'SerialPasteResourceSample' {
     foreach($file in $files){Check-Png $file.FullName}
     $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
-Assert-True ($report.Cases.Count -eq 29) 'The complete adverse suite did not execute.'
+if($IncludeRealApplications){. (Join-Path $root 'Invoke-GuestRealApplicationCases.ps1')}
+$expectedCases=if($IncludeRealApplications){33}else{29}
+Assert-True ($report.Cases.Count -eq $expectedCases) 'The complete adverse suite did not execute.'
