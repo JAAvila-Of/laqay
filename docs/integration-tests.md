@@ -115,6 +115,21 @@ image pastes capture a bounded, read-only MTA semantic-focus comparison through
 both native COM and the managed UI Automation API. That
 diagnostic never substitutes for a successful paste or changes target policy.
 
+The diagnostic retry also failed its first paste. Both the native COM and
+managed MTA focused-element queries returned UIA_E_ELEMENTNOTAVAILABLE
+(0x80040201). Both could inspect the native UIItemsView list, which reported
+HasKeyboardFocus=false. The native focus handle matched that list. This narrows
+the failed observation; it does not establish whether populated folders behave
+the same way. Application exit, temporary logon restoration and shutdown again
+completed normally, with no passing product cases.
+
+The next Pro-only failure diagnostic compares the initially empty folder with
+one uniquely named temporary reference, selects that reference with Home, and
+removes it before observing the empty folder again. It sends no additional paste
+and does not alter the failed result. Nonempty or out-of-scope folders are
+refused before reference creation or input, and incomplete reference cleanup
+is reported as a cleanup error. That comparison has not been executed yet.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

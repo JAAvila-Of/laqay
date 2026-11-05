@@ -154,8 +154,41 @@ function Open-Folder([string]$path){
     Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
     return $window
 }
+function Compare-EmptyFolderFocus($window,[string]$path){
+    $comparison=[ordered]@{Status='DiagnosticOnly';InitiallyEmpty=$false;WithReference=$null;SelectedReference=$null;AfterRemoval=$null;ReferenceRemoved=$true;Error=$null}
+    $reference=$null;$created=$false
+    try{
+        $base=[IO.Path]::GetFullPath((Join-Path $root 'data')).TrimEnd('\')+'\'
+        $directory=[IO.Path]::GetFullPath($path)
+        if(-not $directory.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)){throw 'Focus reference is outside the owned case directory.'}
+        if(@(Get-ChildItem -LiteralPath $directory -Force).Count){$comparison.Status='SkippedNonEmpty';return [pscustomobject]$comparison}
+        $comparison.InitiallyEmpty=$true
+        $reference=Join-Path $directory ('focus-reference-'+$RunId+'.txt')
+        $file=[IO.File]::Open($reference,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $created=$true;$comparison.ReferenceRemoved=$false
+        $file.Dispose()
+        Wait-For {$window.Document.Folder.Items().Count -eq 1} 'Explorer did not expose the temporary focus reference.'
+        [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+        $comparison.WithReference=[pscustomobject]@{Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+        # Home selects the single owned reference; no additional paste is sent.
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(36))
+        Wait-For {$selection=$window.Document.SelectedItems();$selection.Count -eq 1 -and $selection.Item(0).Path -ieq $reference} 'The owned focus reference was not selected.'
+        $comparison.SelectedReference=[pscustomobject]@{SelectionVerified=$true;Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+    }catch{$comparison.Error=$_.Exception.Message}finally{
+        if($created){
+            try{
+                Remove-Item -LiteralPath $reference
+                $comparison.ReferenceRemoved=-not (Test-Path -LiteralPath $reference)
+                [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+                $comparison.AfterRemoval=[pscustomobject]@{Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+            }catch{$comparison.Error+='; Reference cleanup: '+$_.Exception.Message}
+            if(-not $comparison.ReferenceRemoved){$report.CleanupErrors+=@('The temporary focus reference was not removed.')}
+        }
+    }
+    return [pscustomobject]$comparison
+}
 function Paste-Image($window,[string]$path,[int]$count){
-    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null;FailureSemanticFocus=$null}
+    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null;FailureSemanticFocus=$null;FailureFocusComparison=$null}
     try{
         $entry.BeforeActivation=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
         [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
@@ -172,6 +205,7 @@ function Paste-Image($window,[string]$path,[int]$count){
         if($entry.Error){
             try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}
             try{$entry.FailureSemanticFocus=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}catch{}
+            if($GuestProfile -ceq 'Windows10ProEsMx'){$entry.FailureFocusComparison=Compare-EmptyFolderFocus $window $path}
         }
         $report.ImagePastes+=@($entry);Save-Report
     }
