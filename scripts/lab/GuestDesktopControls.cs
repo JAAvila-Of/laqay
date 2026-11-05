@@ -15,6 +15,7 @@ using System.Windows.Forms;
 
 public static partial class LaqayGuestDesktop {
     static bool armed;
+    static Dictionary<string,object> observedDesktopProfile;
     static DateTime deadline;
     static readonly HashSet<IntPtr> windows = new HashSet<IntPtr>();
     static Process application;
@@ -91,7 +92,29 @@ public static partial class LaqayGuestDesktop {
         try { return ObjectName(GetProcessWindowStation())=="WinSta0" && ObjectName(GetThreadDesktop(GetCurrentThreadId()))=="Default" && ObjectName(input)=="Default"; }
         finally { if(input!=IntPtr.Zero) CloseDesktop(input); }
     }
-    public static void Arm(string labId) {
+    public static void ValidateDesktopProfile(string profile,Dictionary<string,object> ready,string caption,string build,string edition,string language) {
+        int number;
+        if(profile=="Windows11EnterpriseEvaluation") {
+            if(!caption.Contains("Windows 11 Enterprise") || !Int32.TryParse(build,out number) || number<22000 ||
+                (ready.ContainsKey("GuestProfile") && Convert.ToString(ready["GuestProfile"])!=profile))
+                throw new InvalidOperationException("The declared Windows 11 desktop profile does not match the system.");
+        } else if(profile=="Windows10ProEsMx") {
+            if(caption!="Microsoft Windows 10 Pro" || build!="19045" || edition!="Professional" || !String.Equals(language,"es-MX",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The Pro desktop system does not match the requested profile.");
+            foreach(var field in new[] {"GuestProfile","Caption","Build","Edition","Language"})
+                if(!ready.ContainsKey(field)) throw new InvalidOperationException("The Pro ready profile is incomplete.");
+            if(Convert.ToString(ready["GuestProfile"])!=profile || Convert.ToString(ready["Caption"])!=caption ||
+                Convert.ToString(ready["Build"])!=build || Convert.ToString(ready["Edition"])!=edition ||
+                !String.Equals(Convert.ToString(ready["Language"]),language,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The Pro marker differs from the live desktop system.");
+        } else throw new InvalidOperationException("Unsupported explicit desktop profile.");
+    }
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,ExactSpelling=true)] static extern int GetSystemDefaultLocaleName(StringBuilder name,int count);
+    public static Dictionary<string,object> GuestProfileEvidence() {
+        Guard(); return new Dictionary<string,object>(observedDesktopProfile);
+    }
+    public static void Arm(string labId) { Arm(labId,"Windows11EnterpriseEvaluation"); }
+    public static void Arm(string labId,string profile) {
         armed=false;
         if(!Regex.IsMatch(labId,"^[a-f0-9]{32}$")) throw new InvalidOperationException("Invalid lab identity.");
         var identity=new WindowsPrincipal(WindowsIdentity.GetCurrent());
@@ -102,17 +125,26 @@ public static partial class LaqayGuestDesktop {
         var ready=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(readyPath));
         if(!ready.ContainsKey("LabId") || (string)ready["LabId"]!=labId || !ready.ContainsKey("Ready") || !(bool)ready["Ready"])
             throw new InvalidOperationException("Guest marker identity mismatch.");
-        bool guest=false,os=false;
+        if(profile=="Windows10ProEsMx" && (!ready.ContainsKey("Role") || Convert.ToString(ready["Role"])!="Primary" || !ready.ContainsKey("ComputerName") || !String.Equals(Convert.ToString(ready["ComputerName"]),Environment.MachineName,StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("The Pro marker does not identify this primary guest computer.");
+        bool guest=false; string caption="",build="",edition="";
         using(var query=new ManagementObjectSearcher("SELECT Manufacturer,Model FROM Win32_ComputerSystem"))
         using(var results=query.Get()) foreach(ManagementObject item in results) {
             using(item) guest=(string)item["Manufacturer"]=="Microsoft Corporation" && (string)item["Model"]=="Virtual Machine";
         }
-        using(var query=new ManagementObjectSearcher("SELECT Caption FROM Win32_OperatingSystem"))
+        using(var query=new ManagementObjectSearcher("SELECT Caption,BuildNumber FROM Win32_OperatingSystem"))
         using(var results=query.Get()) foreach(ManagementObject item in results) {
-            using(item) os=((string)item["Caption"]).Contains("Windows 11 Enterprise");
+            using(item) {caption=(string)item["Caption"];build=(string)item["BuildNumber"];}
         }
-        if(!guest || !os || !InputDesktopAvailable() || Thread.CurrentThread.GetApartmentState()!=ApartmentState.STA)
-            throw new InvalidOperationException("An unlocked Windows 11 lab desktop in STA is required.");
+        using(var key=Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion")) {
+            if(key!=null) edition=Convert.ToString(key.GetValue("EditionID",""));
+        }
+        var locale=new StringBuilder(85);
+        if(GetSystemDefaultLocaleName(locale,locale.Capacity)==0) throw new InvalidOperationException("The live system locale is unavailable.");
+        ValidateDesktopProfile(profile,ready,caption,build,edition,locale.ToString());
+        if(!guest || !InputDesktopAvailable() || Thread.CurrentThread.GetApartmentState()!=ApartmentState.STA)
+            throw new InvalidOperationException("An unlocked owned lab desktop in STA is required.");
+        observedDesktopProfile=new Dictionary<string,object> {{"Profile",profile},{"Caption",caption},{"Build",build},{"Edition",edition},{"Language",locale.ToString()}};
         deadline=DateTime.UtcNow.AddMinutes(5); armed=true;
     }
     static void Guard() {
@@ -668,6 +700,10 @@ public static partial class LaqayGuestDesktop {
             if(item.TryGetCurrentPattern(SelectionItemPattern.Pattern,out pattern) && ((SelectionItemPattern)pattern).Current.IsSelected) return item.Current.Name;
         }
         return "";
+    }
+    public static int ExplorerTabCount(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        return AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)).Count;
     }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);

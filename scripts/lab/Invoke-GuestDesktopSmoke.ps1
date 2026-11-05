@@ -3,6 +3,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
+    [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [switch]$IncludeUnc,
     [switch]$IncludeRdp,
     [switch]$IncludeLifecycle,
@@ -12,6 +13,8 @@ param(
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'SmokeGuestProfile.ps1')
+Assert-SmokeProfileModes $GuestProfile ([bool]($IncludeUnc -or $IncludeRdp -or $IncludeLifecycle -or $IncludeAdverse -or $IncludeRealApplications -or $IncludeWindowsTerminal))
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
 $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,
@@ -67,7 +70,7 @@ if($IncludeAdverse -and ($IncludeLifecycle -or $IncludeRdp -or $IncludeUnc)){thr
 if($IncludeRealApplications -and -not $IncludeAdverse){throw 'Real applications require the explicit adverse extension.'}
 $armLimit=[DateTime]::UtcNow.AddSeconds(30)
 while($true){
-    try{[LaqayGuestDesktop]::Arm($LabId);break}catch{
+    try{[LaqayGuestDesktop]::Arm($LabId,$GuestProfile);break}catch{
         if([DateTime]::UtcNow -ge $armLimit){throw}
         Start-Sleep -Milliseconds 500
     }
@@ -76,7 +79,7 @@ $root=[IO.Path]::GetFullPath((Join-Path 'C:/LaqayLab/Runs' $RunId))
 if($PSScriptRoot -ne $root){throw 'The smoke runner must execute from its exact guest run directory.'}
 $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
+$report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();ImagePastes=@();TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
@@ -315,6 +318,12 @@ try{
         Paste-Image $enabledWindow $disabled 1
         Check-Png (Get-ChildItem -LiteralPath $disabled -Filter '*.png')[0].FullName
     }
+    if($GuestProfile -ceq 'Windows10ProEsMx'){
+        $tabs=[LaqayGuestDesktop]::ExplorerTabCount([IntPtr]$enabledWindow.HWND)
+        Assert-True ($tabs -eq 0) 'The Pro Explorer unexpectedly exposes tab items; do not classify the tab case as not applicable.'
+        $report.NotApplicableCases+=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native tabs.';ObservedTabs=$tabs})
+        Save-Report
+    }else{
     Run-Case 'ActiveTabSelection' {
         $tabA=New-CaseFolder 'tab-a';$tabB=New-CaseFolder 'tab-b'
         $window=Open-Folder $tabA
@@ -339,6 +348,7 @@ try{
         Assert-True ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -eq $hash) 'The original tab image changed.'
         Assert-True (@(Get-ChildItem -LiteralPath $tabB -Filter '*.png').Count -eq 1 -and (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash -eq $bHash) 'Inactive tab received or lost output.'
         foreach($file in @(Get-ChildItem -LiteralPath $tabA,$tabB -Filter '*.png')){Check-Png $file.FullName}
+    }
     }
     Run-Case 'UnicodePathImagePaste' {
         $path=New-CaseFolder ('spaces '+[char]0x00F1+[char]0x6D4B+' image folder')

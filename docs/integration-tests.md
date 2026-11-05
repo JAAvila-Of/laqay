@@ -68,9 +68,36 @@ original sources were independently checked.
 
 This establishes readiness of the existing repaired guest and controlled closure.
 It is not an unattended fresh-install result for the corrected initializer.
-Existing desktop, network, RDP and lifecycle suites still require Windows 11;
-Windows 10 product coverage needs a separate reviewed adaptation and real
-execution. Provisioning alone is not product acceptance.
+The opt-in basic console suite described below is prepared for Pro; network,
+RDP, lifecycle, adverse and real-application extensions still require Windows 11.
+Windows 10 product execution remains pending. Provisioning alone is not product
+acceptance.
+
+## Opt-in Pro basic console suite: execution pending
+
+`Invoke-DesktopSmoke.ps1 -GuestProfile Windows10ProEsMx` selects only the basic
+console Explorer suite on an owned Pro build 19045 es-MX primary guest. The
+manifest, ready marker and live system must agree. Native controls additionally
+require Hyper-V hardware, the limited interactive token, unlocked input desktop,
+STA and a bounded armed interval. Other profiles and unsupported Pro extensions
+are refused before runtime/guest changes. Windows 11 remains the default.
+
+Pro requires the same twelve applicable basic cases: PNG content, preservation
+of an existing image, native multiple-file precedence, address/search/rename
+text, disabled/re-enabled behavior, Unicode paths, unchanged clipboard, active
+window destination and denied-write recovery. Native Explorer tabs are not a
+Windows 10 feature: ActiveTabSelection is separately recorded as NotApplicable,
+with zero observed tab items and an explicit reason. It is not counted as a pass.
+Windows 11 retains all thirteen cases, including ActiveTabSelection; its extended
+suites retain their existing cases. The controller rejects missing, extra or
+failed cases, mismatched platform evidence, or an incorrect non-applicable record.
+
+The runtime phase entry point accepts the explicit Pro profile only for Boot and
+Basic. Its existing runtime lease requirement remains in place. Normal developer
+commands and the default Windows 11 profile do not change. Preparation tests
+compile the native helper, exercise the actual Unicode locale ABI, reject wrong
+system/marker metadata and unsupported options, and check case accounting without
+arming desktop input. No Pro product run has been accepted yet.
 
 ## Current automated coverage
 
