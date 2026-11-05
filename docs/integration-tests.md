@@ -27,6 +27,30 @@ the original file survives, the cancelled operation leaves no staging/output
 file, and a new valid request can publish without replacing the original.
 This deterministic test is not a desktop focus or clipboard-race acceptance.
 
+## Opt-in Windows 10 provisioning
+
+The lab provisioning script accepts `-GuestProfile Windows10ProEsMx` for a
+Windows 10 Pro 22H2 x64 Spanish (Mexico) installation image. The default remains
+Windows 11 Enterprise Evaluation in English. Use a new LabId and repeat the
+explicit profile on every management command; mixed profiles in one manifest
+are rejected. Existing manifests without a profile retain the Windows 11 default.
+
+The opt-in profile selects image index 4 and es-MX in unattended setup. Elevated
+provisioning first verifies the supplied ISO hash and inspects that image with
+DISM: exact Pro name/edition, AMD64, language and compatible base build are
+required before VM or switch creation. Only its own temporary read-only ISO
+mount without a drive letter is detached, including on metadata failure;
+an already mounted ISO is refused. The installed guest must report build 19045,
+Professional edition and es-MX before initialization succeeds. This does not
+activate Windows, determine license entitlement or transfer a host key.
+
+Pure preparation tests cover both plans, wrong edition/index/architecture/
+language/build rejection, unattended image selection and mocked mount ownership
+and cleanup. They never mount installation media or create VMs. Actual Windows
+10 installation remains unexecuted. Existing desktop, network, RDP and lifecycle
+suites still require Windows 11; Windows 10 product coverage needs a separate
+reviewed adaptation and real execution. Provisioning alone is not acceptance.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

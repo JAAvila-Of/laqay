@@ -7,7 +7,12 @@ $ErrorActionPreference='Stop'
 if($PSScriptRoot -ne 'C:\LaqayLab'){throw 'Firewall configuration is restricted to the owned guest directory.'}
 $marker=Get-Content -LiteralPath 'C:/LaqayLab/guest.json' -Raw | ConvertFrom-Json
 $computer=Get-CimInstance Win32_ComputerSystem
-if($marker.LabId -ne $LabId -or $marker.Role -ne $Role -or $computer.Manufacturer -ne 'Microsoft Corporation' -or $computer.Model -ne 'Virtual Machine' -or (Get-CimInstance Win32_OperatingSystem).Caption -notlike '*Windows 11 Enterprise*'){throw 'Guest firewall identity mismatch.'}
+if($marker.LabId -ne $LabId -or $marker.Role -ne $Role -or $computer.Manufacturer -ne 'Microsoft Corporation' -or $computer.Model -ne 'Virtual Machine'){throw 'Guest firewall identity mismatch.'}
+. (Join-Path $PSScriptRoot 'LabGuestProfile.ps1')
+$profile=Get-LabGuestProfile $(if($marker.GuestProfile){$marker.GuestProfile}else{'Windows11EnterpriseEvaluation'})
+$os=Get-CimInstance Win32_OperatingSystem
+$edition=(Get-ItemProperty -LiteralPath 'HKLM:/SOFTWARE/Microsoft/Windows NT/CurrentVersion' -Name EditionID).EditionID
+Assert-LabGuestSystem $profile $os.Caption ([int]$os.BuildNumber) $edition (Get-WinSystemLocale).Name
 if(-not ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'An administrator inside the owned guest is required.'}
 $adapters=@(Get-NetAdapter -Physical)
 if($adapters.Count -ne 1){throw 'Exactly one private lab adapter is required.'}
