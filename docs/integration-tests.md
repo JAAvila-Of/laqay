@@ -128,7 +128,27 @@ one uniquely named temporary reference, selects that reference with Home, and
 removes it before observing the empty folder again. It sends no additional paste
 and does not alter the failed result. Nonempty or out-of-scope folders are
 refused before reference creation or input, and incomplete reference cleanup
-is reported as a cleanup error. That comparison has not been executed yet.
+is reported as a cleanup error.
+
+The third run completed that diagnostic: the initially empty list had no global
+focused element; after reference creation and selection, both MTA APIs exposed
+an enabled, keyboard-focused UIItem/ListItem. The reference was removed, normal
+application exit and restoration completed, and all guests ended off. The
+immediate post-removal sample still exposed a ListItem, so it does not prove
+that an empty list remains accessible after Explorer refreshes. The original
+ImagePaste case remains failed and no additional paste was sent.
+
+The core now prepares a narrow alternative observation for that initial empty
+list. Only the specific global UIA_E_ELEMENTNOTAVAILABLE result enters it.
+Native and provider handles must agree on DirectUIHWND/UIItemsView, list type,
+enabled state, no value pattern and no focused subtree element; menus, mouse
+capture and move/size mode are rejected. These observations and unavailable
+global focus must remain stable across the existing Shell handshake. The single
+focused visible filesystem view must independently report zero items before
+and after its path is resolved. Missing or ambiguous evidence declines. The
+normal semantic-focus route remains intact. Native policy and snapshot tests
+cover rejected editor/value/focus/view conditions, but the corrected executable
+has not yet passed a guest runtime suite.
 
 ## Current automated coverage
 

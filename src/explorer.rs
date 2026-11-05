@@ -1,8 +1,8 @@
 //! Read-only Shell diagnostics. These observations do not authorize input suppression.
 
 use crate::context::{
-    ContextEvidence, FocusNode, FocusRole, ValueAccess, ViewEvidence, select_focused_view,
-    static_text_in_folder_list,
+    ContextEvidence, EmptyListEvidence, FocusNode, FocusRole, ValueAccess, ViewEvidence,
+    native_empty_list, select_focused_view, static_text_in_folder_list,
 };
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -20,7 +20,7 @@ use windows::{
             Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
                 TreeScope_Subtree, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
-                UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
+                UIA_E_ELEMENTNOTAVAILABLE, UIA_GroupControlTypeId, UIA_HasKeyboardFocusPropertyId,
                 UIA_IsValuePatternAvailablePropertyId, UIA_ListControlTypeId,
                 UIA_ListItemControlTypeId, UIA_PaneControlTypeId, UIA_TextControlTypeId,
                 UIA_ValuePatternId,
@@ -28,7 +28,7 @@ use windows::{
             Shell::{
                 IFolderView, IPersistFolder2, IShellBrowser, IShellItem, IShellWindows,
                 IWebBrowserApp, SHCreateItemFromIDList, SID_STopLevelBrowser, SIGDN_FILESYSPATH,
-                ShellWindows,
+                SVGIO_ALLVIEW, ShellWindows,
             },
             WindowsAndMessaging::{
                 GUITHREADINFO, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
@@ -63,6 +63,7 @@ pub struct ShellObservation {
     pub visible: bool,
     pub contains_focus: bool,
     pub directory: Option<PathBuf>,
+    pub confirmed_empty: bool,
 }
 
 #[derive(Debug)]
@@ -82,10 +83,11 @@ pub struct FocusObservation {
     pub global_control_window: usize,
     pub native_control: Option<NativeControlObservation>,
     pub folder_items_focused: bool,
+    pub empty_list_candidate: bool,
     pub unchanged: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct NativeControlObservation {
     pub window: usize,
     pub win32_class: String,
@@ -93,6 +95,63 @@ pub struct NativeControlObservation {
     pub provider_window: usize,
     pub has_keyboard_focus: bool,
     pub focused_descendant_type: Option<i32>,
+}
+
+#[derive(PartialEq, Eq)]
+struct EmptyListObservation {
+    control: NativeControlObservation,
+    provider_class: String,
+    enabled: bool,
+    value_access: ValueAccess,
+    focused_count: i32,
+}
+
+fn inspect_empty_list(
+    automation: &IUIAutomation,
+    info: &GUITHREADINFO,
+) -> Result<Option<EmptyListObservation>> {
+    let control = inspect_control(automation, info.hwndFocus)?;
+    // SAFETY: The existing native focus control is queried on this MTA. No
+    // accessible names, values, input, files or UI state are changed.
+    let observation = unsafe {
+        let element = automation.ElementFromHandle(info.hwndFocus)?;
+        let value =
+            element.GetCurrentPropertyValueEx(UIA_IsValuePatternAvailablePropertyId, true)?;
+        let focused = automation
+            .CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))?;
+        let focused_count = element.FindAll(TreeScope_Subtree, &focused)?.Length()?;
+        EmptyListObservation {
+            control,
+            provider_class: element.CurrentClassName()?.to_string(),
+            enabled: element.CurrentIsEnabled()?.as_bool(),
+            value_access: if bool::try_from(&value)? {
+                ValueAccess::Unknown
+            } else {
+                ValueAccess::Absent
+            },
+            focused_count,
+        }
+    };
+    let eligible = native_empty_list(EmptyListEvidence {
+        native_class: &observation.control.win32_class,
+        provider_class: &observation.provider_class,
+        provider_matches_focus: observation.control.window != 0
+            && observation.control.provider_window == observation.control.window,
+        role: if observation.control.control_type == UIA_ListControlTypeId.0 {
+            FocusRole::List
+        } else {
+            FocusRole::Other
+        },
+        enabled: observation.enabled,
+        value_access: observation.value_access,
+        focused_descendant: observation.focused_count != 0
+            || observation.control.focused_descendant_type.is_some(),
+        menu_or_capture: info.flags.0 & 0x1e != 0
+            || !info.hwndMenuOwner.is_invalid()
+            || !info.hwndCapture.is_invalid()
+            || !info.hwndMoveSize.is_invalid(),
+    });
+    Ok(eligible.then_some(observation))
 }
 
 fn inspect_control(automation: &IUIAutomation, window: HWND) -> Result<NativeControlObservation> {
@@ -161,7 +220,11 @@ impl ExplorerSnapshot {
                 foreground_stable: self.foreground_unchanged,
                 native_focus_stable: self.native_focus_unchanged,
                 semantic_focus_stable: semantic.unchanged,
-                folder_items_focused: semantic.folder_items_focused,
+                folder_items_focused: semantic.folder_items_focused
+                    || (semantic.empty_list_candidate
+                        && self.observations.iter().any(|view| {
+                            view.visible && view.contains_focus && view.confirmed_empty
+                        })),
                 unresolved_entries: self.unresolved_entries,
             },
         )?;
@@ -170,7 +233,7 @@ impl ExplorerSnapshot {
 }
 
 fn observe_semantic_focus(
-    ready: mpsc::Sender<()>,
+    ready: mpsc::Sender<bool>,
     finish: mpsc::Receiver<()>,
     diagnostics: bool,
 ) -> Result<FocusObservation> {
@@ -179,7 +242,13 @@ fn observe_semantic_focus(
     // windowless MTA worker. No COM interfaces cross thread or apartment boundaries.
     unsafe {
         let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)?;
-        let focused = automation.GetFocusedElement()?;
+        let focused = match automation.GetFocusedElement() {
+            Ok(focused) => focused,
+            Err(error) if error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE => {
+                return observe_unavailable_empty_focus(&automation, ready, finish);
+            }
+            Err(error) => return Err(error),
+        };
         let kind = focused.CurrentControlType()?;
         let global_control_window = focused.CurrentNativeWindowHandle()?.0 as usize;
         let mut info = GUITHREADINFO {
@@ -204,7 +273,7 @@ fn observe_semantic_focus(
             && focused.CurrentHasKeyboardFocus()?.as_bool()
             && focused.CurrentIsEnabled()?.as_bool();
         // Closing either channel cancels the handshake without retaining a worker.
-        if ready.send(()).is_err() || finish.recv().is_err() {
+        if ready.send(false).is_err() || finish.recv().is_err() {
             return Err(windows::core::Error::from_hresult(
                 windows::Win32::Foundation::E_ABORT,
             ));
@@ -221,6 +290,49 @@ fn observe_semantic_focus(
             global_control_window,
             native_control,
             folder_items_focused,
+            empty_list_candidate: false,
+            unchanged,
+        })
+    }
+}
+
+fn observe_unavailable_empty_focus(
+    automation: &IUIAutomation,
+    ready: mpsc::Sender<bool>,
+    finish: mpsc::Receiver<()>,
+) -> Result<FocusObservation> {
+    // SAFETY: Both native snapshots and UIA observations are read on this MTA.
+    // The Shell thread must independently confirm the single focused view is
+    // a physical folder with zero items during this handshake.
+    unsafe {
+        let declined = || windows::core::Error::from_hresult(windows::Win32::Foundation::E_ABORT);
+        let foreground = GetForegroundWindow();
+        let thread = GetWindowThreadProcessId(foreground, None);
+        let mut before = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        GetGUIThreadInfo(thread, &mut before)?;
+        let initial = inspect_empty_list(automation, &before)?.ok_or_else(declined)?;
+        if ready.send(true).is_err() || finish.recv().is_err() {
+            return Err(declined());
+        }
+        let mut after = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        GetGUIThreadInfo(thread, &mut after)?;
+        let unavailable = matches!(automation.GetFocusedElement(), Err(error) if error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE);
+        let unchanged = unavailable
+            && GetForegroundWindow() == foreground
+            && before.hwndFocus == after.hwndFocus
+            && inspect_empty_list(automation, &after)?.as_ref() == Some(&initial);
+        Ok(FocusObservation {
+            control_type: initial.control.control_type,
+            global_control_window: 0,
+            native_control: Some(initial.control),
+            folder_items_focused: false,
+            empty_list_candidate: true,
             unchanged,
         })
     }
@@ -320,8 +432,9 @@ pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnap
         let (ready_tx, ready_rx) = mpsc::channel();
         let (finish_tx, finish_rx) = mpsc::channel();
         let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx, diagnostics));
-        let ready = ready_rx.recv().is_ok();
-        let result = observe_shell();
+        let readiness = ready_rx.recv();
+        let ready = readiness.is_ok();
+        let result = observe_shell(readiness.unwrap_or(false));
         let _ = finish_tx.send(());
         let semantic = match worker.join() {
             Ok(Ok(observation)) => Some(observation),
@@ -359,7 +472,7 @@ pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnap
     })
 }
 
-fn observe_shell() -> Result<ExplorerSnapshot> {
+fn observe_shell(check_empty: bool) -> Result<ExplorerSnapshot> {
     let _apartment = Apartment::new(COINIT_APARTMENTTHREADED)?;
     // SAFETY: All out-parameters point to initialized local storage. COM interfaces
     // stay on this STA thread and are dropped before the apartment guard. Allocated
@@ -387,6 +500,8 @@ fn observe_shell() -> Result<ExplorerSnapshot> {
                 let view = shell_browser.QueryActiveShellView()?;
                 let view_window = view.GetWindow()?;
                 let folder_view: IFolderView = view.cast()?;
+                let initially_empty =
+                    check_empty && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0);
                 let folder: IPersistFolder2 = folder_view.GetFolder()?;
                 let pidl = folder.GetCurFolder()?;
                 let item_result: Result<IShellItem> = SHCreateItemFromIDList(pidl);
@@ -407,6 +522,8 @@ fn observe_shell() -> Result<ExplorerSnapshot> {
                     contains_focus: view_window == info.hwndFocus
                         || IsChild(view_window, info.hwndFocus).as_bool(),
                     directory,
+                    confirmed_empty: initially_empty
+                        && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0),
                 }))
             })();
             match entry {
@@ -430,5 +547,77 @@ fn observe_shell() -> Result<ExplorerSnapshot> {
             observations,
             unresolved_entries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_snapshot() -> ExplorerSnapshot {
+        ExplorerSnapshot {
+            foreground_window: 1,
+            focus_window: 3,
+            foreground_unchanged: true,
+            native_focus_unchanged: true,
+            semantic_focus: Some(FocusObservation {
+                control_type: UIA_ListControlTypeId.0,
+                global_control_window: 0,
+                native_control: None,
+                folder_items_focused: false,
+                empty_list_candidate: true,
+                unchanged: true,
+            }),
+            observations: vec![ShellObservation {
+                browser_window: 1,
+                view_window: 2,
+                visible: true,
+                contains_focus: true,
+                directory: Some(PathBuf::from(r"C:\case")),
+                confirmed_empty: true,
+            }],
+            unresolved_entries: 0,
+        }
+    }
+
+    #[test]
+    fn empty_list_still_requires_complete_view_and_focus_evidence() {
+        assert_eq!(
+            empty_snapshot().diagnostic_directory(),
+            Some(std::path::Path::new(r"C:\case"))
+        );
+        let changes: [fn(&mut ExplorerSnapshot); 10] = [
+            |s| s.observations[0].confirmed_empty = false,
+            |s| s.observations[0].visible = false,
+            |s| s.observations[0].contains_focus = false,
+            |s| s.observations[0].directory = None,
+            |s| s.semantic_focus.as_mut().unwrap().empty_list_candidate = false,
+            |s| s.semantic_focus.as_mut().unwrap().unchanged = false,
+            |s| s.foreground_unchanged = false,
+            |s| s.native_focus_unchanged = false,
+            |s| s.unresolved_entries = 1,
+            |s| {
+                s.observations
+                    .push(empty_snapshot().observations.pop().unwrap())
+            },
+        ];
+        for change in changes {
+            let mut snapshot = empty_snapshot();
+            change(&mut snapshot);
+            assert_eq!(snapshot.diagnostic_directory(), None);
+        }
+    }
+
+    #[test]
+    fn existing_semantic_focus_does_not_require_an_empty_view() {
+        let mut snapshot = empty_snapshot();
+        snapshot.observations[0].confirmed_empty = false;
+        let focus = snapshot.semantic_focus.as_mut().unwrap();
+        focus.empty_list_candidate = false;
+        focus.folder_items_focused = true;
+        assert_eq!(
+            snapshot.diagnostic_directory(),
+            Some(std::path::Path::new(r"C:\case"))
+        );
     }
 }
