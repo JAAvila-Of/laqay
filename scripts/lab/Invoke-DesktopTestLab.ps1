@@ -3,6 +3,7 @@ param(
     [ValidateSet('Plan','Provision','Start','Status','Stop','Remove')][string]$Action = 'Plan',
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [ValidateSet('Primary','Peer')][string]$Role = 'Primary',
+    [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [string]$WindowsIso,
     [string]$IsoSha256,
     [string]$ApplicationArchive,
@@ -10,6 +11,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'LabGuestProfile.ps1')
+. (Join-Path $PSScriptRoot 'Assert-LabIsoImage.ps1')
+$profile=Get-LabGuestProfile $GuestProfile
 $base = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'LaqayTestLab'))
 $root = [IO.Path]::GetFullPath((Join-Path $base $LabId))
 $manifestPath = Join-Path $root 'lab.json'
@@ -49,7 +53,7 @@ $plan = [ordered]@{
     Name=$vmName; Generation=2; CpuCount=2; MemoryBytes=4GB; MaximumDiskBytes=64GB
     HostMemoryReserveBytes=3GB; HostDiskReserveBytes=40GB; Network='Private'
     SwitchName=$switchName; HostDesktopControl=$false; HostReboot=$false
-    Internet=$false; WindowsVersion='Windows 11 Enterprise Evaluation'; Role=$Role
+    Internet=$false; WindowsVersion=$profile.Caption; GuestProfile=$profile.Name; ImageIndex=$profile.ImageIndex; Language=$profile.Language; Role=$Role
     MaximumRunningGuests=$MaximumRunningGuests;MinimumFreeMemoryForFullCapacityBytes=(3GB+4GB*$MaximumRunningGuests)
 }
 if ($Action -eq 'Plan') { $plan | ConvertTo-Json -Depth 5; return }
@@ -59,6 +63,8 @@ if (Test-Path -LiteralPath $manifestPath) {
     if ($manifest.Kind -ne $plan.Kind -or $manifest.Schema -ne 1 -or $manifest.LabId -ne $LabId -or $manifest.Root -ne $root) {
         throw 'Invalid disposable lab manifest.'
     }
+    $declared=if($manifest.GuestProfile){$manifest.GuestProfile}else{'Windows11EnterpriseEvaluation'}
+    if($declared -cne $GuestProfile){throw 'The requested guest profile differs from the owned manifest.'}
 } elseif ($Action -ne 'Provision') { throw 'A provisioned lab manifest is required.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -73,6 +79,7 @@ if ($Action -eq 'Provision') {
     $iso = Assert-OwnedPath $WindowsIso
     $archive = Assert-OwnedPath $ApplicationArchive
     if ((Get-FileHash -LiteralPath $iso -Algorithm SHA256).Hash -ne $IsoSha256) { throw 'ISO SHA-256 mismatch.' }
+    if($GuestProfile -ceq 'Windows10ProEsMx'){Assert-LabIsoImage $iso $profile | Out-Null}
     if ((Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($root).Substring(0,1))).SizeRemaining -lt 50GB) { throw 'Insufficient host disk headroom.' }
     if (Get-VM -Name $vmName -ErrorAction SilentlyContinue) { throw 'Refusing to replace an existing VM.' }
     if ($manifest -and @($manifest.VMs | Where-Object Role -eq $Role).Count) { throw 'This guest role already has a manifest entry.' }
@@ -87,7 +94,7 @@ if ($Action -eq 'Provision') {
             $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
         }
         Set-Acl -LiteralPath $root -AclObject $acl
-        $manifest = [pscustomobject]@{Kind=$plan.Kind;Schema=1;LabId=$LabId;Root=$root;Temporary=$true;SwitchId=$null;SwitchName=$switchName;VMs=@();Phase='Preparing'}
+        $manifest = [pscustomobject]@{Kind=$plan.Kind;Schema=1;LabId=$LabId;Root=$root;Temporary=$true;GuestProfile=$profile.Name;SwitchId=$null;SwitchName=$switchName;VMs=@();Phase='Preparing'}
         Save-Manifest
         $switch = New-VMSwitch -Name $switchName -SwitchType Private -Notes $owner
         $manifest.SwitchId = $switch.Id.ToString()
@@ -106,7 +113,8 @@ if ($Action -eq 'Provision') {
     $credential = [PSCredential]::new('LaqayLab',(ConvertTo-SecureString $password -AsPlainText -Force))
     $credential | Export-Clixml -LiteralPath (Join-Path $guestRoot 'credential.xml')
     $label = 'LQ' + $LabId.Substring(0,12).ToUpperInvariant()
-    [ordered]@{LabId=$LabId;Role=$Role;Temporary=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $seedRoot 'guest.json') -Encoding UTF8
+    [ordered]@{LabId=$LabId;Role=$Role;Temporary=$true;GuestProfile=$profile.Name} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $seedRoot 'guest.json') -Encoding UTF8
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LabGuestProfile.ps1') -Destination $seedRoot
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Initialize-Guest.ps1') -Destination $seedRoot
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Set-GuestLabFirewall.ps1') -Destination $seedRoot
     Copy-Item -LiteralPath $archive -Destination (Join-Path $seedRoot 'Laqay.zip')
@@ -120,7 +128,7 @@ $marker=Get-Content -LiteralPath ($sourcePath+'guest.json') -Raw | ConvertFrom-J
 if($marker.LabId -ne '@@LAB_ID@@' -or $marker.Role -ne '@@ROLE@@'){throw 'Unexpected lab seed.'}
 if(Test-Path -LiteralPath 'C:\LaqayLab'){throw 'Guest lab directory already exists.'}
 New-Item -ItemType Directory -Path 'C:\LaqayLab' | Out-Null
-foreach($file in @('guest.json','Initialize-Guest.ps1','Set-GuestLabFirewall.ps1','Laqay.zip')){Copy-Item -LiteralPath ($sourcePath+$file) -Destination 'C:\LaqayLab'}
+foreach($file in @('guest.json','LabGuestProfile.ps1','Initialize-Guest.ps1','Set-GuestLabFirewall.ps1','Laqay.zip')){Copy-Item -LiteralPath ($sourcePath+$file) -Destination 'C:\LaqayLab'}
 & 'C:\LaqayLab\Initialize-Guest.ps1' -LabId '@@LAB_ID@@' -Role '@@ROLE@@'
 '@
     $bootstrap = $bootstrap.Replace('@@LABEL@@',$label).Replace('@@LAB_ID@@',$LabId).Replace('@@ROLE@@',$Role)
@@ -128,9 +136,13 @@ foreach($file in @('guest.json','Initialize-Guest.ps1','Set-GuestLabFirewall.ps1
     $command = 'powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -Command "& ((Get-Volume|? FileSystemLabel -eq ''' + $label + ''').DriveLetter+'':\Bootstrap.ps1'')"'
     if ($command.Length -gt 259) { throw 'First-logon command is too long.' }
     $answer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Autounattend.xml.template') -Raw
-    $answer = $answer.Replace('@@PASSWORD@@',[Security.SecurityElement]::Escape($password)).Replace('@@COMPUTER_NAME@@',('LQW11-' + $LabId.Substring(0,7) + $(if($Role -eq 'Peer'){'P'}else{'A'}))).Replace('@@FIRST_LOGON_COMMAND@@',[Security.SecurityElement]::Escape($command))
+    $answer = $answer.Replace('@@PASSWORD@@',[Security.SecurityElement]::Escape($password)).Replace('@@COMPUTER_NAME@@',($profile.Prefix + $LabId.Substring(0,7) + $(if($Role -eq 'Peer'){'P'}else{'A'}))).Replace('@@FIRST_LOGON_COMMAND@@',[Security.SecurityElement]::Escape($command))
     [void][xml]$answer
     [IO.File]::WriteAllText((Join-Path $seedRoot 'Autounattend.xml'),$answer,[Text.UTF8Encoding]::new($false))
+    if($GuestProfile -ceq 'Windows10ProEsMx'){
+        $xml=Convert-LabUnattendProfile $answer $profile
+        $xml.Save((Join-Path $seedRoot 'Autounattend.xml'))
+    }
     $seedIso = Join-Path $guestRoot 'seed.iso'
     & (Join-Path $PSScriptRoot 'New-SeedIso.ps1') -SourceDirectory $seedRoot -Destination $seedIso -VolumeLabel $label
     $disk = Join-Path $guestRoot 'system.vhdx'
@@ -249,7 +261,7 @@ if ($Action -eq 'Start') {
             } -ErrorAction Stop
             if ($ready) {
                 $ready = $ready | ConvertFrom-Json
-                if ($ready.LabId -ne $LabId -or $ready.Role -ne $Role) { throw 'Guest identity mismatch.' }
+                if ($ready.LabId -ne $LabId -or $ready.Role -ne $Role -or ($GuestProfile -ceq 'Windows10ProEsMx' -and ($ready.GuestProfile -cne $GuestProfile -or $ready.Build -ne 19045 -or $ready.Edition -cne 'Professional' -or $ready.Language -ine 'es-MX'))) { throw 'Guest identity mismatch.' }
             }
         } catch { $ready = $null }
     }
