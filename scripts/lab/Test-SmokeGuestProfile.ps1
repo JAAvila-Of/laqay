@@ -8,6 +8,19 @@ $native=[LaqayGuestDesktop].GetMethod('GetSystemDefaultLocaleName',[Reflection.B
 Assert-Smoke ($native.Invoke($null,@($locale,85)) -gt 0 -and $null -ne [Globalization.CultureInfo]::GetCultureInfo($locale.ToString())) 'The Unicode-only system locale ABI failed.'
 $w11=@(Get-BasicSmokeCases Windows11EnterpriseEvaluation);$pro=@(Get-BasicSmokeCases Windows10ProEsMx)
 Assert-Smoke ($w11.Count -eq 13 -and $w11 -ccontains 'ActiveTabSelection' -and $pro.Count -eq 12 -and $pro -cnotcontains 'ActiveTabSelection' -and @(Compare-Object @($w11 | Where-Object {$_ -cne 'ActiveTabSelection'}) $pro).Count -eq 0) 'A platform case was lost or relabeled as passing.'
+foreach($profile in @('Windows11EnterpriseEvaluation','Windows10ProEsMx')){
+    $complete=@(Get-BasicSmokeCases $profile | ForEach-Object {[pscustomobject]@{Name=$_;Passed=$true}})
+    Assert-BasicSmokeCases $profile $complete
+    Reject-Smoke {Assert-BasicSmokeCases $profile @($complete | Select-Object -Skip 1)}
+    Reject-Smoke {Assert-BasicSmokeCases $profile @($complete+$complete[0])}
+    $saved=$complete[1].Name;$complete[1].Name=$complete[0].Name
+    Reject-Smoke {Assert-BasicSmokeCases $profile $complete};$complete[1].Name=$saved
+    $complete[0].Passed=$false;Reject-Smoke {Assert-BasicSmokeCases $profile $complete};$complete[0].Passed=$true
+    $saved=$complete[0];$complete[0]=$complete[1];$complete[1]=$saved
+    Reject-Smoke {Assert-BasicSmokeCases $profile $complete}
+}
+Reject-Smoke {Assert-BasicSmokeCases Windows11EnterpriseEvaluation @($pro | ForEach-Object {[pscustomobject]@{Name=$_;Passed=$true}})}
+Reject-Smoke {Assert-BasicSmokeCases Windows10ProEsMx @($w11 | ForEach-Object {[pscustomobject]@{Name=$_;Passed=$true}})}
 Reject-Smoke {Assert-SmokeProfileModes Windows10ProEsMx $true}
 Reject-Smoke {Assert-SmokeProfileModes Unknown $false}
 Assert-SmokeProfileModes Windows11EnterpriseEvaluation $true

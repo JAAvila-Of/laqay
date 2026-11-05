@@ -245,6 +245,19 @@ report records this required class. No second paste is sent, and other profiles
 retain the generic readiness rule. This stricter precondition awaits runtime
 validation; the Ribbon classification and full suite remain unverified.
 
+The next Pro run passed all twelve applicable cases. SearchText proved the
+owned RichEditBox before its single paste and confirmed the expected token.
+The tab exclusion also accounted for all three UIA tab items through the owned
+native Ribbon dock, with zero unclassified file-tab candidates. A leftover
+fixed thirteen-case assertion then rejected the run. The original report stays
+failed; restoration, application exit and shutdown completed normally.
+
+The completion guard now validates the exact ordered case names and successful
+results from the explicit profile contract: twelve for Pro, thirteen for
+Windows 11. Missing, duplicate, reordered, extra and failed cases are rejected.
+This repairs the inconsistent guest guard without removing coverage or changing
+product code. A fresh end-to-end run and Windows 11 regression remain required.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

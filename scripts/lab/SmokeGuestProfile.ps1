@@ -8,6 +8,14 @@ function Get-BasicSmokeCases([string]$profile) {
     if($profile -ceq 'Windows10ProEsMx'){$names=@($names | Where-Object {$_ -cne 'ActiveTabSelection'})}
     return $names
 }
+function Assert-BasicSmokeCases([string]$profile,$cases) {
+    $expected=@(Get-BasicSmokeCases $profile)
+    $observed=@($cases)
+    if($observed.Count -ne $expected.Count){throw 'Not all required smoke cases executed.'}
+    for($index=0;$index -lt $expected.Count;$index++){
+        if($observed[$index].Name -cne $expected[$index] -or $observed[$index].Passed -ne $true){throw 'A required smoke case is missing, reordered, duplicated or unsuccessful.'}
+    }
+}
 function Assert-SmokeProfileReport([string]$profile,$report) {
     if($report.Passed -eq $false){throw ('Guest validation failed: '+$report.Error)}
     if($report.GuestProfile -cne $profile){throw 'The guest result has another platform profile.'}

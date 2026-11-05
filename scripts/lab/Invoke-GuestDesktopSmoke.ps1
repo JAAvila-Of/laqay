@@ -497,7 +497,7 @@ try{
         Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
         Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
     }
-    Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
+    Assert-BasicSmokeCases $GuestProfile $report.Cases
     if($IncludeAdverse){
         # Dot-source only this reviewed guest-local driver, sharing owned fixtures and cleanup.
         if($IncludeRealApplications){. (Join-Path $PSScriptRoot 'Invoke-GuestRealApplicationCases.ps1')}
