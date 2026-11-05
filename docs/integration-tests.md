@@ -73,7 +73,7 @@ RDP, lifecycle, adverse and real-application extensions still require Windows 11
 Windows 10 product execution remains pending. Provisioning alone is not product
 acceptance.
 
-## Opt-in Pro basic console suite: execution pending
+## Opt-in Pro basic console suite: acceptance pending
 
 `Invoke-DesktopSmoke.ps1 -GuestProfile Windows10ProEsMx` selects only the basic
 console Explorer suite on an owned Pro build 19045 es-MX primary guest. The
@@ -98,6 +98,21 @@ commands and the default Windows 11 profile do not change. Preparation tests
 compile the native helper, exercise the actual Unicode locale ABI, reject wrong
 system/marker metadata and unsupported options, and check case accounting without
 arming desktop input. No Pro product run has been accepted yet.
+
+The first isolated run on 2026-11-05 UTC failed its initial ImagePaste case:
+the active physical folder remained without a PNG. The synthetic 2x2 clipboard
+image was present, native focus remained inside Explorer's DirectUIHWND, and
+the helper's STA semantic-focus query reported ElementNotAvailableException.
+This is a failed run, not evidence that the application or automation caused
+the failure. No later case or non-applicable tab observation was reached.
+
+The owned application exited normally with code 0, the scheduled task was
+removed, preferences were restored, and a third recovery boot restored temporary
+logon before normal shutdown. The controller Job ended empty and the other VMs
+remained off. Runtime acceptance remains open. Failure reporting now preserves
+the original case error before checking complete-suite evidence, and failed
+image pastes capture a bounded, read-only MTA semantic-focus comparison. That
+diagnostic never substitutes for a successful paste or changes target policy.
 
 ## Current automated coverage
 

@@ -155,7 +155,7 @@ function Open-Folder([string]$path){
     return $window
 }
 function Paste-Image($window,[string]$path,[int]$count){
-    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null}
+    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null;FailureSemanticFocus=$null}
     try{
         $entry.BeforeActivation=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
         [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
@@ -169,7 +169,10 @@ function Paste-Image($window,[string]$path,[int]$count){
         $entry.Finished=[DateTime]::UtcNow.ToString('o')
         $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
         try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
-        if($entry.Error){try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}}
+        if($entry.Error){
+            try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}
+            try{$entry.FailureSemanticFocus=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}catch{}
+        }
         $report.ImagePastes+=@($entry);Save-Report
     }
 }

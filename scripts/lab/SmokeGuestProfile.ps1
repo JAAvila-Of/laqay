@@ -9,6 +9,7 @@ function Get-BasicSmokeCases([string]$profile) {
     return $names
 }
 function Assert-SmokeProfileReport([string]$profile,$report) {
+    if($report.Passed -eq $false){throw ('Guest validation failed: '+$report.Error)}
     if($report.GuestProfile -cne $profile){throw 'The guest result has another platform profile.'}
     $na=@($report.NotApplicableCases)
     if($profile -ceq 'Windows10ProEsMx'){

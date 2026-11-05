@@ -27,6 +27,11 @@ Reject-Smoke {[LaqayGuestDesktop]::ValidateDesktopProfile('Windows11EnterpriseEv
 Reject-Smoke {[LaqayGuestDesktop]::GuestProfileEvidence()}
 $report=[pscustomobject]@{GuestProfile='Windows10ProEsMx';Platform=[pscustomobject]@{Profile='Windows10ProEsMx';Caption='Microsoft Windows 10 Pro';Build='19045';Edition='Professional';Language='es-MX'};NotApplicableCases=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native tabs.';ObservedTabs=0})}
 Assert-SmokeProfileReport Windows10ProEsMx $report
+$failed=[pscustomobject]@{GuestProfile='Windows10ProEsMx';Passed=$false;Error='The expected image was not published in the active guest folder.';NotApplicableCases=@()}
+$preserved=$false
+try{Assert-SmokeProfileReport Windows10ProEsMx $failed}catch{$preserved=$_.Exception.Message -ceq ('Guest validation failed: '+$failed.Error)}
+Assert-Smoke $preserved 'An incomplete failed run hid its original failure behind missing platform or tab evidence.'
+Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
 $report.NotApplicableCases[0].ObservedTabs=1;Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.NotApplicableCases[0].ObservedTabs=0
 $report.NotApplicableCases[0].Status='Passed';Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.NotApplicableCases[0].Status='NotApplicable'
 Reject-Smoke {Assert-SmokeProfileReport Windows11EnterpriseEvaluation $report}

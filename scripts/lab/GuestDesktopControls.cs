@@ -672,6 +672,45 @@ public static partial class LaqayGuestDesktop {
             HasBitmap=IsClipboardFormatAvailable(2),HasDib=IsClipboardFormatAvailable(8),
             HasDibV5=IsClipboardFormatAvailable(17),HasFileDrop=IsClipboardFormatAvailable(15),HasPng=IsClipboardFormatAvailable(RegisterClipboardFormatW("PNG"))};
     }
+    // A read-only MTA comparison for failed guest input. No COM element leaves
+    // the worker and this observation never substitutes for a passing paste.
+    public static object FolderSemanticProbe(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        uint pid;uint thread=GetWindowThreadProcessId(window,out pid);
+        var info=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
+        if(!GetGUIThreadInfo(thread,ref info)) throw new InvalidOperationException("Guest input state was unavailable for semantic diagnostics.");
+        IntPtr focus=info.focus;
+        object result=null;
+        var worker=new Thread(delegate() {
+            var values=new Dictionary<string,object>();
+            values["Apartment"]="MTA";values["Completed"]=true;
+            try {
+                var element=AutomationElement.FocusedElement;
+                if(element==null) throw new InvalidOperationException("UI Automation returned no focused element.");
+                var current=element.Current;
+                values["Class"]=current.ClassName;values["AutomationId"]=current.AutomationId;
+                values["ControlType"]=current.ControlType.ProgrammaticName;values["ProcessId"]=current.ProcessId;
+                values["NativeWindow"]=current.NativeWindowHandle;values["HasKeyboardFocus"]=current.HasKeyboardFocus;values["Enabled"]=current.IsEnabled;
+                var ancestors=new List<object>();
+                for(int depth=0;element!=null && depth<8;depth++) {
+                    current=element.Current;
+                    if(current.ProcessId!=(int)pid) break;
+                    ancestors.Add(new {Class=current.ClassName,AutomationId=current.AutomationId,ControlType=current.ControlType.ProgrammaticName,NativeWindow=current.NativeWindowHandle});
+                    element=TreeWalker.ControlViewWalker.GetParent(element);
+                }
+                values["Ancestors"]=ancestors.ToArray();
+            }catch(Exception error){values["FocusedError"]=error.GetType().Name;values["FocusedHResult"]=error.HResult;}
+            try {
+                var element=AutomationElement.FromHandle(focus);
+                var current=element.Current;
+                values["NativeControl"]=new {Class=current.ClassName,AutomationId=current.AutomationId,ControlType=current.ControlType.ProgrammaticName,HasKeyboardFocus=current.HasKeyboardFocus,Enabled=current.IsEnabled,ProcessId=current.ProcessId};
+            }catch(Exception error){values["NativeError"]=error.GetType().Name;values["NativeHResult"]=error.HResult;}
+            result=values;
+        });
+        worker.IsBackground=true;worker.SetApartmentState(ApartmentState.MTA);worker.Start();
+        if(!worker.Join(2000)) return new {Apartment="MTA",Completed=false,Error="Semantic diagnostic exceeded two seconds."};
+        return result;
+    }
     public static void FocusFolder(IntPtr window) {
         Guard(); ExplorerWindow(window);
         if(GetForegroundWindow()!=window) throw new InvalidOperationException("Guest Explorer lost foreground.");
