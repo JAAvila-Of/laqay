@@ -45,6 +45,11 @@ Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
 Reject-Smoke {[LaqayGuestDesktop]::StartTrialApplication('unused','unused')}
 Reject-Smoke {[LaqayGuestDesktop]::FocusedFieldState([IntPtr]::Zero)}
 Reject-Smoke {[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]::Zero)}
+Reject-Smoke {[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]::Zero,$true)}
+Assert-Smoke ([LaqayGuestDesktop]::ProSearchFieldReady($true,$true,'RichEditBox')) 'The proven final Pro search editor was rejected.'
+foreach($nativeClass in @('ModernSearchBox','Edit','Unknown','')){Assert-Smoke (-not [LaqayGuestDesktop]::ProSearchFieldReady($true,$true,$nativeClass)) 'A search wrapper or unknown input surface was accepted before the final editor.'}
+Assert-Smoke (-not [LaqayGuestDesktop]::ProSearchFieldReady($false,$true,'RichEditBox')) 'The Pro-only editor rule was applied to another profile.'
+Assert-Smoke (-not [LaqayGuestDesktop]::ProSearchFieldReady($true,$false,'RichEditBox')) 'A final search class bypassed the owned editable-field readiness proof.'
 Assert-Smoke ([LaqayGuestDesktop]::EditableFieldReady($true,$true,$true,$true,$true,$true,$true,$true)) 'A complete writable guest input precondition was rejected.'
 for($index=0;$index -lt 8;$index++){
     $scope=[object[]]@($true,$true,$true,$true,$true,$true,$true,$true);$scope[$index]=$false

@@ -340,10 +340,11 @@ try{
             $window=Open-Folder $path
             $key=if($field -eq 'AddressBarText'){76}else{70}
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,$key))
-            $observation=[pscustomobject]@{Case=$field;BeforePaste=$null;PasteSent=$false;Scope=$null;Error=$null;ReadSucceeded=$false;TextLength=$null;TokenMatched=$false;ReadError=$null}
+            $requireProSearchEditor=$GuestProfile -ceq 'Windows10ProEsMx' -and $field -ceq 'SearchText'
+            $observation=[pscustomobject]@{Case=$field;RequiredInputClass=$(if($requireProSearchEditor){'RichEditBox'}else{$null});BeforePaste=$null;PasteSent=$false;Scope=$null;Error=$null;ReadSucceeded=$false;TextLength=$null;TokenMatched=$false;ReadError=$null}
             $report.EditableFields+=@($observation);Save-Report
             try{
-                Wait-For {try{[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND)}catch{$false}} 'The owned editable guest field did not become ready before paste.'
+                Wait-For {try{[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND,$requireProSearchEditor)}catch{$false}} 'The owned editable guest field did not become ready before paste.'
                 $observation.BeforePaste=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND);Save-Report
                 [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
                 [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))

@@ -806,7 +806,11 @@ public static partial class LaqayGuestDesktop {
     public static bool EditableFieldReady(bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit,bool writable) {
         return foreground && nativeWithin && rooted && sameSession && focused && enabled && edit && writable;
     }
-    public static bool FocusedEditableReady(IntPtr window) {
+    public static bool ProSearchFieldReady(bool pro,bool editable,string nativeClass) {
+        return pro && editable && nativeClass=="RichEditBox";
+    }
+    public static bool FocusedEditableReady(IntPtr window) {return FocusedEditableReady(window,false);}
+    public static bool FocusedEditableReady(IntPtr window,bool requireProSearchEditor) {
         Guard();ExplorerWindow(window);
         var focused=AutomationElement.FocusedElement;
         if(focused==null) return false;
@@ -815,7 +819,10 @@ public static partial class LaqayGuestDesktop {
         if(focused.Current.ProcessId!=owner && !(bool)scope["ForeignReadAllowed"]) return false;
         object pattern;
         bool writable=focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern) && !((ValuePattern)pattern).Current.IsReadOnly;
-        return EditableFieldReady((bool)scope["Foreground"],(bool)scope["NativeWithinWindow"],(bool)scope["RootReached"],(bool)scope["SameSession"],focused.Current.HasKeyboardFocus,focused.Current.IsEnabled,focused.Current.ControlType==ControlType.Edit,writable);
+        bool ready=EditableFieldReady((bool)scope["Foreground"],(bool)scope["NativeWithinWindow"],(bool)scope["RootReached"],(bool)scope["SameSession"],focused.Current.HasKeyboardFocus,focused.Current.IsEnabled,focused.Current.ControlType==ControlType.Edit,writable);
+        if(requireProSearchEditor)
+            return ProSearchFieldReady(observedDesktopProfile!=null && Convert.ToString(observedDesktopProfile["Profile"])=="Windows10ProEsMx",ready,focused.Current.ClassName);
+        return ready;
     }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);

@@ -230,6 +230,21 @@ content. Missing readiness fails before paste; a failed paste is not retried.
 These diagnostics do not establish the cause of the preceding failure or alter
 product behavior. Full Pro acceptance and Windows 11 regression remain pending.
 
+The readiness repetition again passed four cases and failed SearchText. Its
+pre-paste evidence identified an owned ModernSearchBox Edit in Explorer; after
+the single paste, focus belonged to the proven owned RichEditBox in another
+guest process. Value reads succeeded with length one and no expected token.
+This exposes an input-surface transition that generic Edit readiness did not
+distinguish; it does not by itself establish why the paste was lost. Cleanup
+restored the original application and logon and left every guest off.
+
+For Pro SearchText alone, readiness now additionally requires the observed
+RichEditBox class with all existing ownership, session, focus and writable-value
+checks. ModernSearchBox and unknown classes cannot authorize the paste. The
+report records this required class. No second paste is sent, and other profiles
+retain the generic readiness rule. This stricter precondition awaits runtime
+validation; the Ribbon classification and full suite remain unverified.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression
