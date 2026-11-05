@@ -277,7 +277,26 @@ extended phase. Inert checks exercise the actual phase entry: both basic
 profiles must stop at the missing-lease guard before any guest operation or
 output creation, and unsupported Pro phases must stop at their profile guard.
 This enables preparation of the current-candidate Windows 11 regression; its
-guest run remains pending.
+preparation does not by itself establish guest acceptance.
+
+The Windows 11 regression then passed all thirteen basic cases on source
+742ce8d, including ActiveTabSelection, with no non-applicable cases. Guest,
+host, phase, controller and bootstrap reports passed. Two normal boots
+completed; the original application, preferences, fixture permissions and logon
+were restored, its task was removed and all guests ended off. Application exit
+was zero without forced termination, and the operation and every phase Job
+ended with zero active processes. The first private-CLI attempt remains failed
+and did not boot the guest or execute cases.
+
+| Explicit console profile | Tested source | Basic cases | Result |
+| --- | --- | --- | --- |
+| Windows 10 Pro 19045 es-MX | 7191bf9 | 12; native file tabs explicitly not applicable | Passed |
+| Windows 11 Enterprise Evaluation 26300 en-US | 742ce8d | 13; native file-tab case included | Passed |
+
+The Rust source and Cargo manifests did not change between these two tested
+revisions. This closes the basic Windows 11 regression for the current core;
+it does not rerun or extend earlier adverse, real-application, UNC or RDP
+acceptance to other binaries or Windows editions.
 
 ## Current automated coverage
 
