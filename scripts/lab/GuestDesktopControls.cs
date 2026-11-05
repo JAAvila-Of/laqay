@@ -838,7 +838,14 @@ public static partial class LaqayGuestDesktop {
                 application.BeginOutputReadLine();application.BeginErrorReadLine();
             }
             return application.Id;
-        } catch { CloseHandle(job); job=IntPtr.Zero; throw; }
+        } catch {
+            if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;}
+            if(application!=null) {
+                try {if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application survived startup cleanup.");}
+                finally {application.Dispose();application=null;}
+            }
+            throw;
+        }
     }
     public static int AdoptStartupApplication(string path,DateTime bootUtc) {
         Guard();
