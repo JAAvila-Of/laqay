@@ -90,6 +90,30 @@ public static partial class LaqayGuestDesktop {
             ClientPrefix=typeof(RealUiaClient).GetMethods().Length,ElementPrefix=typeof(RealUiaElement).GetMethods().Length,Point=Marshal.SizeOf(typeof(RealUiaPoint))};
     }
     static void ReleaseRealCom(object value) {if(value!=null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value);}
+    static object ProbeNativeFolderFocus(IntPtr focus) {
+        if(Thread.CurrentThread.GetApartmentState()!=ApartmentState.MTA) throw new InvalidOperationException("Native focus probing requires MTA.");
+        RealUiaClient client=null;var result=new System.Collections.Generic.Dictionary<string,object>();
+        try {
+            client=(RealUiaClient)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"),true));
+            foreach(string source in new[] {"Focused","NativeControl"}) {
+                RealUiaElement element=null;string stage="Element";
+                try {
+                    element=source=="Focused"?client.GetFocusedElement():client.ElementFromHandle(focus);
+                    stage="Properties";
+                    result[source]=new {ProcessId=Convert.ToInt32(element.GetCurrentPropertyValue(30002)),
+                        ControlType=Convert.ToInt32(element.GetCurrentPropertyValue(30003)),
+                        HasKeyboardFocus=Convert.ToBoolean(element.GetCurrentPropertyValue(30008)),
+                        Enabled=Convert.ToBoolean(element.GetCurrentPropertyValue(30010)),
+                        AutomationId=Convert.ToString(element.GetCurrentPropertyValue(30011)),
+                        Class=Convert.ToString(element.GetCurrentPropertyValue(30012)),
+                        NativeWindow=Convert.ToInt32(element.GetCurrentPropertyValue(30020))};
+                }catch(Exception error){result[source]=new {Stage=stage,Error=error.GetType().Name,HResult=error.HResult};}
+                finally{ReleaseRealCom(element);}
+            }
+        }catch(Exception error){result["ActivationError"]=error.GetType().Name;result["ActivationHResult"]=error.HResult;}
+        finally{ReleaseRealCom(client);}
+        return result;
+    }
     static object ProbeRealNativeWindow(IntPtr window,int expectedPid) {
         if(Thread.CurrentThread.GetApartmentState()!=ApartmentState.MTA) throw new InvalidOperationException("Native automation probing requires the owned MTA worker.");
         RealUiaClient client=null;RealUiaElement root=null;RealUiaCondition condition=null;RealUiaElements elements=null;

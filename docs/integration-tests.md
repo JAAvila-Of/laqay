@@ -111,7 +111,8 @@ removed, preferences were restored, and a third recovery boot restored temporary
 logon before normal shutdown. The controller Job ended empty and the other VMs
 remained off. Runtime acceptance remains open. Failure reporting now preserves
 the original case error before checking complete-suite evidence, and failed
-image pastes capture a bounded, read-only MTA semantic-focus comparison. That
+image pastes capture a bounded, read-only MTA semantic-focus comparison through
+both native COM and the managed UI Automation API. That
 diagnostic never substitutes for a successful paste or changes target policy.
 
 ## Current automated coverage

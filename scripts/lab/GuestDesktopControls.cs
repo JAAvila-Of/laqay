@@ -684,6 +684,7 @@ public static partial class LaqayGuestDesktop {
         var worker=new Thread(delegate() {
             var values=new Dictionary<string,object>();
             values["Apartment"]="MTA";values["Completed"]=true;
+            values["NativeCom"]=ProbeNativeFolderFocus(focus);
             try {
                 var element=AutomationElement.FocusedElement;
                 if(element==null) throw new InvalidOperationException("UI Automation returned no focused element.");
