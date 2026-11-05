@@ -52,8 +52,14 @@ language/build rejection, unattended image selection and mocked mount ownership
 and cleanup. They never mount installation media or create VMs. The first actual Windows
 10 attempt stopped in Setup with a ProductKey answer-file error before
 installation. The edition-selection key corrects that missing setup input;
-a successful installation is still pending. Existing desktop, network, RDP and lifecycle
-suites still require Windows 11; Windows 10 product coverage needs a separate
+the second run reached the desktop and independently reported Pro build 19045,
+Professional edition and es-MX. Initialization produced a ready report, but its
+Windows profile field was overwritten with a network profile name. That variable
+collision is corrected and covered by a regression executing the actual metadata
+assignments/publication with inert adapters. Full readiness and controlled closure
+acceptance remain pending; the installed guest has not been reinstalled with the
+corrected initializer. Existing desktop, network, RDP and lifecycle suites still
+require Windows 11; Windows 10 product coverage needs a separate
 reviewed adaptation and real execution. Provisioning alone is not acceptance.
 
 ## Current automated coverage
