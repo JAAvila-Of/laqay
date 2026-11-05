@@ -56,11 +56,21 @@ the second run reached the desktop and independently reported Pro build 19045,
 Professional edition and es-MX. Initialization produced a ready report, but its
 Windows profile field was overwritten with a network profile name. That variable
 collision is corrected and covered by a regression executing the actual metadata
-assignments/publication with inert adapters. Full readiness and controlled closure
-acceptance remain pending; the installed guest has not been reinstalled with the
-corrected initializer. Existing desktop, network, RDP and lifecycle suites still
-require Windows 11; Windows 10 product coverage needs a separate
-reviewed adaptation and real execution. Provisioning alone is not acceptance.
+assignments/publication with inert adapters.
+
+After that run reached its deadline and shut down, a short owned boot repaired
+only GuestProfile with an atomic replacement and a preserved backup. The original
+controller then accepted the ready report. Temporary auto-logon was verified
+disabled, no Laqay process ran, both owned DVDs were ejected, the installed disk
+was first, and the guest shut down normally without forced termination or cleanup
+errors. The other lab guests remained off. Before/after reports and unchanged
+original sources were independently checked.
+
+This establishes readiness of the existing repaired guest and controlled closure.
+It is not an unattended fresh-install result for the corrected initializer.
+Existing desktop, network, RDP and lifecycle suites still require Windows 11;
+Windows 10 product coverage needs a separate reviewed adaptation and real
+execution. Provisioning alone is not product acceptance.
 
 ## Current automated coverage
 
