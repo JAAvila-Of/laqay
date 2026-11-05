@@ -271,6 +271,14 @@ not establish other editions, Windows 10 RDP or a fresh unattended installation.
 Regression with the current executable on Windows 11 remains required before
 integration; previous published-binary results do not cover this product change.
 
+The explicit Basic runtime phase now accepts the Windows 11 profile as well as
+Pro, using each profile's complete case contract. Pro still rejects every
+extended phase. Inert checks exercise the actual phase entry: both basic
+profiles must stop at the missing-lease guard before any guest operation or
+output creation, and unsupported Pro phases must stop at their profile guard.
+This enables preparation of the current-candidate Windows 11 regression; its
+guest run remains pending.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

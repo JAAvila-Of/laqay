@@ -10,7 +10,7 @@ param(
     [switch]$IncludeWindowsTerminal
 )
 $ErrorActionPreference='Stop'
-if(($GuestProfile -ceq 'Windows10ProEsMx' -and ($Phase -notin @('Boot','Basic') -or $IncludeRealApplications -or $IncludeWindowsTerminal)) -or ($Phase -eq 'Basic' -and $GuestProfile -cne 'Windows10ProEsMx')){throw 'The Pro runtime profile supports only Boot and Basic without extensions.'}
+if($GuestProfile -ceq 'Windows10ProEsMx' -and ($Phase -notin @('Boot','Basic') -or $IncludeRealApplications -or $IncludeWindowsTerminal)){throw 'The Pro runtime profile supports only Boot and Basic without extensions.'}
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 if($IncludeRealApplications -and $Phase -ne 'Adverse'){throw 'Real applications require the explicit adverse phase.'}
 if(-not $env:RUST_WORK_JOB){throw 'A RustWork runtime lease is required before any guest boot or application suite.'}

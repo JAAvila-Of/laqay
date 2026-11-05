@@ -104,4 +104,18 @@ foreach($options in @(@{IncludeUnc=$true},@{IncludeLifecycle=$true},@{IncludeAdv
     try{& (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -GuestProfile Windows10ProEsMx -PrepareOnly @options}catch{$rejected=$_.Exception.Message -ceq 'This guest profile supports only the explicit basic console Explorer suite.'}
     Assert-Smoke $rejected 'An unsupported Pro suite reached other runtime guards.'
 }
+if($env:RUST_WORK_JOB){throw 'Inert runtime entry checks must run outside a Rust runtime lease.'}
+$runtimeOutput=Join-Path ([IO.Path]::GetTempPath()) ('Laqay.Unarmed.Runtime.'+[guid]::NewGuid().ToString('N'))
+$runtime=Join-Path $PSScriptRoot 'Invoke-PortableRuntimePhase.ps1'
+foreach($profile in @('Windows11EnterpriseEvaluation','Windows10ProEsMx')){
+    $leaseRejected=$false
+    try{& $runtime -GuestProfile $profile -LabId ('0'*32) -CycleId ('0'*32) -Phase Basic -ExpectedExecutableSha256 ('a'*64) -OutputDirectory $runtimeOutput}catch{$leaseRejected=$_.Exception.Message -ceq 'A RustWork runtime lease is required before any guest boot or application suite.'}
+    Assert-Smoke $leaseRejected 'An explicit basic runtime profile did not reach the lease guard without guest operations.'
+}
+foreach($phase in @('Old','New','Enable','Verify','Absent','Removed','Adverse')){
+    $modeRejected=$false
+    try{& $runtime -GuestProfile Windows10ProEsMx -LabId ('0'*32) -CycleId ('0'*32) -Phase $phase -ExpectedExecutableSha256 ('a'*64) -OutputDirectory $runtimeOutput}catch{$modeRejected=$_.Exception.Message -ceq 'The Pro runtime profile supports only Boot and Basic without extensions.'}
+    Assert-Smoke $modeRejected 'An unsupported Pro phase reached another runtime guard.'
+}
+Assert-Smoke (-not (Test-Path -LiteralPath $runtimeOutput)) 'An unarmed runtime entry created output.'
 Write-Output 'Desktop profile identity, preserved Windows 11 cases and explicit Pro non-applicability passed without arming input.'
