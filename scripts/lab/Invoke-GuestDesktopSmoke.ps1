@@ -79,7 +79,7 @@ $root=[IO.Path]::GetFullPath((Join-Path 'C:/LaqayLab/Runs' $RunId))
 if($PSScriptRoot -ne $root){throw 'The smoke runner must execute from its exact guest run directory.'}
 $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
-$report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
+$report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();TabExclusionEvidence=$null;LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
     Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
@@ -388,9 +388,10 @@ try{
         Check-Png (Get-ChildItem -LiteralPath $disabled -Filter '*.png')[0].FullName
     }
     if($GuestProfile -ceq 'Windows10ProEsMx'){
-        $tabs=[LaqayGuestDesktop]::ExplorerTabCount([IntPtr]$enabledWindow.HWND)
-        Assert-True ($tabs -eq 0) 'The Pro Explorer unexpectedly exposes tab items; do not classify the tab case as not applicable.'
-        $report.NotApplicableCases+=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native tabs.';ObservedTabs=$tabs})
+        $report.TabExclusionEvidence=[LaqayGuestDesktop]::ExplorerTabEvidence([IntPtr]$enabledWindow.HWND);Save-Report
+        $tabs=$report.TabExclusionEvidence.FileTabCandidates
+        Assert-True ($tabs -eq 0) 'The Pro Explorer exposes unclassified tab items outside its owned Ribbon; do not omit the file-tab case.'
+        $report.NotApplicableCases+=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native file tabs; owned Ribbon tabs are accounted separately.';ObservedTabs=$tabs;RibbonTabsObserved=$report.TabExclusionEvidence.RibbonTabItems})
         Save-Report
     }else{
     Run-Case 'ActiveTabSelection' {

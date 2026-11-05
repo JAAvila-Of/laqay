@@ -87,7 +87,9 @@ of an existing image, native multiple-file precedence, address/search/rename
 text, disabled/re-enabled behavior, Unicode paths, unchanged clipboard, active
 window destination and denied-write recovery. Native Explorer tabs are not a
 Windows 10 feature: ActiveTabSelection is separately recorded as NotApplicable,
-with zero observed tab items and an explicit reason. It is not counted as a pass.
+with zero unclassified file-tab candidates and an explicit reason. Ribbon tab
+items must be separately identified through their owned native Ribbon ancestor
+and fully accounted for. The exclusion is not counted as a pass.
 Windows 11 retains all thirteen cases, including ActiveTabSelection; its extended
 suites retain their existing cases. The controller rejects missing, extra or
 failed cases, mismatched platform evidence, or an incorrect non-applicable record.
@@ -198,6 +200,21 @@ the UIA ancestry reach the exact owned foreground Explorer window, and its
 value pattern is writable. Unproven or unrelated controls remain refused;
 this does not change product target policy or remove any test. Whether that
 proof is available for this search field remains unverified at runtime.
+
+That Pro retry passed eight cases, including SearchText, RenameText and both
+disabled/re-enabled cases. The search field's RichEditBox belonged to a
+different PID but had verified same-session, native-focus and UIA ancestry
+within the owned foreground Explorer, with an enabled focused Edit control.
+The run then stopped because the original tab exclusion counted all UIA
+TabItems rather than distinguishing Ribbon controls from file tabs. It did not
+skip that condition or reach the remaining cases. All restoration and shutdown
+checks completed normally.
+
+The exclusion now classifies a Ribbon item only if its ancestry reaches the
+exact native UIRibbonCommandBarDock child of the owned Explorer. It records
+each item's structural evidence and counts every other item as an unclassified
+file-tab candidate. The host requires complete accounting and refuses any
+candidate or missing evidence. This classification still awaits its guest run.
 
 ## Current automated coverage
 

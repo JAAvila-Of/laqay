@@ -745,9 +745,33 @@ public static partial class LaqayGuestDesktop {
         }
         return "";
     }
-    public static int ExplorerTabCount(IntPtr window) {
+    public static bool OwnedRibbonAncestor(string nativeClass,bool withinWindow) {
+        return withinWindow && nativeClass=="UIRibbonCommandBarDock";
+    }
+    [DllImport("user32.dll",EntryPoint="GetParent")] static extern IntPtr NativeTabParent(IntPtr window);
+    public static object ExplorerTabEvidence(IntPtr window) {
         Guard(); ExplorerWindow(window);
-        return AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)).Count;
+        var items=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem));
+        int ribbon=0,candidates=0;var evidence=new List<object>();
+        foreach(AutomationElement item in items) {
+            var classes=new List<string>();bool knownRibbon=false;var ancestor=item;
+            for(int depth=0;ancestor!=null && depth<32;depth++) {
+                var current=ancestor.Current;
+                if(current.NativeWindowHandle!=0) {
+                    IntPtr handle=new IntPtr(current.NativeWindowHandle);
+                    if(handle==window) break;
+                    for(int hop=0;handle!=IntPtr.Zero && handle!=window && hop<32 && IsChild(window,handle);hop++,handle=NativeTabParent(handle)) {
+                        var nativeClass=new StringBuilder(128);GetClassNameW(handle,nativeClass,nativeClass.Capacity);classes.Add(nativeClass.ToString());
+                        if(OwnedRibbonAncestor(nativeClass.ToString(),true)) {knownRibbon=true;break;}
+                    }
+                    if(knownRibbon) break;
+                }
+                ancestor=TreeWalker.RawViewWalker.GetParent(ancestor);
+            }
+            if(knownRibbon) ribbon++;else candidates++;
+            evidence.Add(new {Class=item.Current.ClassName,AutomationId=item.Current.AutomationId,OwnedRibbon=knownRibbon,NativeAncestors=classes.ToArray()});
+        }
+        return new {AllTabItems=items.Count,RibbonTabItems=ribbon,FileTabCandidates=candidates,Items=evidence.ToArray()};
     }
     public static bool ForeignGuestFieldAllowed(bool pro,bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit) {
         return pro && foreground && nativeWithin && rooted && sameSession && focused && enabled && edit;

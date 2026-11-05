@@ -15,5 +15,7 @@ function Assert-SmokeProfileReport([string]$profile,$report) {
     if($profile -ceq 'Windows10ProEsMx'){
         $p=$report.Platform
         if($p.Profile -cne $profile -or $p.Caption -cne 'Microsoft Windows 10 Pro' -or $p.Build -cne '19045' -or $p.Edition -cne 'Professional' -or $p.Language -ine 'es-MX' -or $na.Count -ne 1 -or $na[0].Name -cne 'ActiveTabSelection' -or $na[0].Status -cne 'NotApplicable' -or $na[0].ObservedTabs -ne 0 -or -not $na[0].Reason -or $na[0].Passed -eq $true){throw 'The Pro platform or explicit non-applicable tab evidence is incomplete.'}
+        $tabs=$report.TabExclusionEvidence
+        if($null -eq $tabs -or $tabs.FileTabCandidates -ne 0 -or $tabs.RibbonTabItems -lt 0 -or $tabs.AllTabItems -ne $tabs.RibbonTabItems -or $na[0].RibbonTabsObserved -ne $tabs.RibbonTabItems -or @($tabs.Items).Count -ne $tabs.AllTabItems -or @($tabs.Items | Where-Object {-not $_.OwnedRibbon -or $_.NativeAncestors -cnotcontains 'UIRibbonCommandBarDock'}).Count){throw 'The Pro file-tab exclusion does not account for every observed tab item.'}
     }elseif($na.Count){throw 'The Windows 11 suite cannot omit its tab case.'}
 }

@@ -26,7 +26,17 @@ $legacy=[Collections.Generic.Dictionary[string,object]]::new()
 Reject-Smoke {[LaqayGuestDesktop]::ValidateDesktopProfile('Windows11EnterpriseEvaluation',$ready,'Microsoft Windows 10 Pro','19045','Professional','es-MX')}
 Reject-Smoke {[LaqayGuestDesktop]::GuestProfileEvidence()}
 $report=[pscustomobject]@{GuestProfile='Windows10ProEsMx';Platform=[pscustomobject]@{Profile='Windows10ProEsMx';Caption='Microsoft Windows 10 Pro';Build='19045';Edition='Professional';Language='es-MX'};NotApplicableCases=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native tabs.';ObservedTabs=0})}
+$report.NotApplicableCases[0] | Add-Member NoteProperty RibbonTabsObserved 0
+$report | Add-Member NoteProperty TabExclusionEvidence ([pscustomobject]@{AllTabItems=0;RibbonTabItems=0;FileTabCandidates=0;Items=@()})
 Assert-SmokeProfileReport Windows10ProEsMx $report
+$report.TabExclusionEvidence.AllTabItems=1;Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.TabExclusionEvidence.AllTabItems=0
+$report.TabExclusionEvidence.FileTabCandidates=1;Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.TabExclusionEvidence.FileTabCandidates=0
+$report.TabExclusionEvidence=[pscustomobject]@{AllTabItems=1;RibbonTabItems=1;FileTabCandidates=0;Items=@([pscustomobject]@{OwnedRibbon=$true;NativeAncestors=@('UIRibbonCommandBarDock')})}
+$report.NotApplicableCases[0].RibbonTabsObserved=1
+Assert-SmokeProfileReport Windows10ProEsMx $report
+$report.TabExclusionEvidence.Items[0].OwnedRibbon=$false;Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.TabExclusionEvidence.Items[0].OwnedRibbon=$true
+$report.TabExclusionEvidence.Items[0].NativeAncestors=@('Unknown');Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report}
+$report.TabExclusionEvidence=[pscustomobject]@{AllTabItems=0;RibbonTabItems=0;FileTabCandidates=0;Items=@()};$report.NotApplicableCases[0].RibbonTabsObserved=0
 $failed=[pscustomobject]@{GuestProfile='Windows10ProEsMx';Passed=$false;Error='The expected image was not published in the active guest folder.';NotApplicableCases=@()}
 $preserved=$false
 try{Assert-SmokeProfileReport Windows10ProEsMx $failed}catch{$preserved=$_.Exception.Message -ceq ('Guest validation failed: '+$failed.Error)}
@@ -34,6 +44,10 @@ Assert-Smoke $preserved 'An incomplete failed run hid its original failure behin
 Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
 Reject-Smoke {[LaqayGuestDesktop]::StartTrialApplication('unused','unused')}
 Reject-Smoke {[LaqayGuestDesktop]::FocusedFieldState([IntPtr]::Zero)}
+Reject-Smoke {[LaqayGuestDesktop]::ExplorerTabEvidence([IntPtr]::Zero)}
+Assert-Smoke ([LaqayGuestDesktop]::OwnedRibbonAncestor('UIRibbonCommandBarDock',$true)) 'The exact owned native Ribbon dock was not identified.'
+foreach($nativeClass in @('TabControl','ShellTabWindowClass','UIRibbonOther','')){Assert-Smoke (-not [LaqayGuestDesktop]::OwnedRibbonAncestor($nativeClass,$true)) 'An unknown native tab surface was classified as Ribbon.'}
+Assert-Smoke (-not [LaqayGuestDesktop]::OwnedRibbonAncestor('UIRibbonCommandBarDock',$false)) 'An unowned Ribbon ancestor was accepted.'
 Assert-Smoke ([LaqayGuestDesktop]::ForeignGuestFieldAllowed($true,$true,$true,$true,$true,$true,$true,$true)) 'The complete owned-field scope was rejected.'
 for($index=0;$index -lt 8;$index++){
     $scope=[object[]]@($true,$true,$true,$true,$true,$true,$true,$true);$scope[$index]=$false
