@@ -32,6 +32,22 @@ $preserved=$false
 try{Assert-SmokeProfileReport Windows10ProEsMx $failed}catch{$preserved=$_.Exception.Message -ceq ('Guest validation failed: '+$failed.Error)}
 Assert-Smoke $preserved 'An incomplete failed run hid its original failure behind missing platform or tab evidence.'
 Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
+Reject-Smoke {[LaqayGuestDesktop]::StartTrialApplication('unused','unused')}
+$trialDirectory='C:\LaqayLab\Runs\'+('0'*32)+'\data\core-trial'
+Assert-Smoke ([LaqayGuestDesktop]::CoreTrialArguments($trialDirectory) -ceq ('--trial 20 "'+$trialDirectory+'"')) 'The fixed core trial arguments changed.'
+foreach($directory in @('relative','C:\Users\Fixture\core-trial',('C:\LaqayLab\Runs\'+('0'*32)+'\data\..\outside'),($trialDirectory+'" --unknown'))){Reject-Smoke {[LaqayGuestDesktop]::CoreTrialArguments($directory)}}
+$flags=[Reflection.BindingFlags]::NonPublic -bor [Reflection.BindingFlags]::Static
+$buffer=[LaqayGuestDesktop].GetField('trialLog',$flags);$truncated=[LaqayGuestDesktop].GetField('trialLogTruncated',$flags)
+$capture=[LaqayGuestDesktop].GetMethod('CaptureTrialLine',$flags)
+$oldBuffer=$buffer.GetValue($null);$oldTruncated=$truncated.GetValue($null);$done=[Threading.ManualResetEvent]::new($false)
+try{
+    $buffer.SetValue($null,[Text.StringBuilder]::new());$truncated.SetValue($null,$false)
+    $capture.Invoke($null,@('fixture',('x'*70000),$done)) | Out-Null
+    $log=[LaqayGuestDesktop]::CoreTrialLog()
+    Assert-Smoke ($log.Output.Length -eq 65536 -and $log.Truncated -and -not $done.WaitOne(0)) 'Core trial output was not bounded or signaled EOF early.'
+    $capture.Invoke($null,@('fixture',$null,$done)) | Out-Null
+    Assert-Smoke ($done.WaitOne(0)) 'Core trial EOF did not signal completion.'
+}finally{$buffer.SetValue($null,$oldBuffer);$truncated.SetValue($null,$oldTruncated);$done.Dispose()}
 $report.NotApplicableCases[0].ObservedTabs=1;Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.NotApplicableCases[0].ObservedTabs=0
 $report.NotApplicableCases[0].Status='Passed';Reject-Smoke {Assert-SmokeProfileReport Windows10ProEsMx $report};$report.NotApplicableCases[0].Status='NotApplicable'
 Reject-Smoke {Assert-SmokeProfileReport Windows11EnterpriseEvaluation $report}

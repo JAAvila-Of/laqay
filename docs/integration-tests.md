@@ -150,6 +150,23 @@ normal semantic-focus route remains intact. Native policy and snapshot tests
 cover rejected editor/value/focus/view conditions, but the corrected executable
 has not yet passed a guest runtime suite.
 
+The first candidate containing that alternative observation also failed its
+initial ImagePaste. Its exact executable hash was verified in the guest, and
+the original installation inventory, preferences and temporary logon were
+restored before shutdown. There were no passing cases. The added observation
+is therefore insufficient to establish Windows 10 compatibility.
+
+A supplementary diagnostic is now prepared for that specific first-case Pro
+failure. After the normal application closes cleanly, the helper uses the
+existing `--trial` mode for twenty seconds in a new owned empty folder. It
+captures stdout/stderr up to 65,536 characters, records the trial input and PNG
+count, and accounts its separate exit before restoring the fixture. That trace
+distinguishes missing input, declined context and image capture/publication
+failures. It includes native empty-list probe stages and Shell emptiness evidence
+without reading accessible text or values. The original failed case remains
+failed; no supplementary observation counts as runtime acceptance. This
+diagnostic has not been executed in a guest yet.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

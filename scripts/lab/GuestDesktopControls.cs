@@ -19,6 +19,10 @@ public static partial class LaqayGuestDesktop {
     static DateTime deadline;
     static readonly HashSet<IntPtr> windows = new HashSet<IntPtr>();
     static Process application;
+    static readonly object trialLogLock=new object();
+    static StringBuilder trialLog;
+    static bool trialLogTruncated,trialLogDrained;
+    static ManualResetEvent trialOutputDone,trialErrorDone;
     static IntPtr job;
     static bool peerConnected;
     const string PeerShare=@"\\10.77.166.11\LaqayLab";
@@ -787,7 +791,34 @@ public static partial class LaqayGuestDesktop {
     public static void FilesAndImageClipboard(string[] files) {
         Guard(); using(var bitmap=Fixture()) { var data=new DataObject(); data.SetData(DataFormats.FileDrop,files); data.SetData(DataFormats.Bitmap,bitmap); Clipboard.SetDataObject(data,true); }
     }
-    public static int StartApplication(string path) {
+    public static string CoreTrialArguments(string directory) {
+        string full=Path.GetFullPath(directory);
+        if(!Regex.IsMatch(full,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}\\data\\core-trial$",RegexOptions.IgnoreCase)) throw new ArgumentException("Unexpected core trial directory.");
+        return "--trial 20 \""+full+"\"";
+    }
+    public static int StartTrialApplication(string path,string directory) {
+        Guard();RequireRole("Primary");
+        if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows10ProEsMx") throw new InvalidOperationException("Core trials require the explicit Pro guest profile.");
+        string arguments=CoreTrialArguments(directory);
+        if(!Directory.Exists(directory)) throw new ArgumentException("The owned core trial directory is missing.");
+        for(string current=Path.GetFullPath(directory);!String.IsNullOrEmpty(current);current=Path.GetDirectoryName(current))
+            if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0) throw new ArgumentException("A core trial ancestor is a reparse point.");
+        return StartApplicationCore(path,arguments,true);
+    }
+    static void CaptureTrialLine(string channel,string line,ManualResetEvent completed) {
+        if(line==null) {completed.Set();return;}
+        lock(trialLogLock) {
+            string text=channel+": "+line+Environment.NewLine;
+            int remaining=65536-trialLog.Length;
+            if(text.Length>remaining) trialLogTruncated=true;
+            if(remaining>0) trialLog.Append(text,0,Math.Min(text.Length,remaining));
+        }
+    }
+    public static object CoreTrialLog() {
+        lock(trialLogLock) return new {Output=trialLog==null?"":trialLog.ToString(),Truncated=trialLogTruncated,Drained=trialLogDrained,MaximumCharacters=65536};
+    }
+    public static int StartApplication(string path) {return StartApplicationCore(path,"",false);}
+    static int StartApplicationCore(string path,string arguments,bool capture) {
         Guard();
         if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected application path or instance.");
         job=CreateJobObjectW(IntPtr.Zero,null);
@@ -795,8 +826,17 @@ public static partial class LaqayGuestDesktop {
         var limits=new JobLimits(); limits.basic.flags=0x2000;
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) { CloseHandle(job); job=IntPtr.Zero; throw new InvalidOperationException("Cannot configure the guest process job."); }
         try {
-            application=Process.Start(new ProcessStartInfo(path) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path)});
+            var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
+            if(capture) {start.StandardOutputEncoding=Encoding.UTF8;start.StandardErrorEncoding=Encoding.UTF8;}
+            application=Process.Start(start);
             if(!AssignProcessToJobObject(job,application.Handle)) { application.Kill(); application.WaitForExit(); throw new InvalidOperationException("Cannot contain the owned guest application."); }
+            if(capture) {
+                trialLog=new StringBuilder();trialLogTruncated=false;trialLogDrained=false;
+                trialOutputDone=new ManualResetEvent(false);trialErrorDone=new ManualResetEvent(false);
+                application.OutputDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stdout",eventArgs.Data,trialOutputDone);
+                application.ErrorDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stderr",eventArgs.Data,trialErrorDone);
+                application.BeginOutputReadLine();application.BeginErrorReadLine();
+            }
             return application.Id;
         } catch { CloseHandle(job); job=IntPtr.Zero; throw; }
     }
@@ -854,7 +894,14 @@ public static partial class LaqayGuestDesktop {
             if(application.HasExited && application.ExitCode!=0) clean=false;
         }
         if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;}
-        if(application!=null) {if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application did not exit after job cleanup.");ApplicationExitCode=application.ExitCode;application.Dispose();application=null;}
+        if(application!=null) {
+            if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application did not exit after job cleanup.");
+            if(application.StartInfo.RedirectStandardOutput) {
+                trialLogDrained=trialOutputDone.WaitOne(1000) && trialErrorDone.WaitOne(1000);
+                if(!trialLogDrained) {try{application.CancelOutputRead();application.CancelErrorRead();}catch(InvalidOperationException){}}
+            }
+            ApplicationExitCode=application.ExitCode;application.Dispose();application=null;
+        }
         return clean;
     }
     public static void CloseExplorerWindows() {

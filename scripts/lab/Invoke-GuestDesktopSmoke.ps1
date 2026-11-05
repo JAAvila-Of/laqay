@@ -81,7 +81,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -153,6 +153,32 @@ function Open-Folder([string]$path){
     Start-Sleep -Milliseconds 250
     Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
     return $window
+}
+function Invoke-CoreTrial {
+    $diagnostic=[ordered]@{DiagnosticOnly=$true;Pid=$null;Input=$null;PngCount=0;Closed=$false;ExitCode=$null;Forced=$false;Log=$null;Error=$null}
+    $started=$false;$path=$null
+    try{
+        $path=New-CaseFolder 'core-trial';$window=Open-Folder $path
+        Assert-True ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -eq $ExpectedExecutableSha256) 'Core trial executable changed.'
+        $diagnostic.Pid=[LaqayGuestDesktop]::StartTrialApplication($executable,$path);$started=$true
+        Wait-For {[LaqayGuestDesktop]::ApplicationReady()} 'The bounded core trial did not initialize.'
+        [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::ImageClipboard()
+        $diagnostic.Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+        Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -gt 0} 'The supplementary core trial did not publish a PNG.'
+    }catch{$diagnostic.Error=$_.Exception.Message}finally{
+        if($path){$diagnostic.PngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -ErrorAction SilentlyContinue).Count}
+        if($started){
+            try{
+                $diagnostic.Closed=[LaqayGuestDesktop]::CloseApplication();$diagnostic.ExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$diagnostic.Forced=[LaqayGuestDesktop]::WasApplicationForced
+                $diagnostic.Log=[LaqayGuestDesktop]::CoreTrialLog()
+                if(-not $diagnostic.Closed -or $diagnostic.ExitCode -ne 0 -or $diagnostic.Forced){$report.CleanupErrors+=@('The supplementary core trial did not close normally.')}
+            }catch{$diagnostic.Error+='; Trial cleanup: '+$_.Exception.Message;$report.CleanupErrors+=@($_.Exception.Message)}
+        }
+    }
+    return [pscustomobject]$diagnostic
 }
 function Compare-EmptyFolderFocus($window,[string]$path){
     $comparison=[ordered]@{Status='DiagnosticOnly';InitiallyEmpty=$false;WithReference=$null;SelectedReference=$null;AfterRemoval=$null;ReferenceRemoved=$true;Error=$null}
@@ -625,6 +651,9 @@ try{
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+    }
+    if($GuestProfile -ceq 'Windows10ProEsMx' -and -not $report.Passed -and $report.ApplicationClosed -and $report.ApplicationExitCode -eq 0 -and -not $report.ForcedTermination -and $report.Cases.Count -eq 1 -and $report.Cases[0].Name -ceq 'ImagePaste' -and $report.Error -ceq 'The expected image was not published in the active guest folder.'){
+        $report.CoreTrial=Invoke-CoreTrial
     }
     if($preferencesTouched){
         try{

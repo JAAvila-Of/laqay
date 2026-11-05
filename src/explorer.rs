@@ -97,7 +97,7 @@ pub struct NativeControlObservation {
     pub focused_descendant_type: Option<i32>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct EmptyListObservation {
     control: NativeControlObservation,
     provider_class: String,
@@ -109,16 +109,32 @@ struct EmptyListObservation {
 fn inspect_empty_list(
     automation: &IUIAutomation,
     info: &GUITHREADINFO,
+    diagnostics: bool,
 ) -> Result<Option<EmptyListObservation>> {
+    if diagnostics {
+        println!(
+            "Empty list probe: native control, flags={}, menu={}, capture={}, move_size={}",
+            info.flags.0,
+            !info.hwndMenuOwner.is_invalid(),
+            !info.hwndCapture.is_invalid(),
+            !info.hwndMoveSize.is_invalid()
+        );
+    }
     let control = inspect_control(automation, info.hwndFocus)?;
     // SAFETY: The existing native focus control is queried on this MTA. No
     // accessible names, values, input, files or UI state are changed.
     let observation = unsafe {
         let element = automation.ElementFromHandle(info.hwndFocus)?;
+        if diagnostics {
+            println!("Empty list probe: value-pattern availability");
+        }
         let value =
             element.GetCurrentPropertyValueEx(UIA_IsValuePatternAvailablePropertyId, true)?;
         let focused = automation
             .CreatePropertyCondition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))?;
+        if diagnostics {
+            println!("Empty list probe: focused subtree");
+        }
         let focused_count = element.FindAll(TreeScope_Subtree, &focused)?.Length()?;
         EmptyListObservation {
             control,
@@ -132,6 +148,9 @@ fn inspect_empty_list(
             focused_count,
         }
     };
+    if diagnostics {
+        println!("Empty list provider: {observation:?}");
+    }
     let eligible = native_empty_list(EmptyListEvidence {
         native_class: &observation.control.win32_class,
         provider_class: &observation.provider_class,
@@ -245,7 +264,7 @@ fn observe_semantic_focus(
         let focused = match automation.GetFocusedElement() {
             Ok(focused) => focused,
             Err(error) if error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE => {
-                return observe_unavailable_empty_focus(&automation, ready, finish);
+                return observe_unavailable_empty_focus(&automation, ready, finish, diagnostics);
             }
             Err(error) => return Err(error),
         };
@@ -300,6 +319,7 @@ fn observe_unavailable_empty_focus(
     automation: &IUIAutomation,
     ready: mpsc::Sender<bool>,
     finish: mpsc::Receiver<()>,
+    diagnostics: bool,
 ) -> Result<FocusObservation> {
     // SAFETY: Both native snapshots and UIA observations are read on this MTA.
     // The Shell thread must independently confirm the single focused view is
@@ -313,7 +333,7 @@ fn observe_unavailable_empty_focus(
             ..Default::default()
         };
         GetGUIThreadInfo(thread, &mut before)?;
-        let initial = inspect_empty_list(automation, &before)?.ok_or_else(declined)?;
+        let initial = inspect_empty_list(automation, &before, diagnostics)?.ok_or_else(declined)?;
         if ready.send(true).is_err() || finish.recv().is_err() {
             return Err(declined());
         }
@@ -326,7 +346,7 @@ fn observe_unavailable_empty_focus(
         let unchanged = unavailable
             && GetForegroundWindow() == foreground
             && before.hwndFocus == after.hwndFocus
-            && inspect_empty_list(automation, &after)?.as_ref() == Some(&initial);
+            && inspect_empty_list(automation, &after, diagnostics)?.as_ref() == Some(&initial);
         Ok(FocusObservation {
             control_type: initial.control.control_type,
             global_control_window: 0,
@@ -434,7 +454,7 @@ pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnap
         let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx, diagnostics));
         let readiness = ready_rx.recv();
         let ready = readiness.is_ok();
-        let result = observe_shell(readiness.unwrap_or(false));
+        let result = observe_shell(readiness.unwrap_or(false), diagnostics);
         let _ = finish_tx.send(());
         let semantic = match worker.join() {
             Ok(Ok(observation)) => Some(observation),
@@ -472,7 +492,7 @@ pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnap
     })
 }
 
-fn observe_shell(check_empty: bool) -> Result<ExplorerSnapshot> {
+fn observe_shell(check_empty: bool, diagnostics: bool) -> Result<ExplorerSnapshot> {
     let _apartment = Apartment::new(COINIT_APARTMENTTHREADED)?;
     // SAFETY: All out-parameters point to initialized local storage. COM interfaces
     // stay on this STA thread and are dropped before the apartment guard. Allocated
@@ -515,6 +535,16 @@ fn observe_shell(check_empty: bool) -> Result<ExplorerSnapshot> {
                     }
                     Err(_) => None,
                 };
+                let confirmed_empty =
+                    initially_empty && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0);
+                if diagnostics && check_empty {
+                    println!(
+                        "Empty Shell view: initially_empty={initially_empty}, confirmed_empty={confirmed_empty}, filesystem={}, contains_focus={}",
+                        directory.is_some(),
+                        view_window == info.hwndFocus
+                            || IsChild(view_window, info.hwndFocus).as_bool()
+                    );
+                }
                 Ok(Some(ShellObservation {
                     browser_window: browser_window.0 as usize,
                     view_window: view_window.0 as usize,
@@ -522,8 +552,7 @@ fn observe_shell(check_empty: bool) -> Result<ExplorerSnapshot> {
                     contains_focus: view_window == info.hwndFocus
                         || IsChild(view_window, info.hwndFocus).as_bool(),
                     directory,
-                    confirmed_empty: initially_empty
-                        && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0),
+                    confirmed_empty,
                 }))
             })();
             match entry {
