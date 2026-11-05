@@ -1,4 +1,4 @@
-# Capture the actual remoting argument expressions without contacting a guest.
+﻿# Capture the actual remoting argument expressions without contacting a guest.
 $ErrorActionPreference='Stop'
 function Test-LaunchArguments([string]$source,[int]$count,[int[]]$booleanIndices){
     $tokens=$null;$errors=$null
@@ -10,6 +10,7 @@ function Test-LaunchArguments([string]$source,[int]$count,[int[]]$booleanIndices
     function Invoke-Command {param($Session,[object[]]$ArgumentList,[scriptblock]$ScriptBlock) return ,$ArgumentList}
     $session='fixture';$sessions=@{Primary='fixture'};$role='Primary'
     $LabId='lab';$RunId='run';$ExpectedExecutableSha256='sha';$guestRoot='root';$taskName='task';$StartupPhase='Explorer';$CycleId='cycle';$GuestProfile='Windows11EnterpriseEvaluation'
+    foreach($GuestProfile in @('Windows11EnterpriseEvaluation','Windows10ProEsMx')){
     foreach($unc in @($false,$true)){foreach($lifecycle in @($false,$true)){foreach($consent in @($false,$true)){
         [switch]$IncludeUnc=$unc;[switch]$IncludeLifecycle=$lifecycle;[switch]$AllowGuestRdpFileConsent=$consent
         foreach($adverse in @($false,$true)){foreach($real in @($false,$true)){foreach($terminal in @($false,$true)){foreach($PortablePhase in @('','Old','New','Removed')){
@@ -28,6 +29,7 @@ function Test-LaunchArguments([string]$source,[int]$count,[int[]]$booleanIndices
             if($count -eq 14 -and $arguments[9] -cne $PortablePhase){throw 'The portable phase changed during argument binding.'}
         }}}}
     }}}
+    }
 }
 Test-LaunchArguments 'Invoke-DesktopSmoke.ps1' 14 @(7,8,10,11,12)
 Test-LaunchArguments 'Invoke-RdpSmoke.ps1' 7 @(6)
