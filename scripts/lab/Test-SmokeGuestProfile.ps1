@@ -33,6 +33,12 @@ try{Assert-SmokeProfileReport Windows10ProEsMx $failed}catch{$preserved=$_.Excep
 Assert-Smoke $preserved 'An incomplete failed run hid its original failure behind missing platform or tab evidence.'
 Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
 Reject-Smoke {[LaqayGuestDesktop]::StartTrialApplication('unused','unused')}
+Reject-Smoke {[LaqayGuestDesktop]::FocusedFieldState([IntPtr]::Zero)}
+Assert-Smoke ([LaqayGuestDesktop]::ForeignGuestFieldAllowed($true,$true,$true,$true,$true,$true,$true,$true)) 'The complete owned-field scope was rejected.'
+for($index=0;$index -lt 8;$index++){
+    $scope=[object[]]@($true,$true,$true,$true,$true,$true,$true,$true);$scope[$index]=$false
+    Assert-Smoke (-not [LaqayGuestDesktop].GetMethod('ForeignGuestFieldAllowed').Invoke($null,$scope)) 'A foreign input field was accepted with incomplete ownership or editability evidence.'
+}
 $trialDirectory='C:\LaqayLab\Runs\'+('0'*32)+'\data\core-trial'
 Assert-Smoke ([LaqayGuestDesktop]::CoreTrialArguments($trialDirectory) -ceq ('--trial 20 "'+$trialDirectory+'"')) 'The fixed core trial arguments changed.'
 foreach($directory in @('relative','C:\Users\Fixture\core-trial',('C:\LaqayLab\Runs\'+('0'*32)+'\data\..\outside'),($trialDirectory+'" --unknown'))){Reject-Smoke {[LaqayGuestDesktop]::CoreTrialArguments($directory)}}

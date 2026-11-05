@@ -749,12 +749,49 @@ public static partial class LaqayGuestDesktop {
         Guard(); ExplorerWindow(window);
         return AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem)).Count;
     }
+    public static bool ForeignGuestFieldAllowed(bool pro,bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit) {
+        return pro && foreground && nativeWithin && rooted && sameSession && focused && enabled && edit;
+    }
+    static Dictionary<string,object> InspectGuestFieldScope(IntPtr window,AutomationElement focused) {
+        uint owner;uint thread=GetWindowThreadProcessId(window,out owner);
+        var native=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
+        bool nativeWithin=GetGUIThreadInfo(thread,ref native) && (native.focus==window || IsChild(window,native.focus));
+        var result=new Dictionary<string,object>();
+        result["Foreground"]=GetForegroundWindow()==window;result["NativeWithinWindow"]=nativeWithin;
+        result["RootReached"]=false;result["SameSession"]=false;result["ForeignReadAllowed"]=false;
+        if(focused==null) return result;
+        var info=focused.Current;
+        result["FocusedPid"]=info.ProcessId;result["ExplorerPid"]=owner;result["Class"]=info.ClassName;result["ControlType"]=info.ControlType.ProgrammaticName;
+        result["HasKeyboardFocus"]=info.HasKeyboardFocus;result["Enabled"]=info.IsEnabled;
+        bool sameSession=false,rooted=false;
+        try {using(var process=Process.GetProcessById(info.ProcessId)) sameSession=process.SessionId==Process.GetCurrentProcess().SessionId;}catch(ArgumentException){}
+        var ancestor=focused;
+        for(int depth=0;ancestor!=null && depth<32;depth++) {
+            var current=ancestor.Current;
+            if(current.NativeWindowHandle!=0 && unchecked((uint)current.NativeWindowHandle)==unchecked((uint)window.ToInt64())) {rooted=true;break;}
+            ancestor=TreeWalker.RawViewWalker.GetParent(ancestor);
+        }
+        result["RootReached"]=rooted;result["SameSession"]=sameSession;
+        result["ForeignReadAllowed"]=ForeignGuestFieldAllowed(observedDesktopProfile!=null && Convert.ToString(observedDesktopProfile["Profile"])=="Windows10ProEsMx",GetForegroundWindow()==window,nativeWithin,rooted,sameSession,info.HasKeyboardFocus,info.IsEnabled,info.ControlType==ControlType.Edit);
+        return result;
+    }
+    public static object FocusedFieldState(IntPtr window) {
+        Guard();ExplorerWindow(window);
+        return InspectGuestFieldScope(window,AutomationElement.FocusedElement);
+    }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);
         var focused=AutomationElement.FocusedElement;
         if(focused==null) return "";
         uint pid; GetWindowThreadProcessId(window,out pid);
-        if(focused.Current.ProcessId!=pid) throw new InvalidOperationException("Focused control belongs to another guest process.");
+        if(focused.Current.ProcessId!=pid) {
+            var scope=InspectGuestFieldScope(window,focused);
+            if(!(bool)scope["ForeignReadAllowed"]) throw new InvalidOperationException("The foreign guest field is not rooted in the owned foreground Explorer window.");
+            object value;
+            if(!focused.TryGetCurrentPattern(ValuePattern.Pattern,out value) || ((ValuePattern)value).Current.IsReadOnly || !focused.Current.HasKeyboardFocus || GetForegroundWindow()!=window)
+                throw new InvalidOperationException("The owned foreign input field has no stable writable value pattern.");
+            return ((ValuePattern)value).Current.Value;
+        }
         object pattern;
         if(focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern)) return ((ValuePattern)pattern).Current.Value;
         if(focused.TryGetCurrentPattern(TextPattern.Pattern,out pattern)) return ((TextPattern)pattern).DocumentRange.GetText(-1);

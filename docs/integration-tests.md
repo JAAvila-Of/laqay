@@ -181,7 +181,23 @@ passing product case was produced.
 The observation now queries the advertised pattern's IsReadOnly property,
 without reading its value. Only confirmed ReadOnly or Absent qualifies;
 Writable, Unknown and failed queries still decline, and all other native-list
-and Shell requirements remain. The new runtime result remains pending.
+and Shell requirements remain. Complete runtime acceptance remains pending.
+
+The next Pro candidate passed ImagePaste, CollisionPreservation,
+NativeFilePaste and AddressBarText. Its PNG dimensions/pixels, existing-image
+preservation, native file hashes and text/image precedence were verified.
+SearchText then stopped because the helper's focused-element query reported
+another process; no control text was read after that rejection. The remaining
+cases and the tab exclusion were not reached. Original installation,
+preferences and temporary logon were restored and all guests ended off.
+
+The helper now retries transient editable-field focus and records structural
+scope evidence. Pro alone may read a cross-process field when it is an enabled,
+keyboard-focused Edit control in the same guest session, both native focus and
+the UIA ancestry reach the exact owned foreground Explorer window, and its
+value pattern is writable. Unproven or unrelated controls remain refused;
+this does not change product target policy or remove any test. Whether that
+proof is available for this search field remains unverified at runtime.
 
 ## Current automated coverage
 

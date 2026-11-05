@@ -81,7 +81,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -343,7 +343,13 @@ try{
             Start-Sleep -Milliseconds 200
             [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
-            Wait-For { [LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayEditableToken') } 'Native text paste did not reach the editable guest field.'
+            try{
+                Wait-For {try{[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayEditableToken')}catch{$false}} 'Native text paste did not reach the editable guest field.'
+            }finally{
+                $state=$null;$scopeError=$null
+                try{$state=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND)}catch{$scopeError=$_.Exception.Message}
+                $report.EditableFields+=@([pscustomobject]@{Case=$field;Scope=$state;Error=$scopeError});Save-Report
+            }
             Start-Sleep -Milliseconds 500
             Assert-True (@(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq 0) 'An editable field caused an image write.'
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(27))
