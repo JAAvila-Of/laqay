@@ -44,6 +44,12 @@ Assert-Smoke $preserved 'An incomplete failed run hid its original failure behin
 Reject-Smoke {[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]::Zero)}
 Reject-Smoke {[LaqayGuestDesktop]::StartTrialApplication('unused','unused')}
 Reject-Smoke {[LaqayGuestDesktop]::FocusedFieldState([IntPtr]::Zero)}
+Reject-Smoke {[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]::Zero)}
+Assert-Smoke ([LaqayGuestDesktop]::EditableFieldReady($true,$true,$true,$true,$true,$true,$true,$true)) 'A complete writable guest input precondition was rejected.'
+for($index=0;$index -lt 8;$index++){
+    $scope=[object[]]@($true,$true,$true,$true,$true,$true,$true,$true);$scope[$index]=$false
+    Assert-Smoke (-not [LaqayGuestDesktop].GetMethod('EditableFieldReady').Invoke($null,$scope)) 'Input was allowed before its owned writable field was ready.'
+}
 Reject-Smoke {[LaqayGuestDesktop]::ExplorerTabEvidence([IntPtr]::Zero)}
 Assert-Smoke ([LaqayGuestDesktop]::OwnedRibbonAncestor('UIRibbonCommandBarDock',$true)) 'The exact owned native Ribbon dock was not identified.'
 foreach($nativeClass in @('TabControl','ShellTabWindowClass','UIRibbonOther','')){Assert-Smoke (-not [LaqayGuestDesktop]::OwnedRibbonAncestor($nativeClass,$true)) 'An unknown native tab surface was classified as Ribbon.'}

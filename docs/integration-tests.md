@@ -216,6 +216,20 @@ each item's structural evidence and counts every other item as an unclassified
 file-tab candidate. The host requires complete accounting and refuses any
 candidate or missing evidence. This classification still awaits its guest run.
 
+The next isolated repetition passed the first four cases, then SearchText
+timed out without confirming the token. Its final structural field scope was
+valid, but the report did not distinguish a value-read failure from a missing
+paste. It did not reach the Ribbon classifier. Restoration, application exit
+and guest shutdown completed normally; the repetition is not accepted.
+
+Before sending the single native paste, the helper now waits for an enabled,
+focused, writable Edit field with verified native and UIA ownership in the
+guest session. It records the pre-paste scope, whether paste was sent, and
+subsequent read success, length, token match and errors without storing field
+content. Missing readiness fails before paste; a failed paste is not retried.
+These diagnostics do not establish the cause of the preceding failure or alter
+product behavior. Full Pro acceptance and Windows 11 regression remain pending.
+
 ## Current automated coverage
 
 ### Isolated SMB withdrawal regression

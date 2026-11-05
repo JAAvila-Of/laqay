@@ -803,6 +803,20 @@ public static partial class LaqayGuestDesktop {
         Guard();ExplorerWindow(window);
         return InspectGuestFieldScope(window,AutomationElement.FocusedElement);
     }
+    public static bool EditableFieldReady(bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit,bool writable) {
+        return foreground && nativeWithin && rooted && sameSession && focused && enabled && edit && writable;
+    }
+    public static bool FocusedEditableReady(IntPtr window) {
+        Guard();ExplorerWindow(window);
+        var focused=AutomationElement.FocusedElement;
+        if(focused==null) return false;
+        var scope=InspectGuestFieldScope(window,focused);
+        uint owner;GetWindowThreadProcessId(window,out owner);
+        if(focused.Current.ProcessId!=owner && !(bool)scope["ForeignReadAllowed"]) return false;
+        object pattern;
+        bool writable=focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern) && !((ValuePattern)pattern).Current.IsReadOnly;
+        return EditableFieldReady((bool)scope["Foreground"],(bool)scope["NativeWithinWindow"],(bool)scope["RootReached"],(bool)scope["SameSession"],focused.Current.HasKeyboardFocus,focused.Current.IsEnabled,focused.Current.ControlType==ControlType.Edit,writable);
+    }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);
         var focused=AutomationElement.FocusedElement;

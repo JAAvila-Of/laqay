@@ -340,15 +340,25 @@ try{
             $window=Open-Folder $path
             $key=if($field -eq 'AddressBarText'){76}else{70}
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,$key))
-            Start-Sleep -Milliseconds 200
-            [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
-            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+            $observation=[pscustomobject]@{Case=$field;BeforePaste=$null;PasteSent=$false;Scope=$null;Error=$null;ReadSucceeded=$false;TextLength=$null;TokenMatched=$false;ReadError=$null}
+            $report.EditableFields+=@($observation);Save-Report
             try{
-                Wait-For {try{[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayEditableToken')}catch{$false}} 'Native text paste did not reach the editable guest field.'
+                Wait-For {try{[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND)}catch{$false}} 'The owned editable guest field did not become ready before paste.'
+                $observation.BeforePaste=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND);Save-Report
+                [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
+                [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+                $observation.PasteSent=$true;Save-Report
+                Wait-For {
+                    try{
+                        $text=[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND)
+                        $observation.ReadSucceeded=$true;$observation.TextLength=$text.Length
+                        $observation.TokenMatched=$text.Contains('LaqayEditableToken');$observation.ReadError=$null
+                        $observation.TokenMatched
+                    }catch{$observation.ReadError=$_.Exception.Message;$false}
+                } 'Native text paste did not reach the editable guest field.'
             }finally{
-                $state=$null;$scopeError=$null
-                try{$state=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND)}catch{$scopeError=$_.Exception.Message}
-                $report.EditableFields+=@([pscustomobject]@{Case=$field;Scope=$state;Error=$scopeError});Save-Report
+                try{$observation.Scope=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND)}catch{$observation.Error=$_.Exception.Message}
+                Save-Report
             }
             Start-Sleep -Milliseconds 500
             Assert-True (@(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq 0) 'An editable field caused an image write.'
