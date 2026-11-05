@@ -256,7 +256,20 @@ The completion guard now validates the exact ordered case names and successful
 results from the explicit profile contract: twelve for Pro, thirteen for
 Windows 11. Missing, duplicate, reordered, extra and failed cases are rejected.
 This repairs the inconsistent guest guard without removing coverage or changing
-product code. A fresh end-to-end run and Windows 11 regression remain required.
+product code.
+
+The subsequent end-to-end Pro cycle passed all twelve cases and its explicit
+file-tab exclusion. Guest, host, phase and controller reports passed on source
+7191bf9. All three observed tab items had the owned native Ribbon ancestry,
+with zero unclassified candidates. The cycle used two normal boots, restored
+the original application, preferences, fixture permissions and temporary logon,
+removed its task and shut down every guest. Application exit was zero without
+forced termination, and the controller Job had no remaining processes.
+
+This accepts the basic console suite on Windows 10 Pro 19045 es-MX only. It does
+not establish other editions, Windows 10 RDP or a fresh unattended installation.
+Regression with the current executable on Windows 11 remains required before
+integration; previous published-binary results do not cover this product change.
 
 ## Current automated coverage
 
