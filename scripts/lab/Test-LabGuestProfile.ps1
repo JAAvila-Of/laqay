@@ -24,6 +24,12 @@ Reject-Profile {Assert-LabGuestSystem $profile 'Microsoft Windows 10 Pro' 19045 
 $xml=Convert-LabUnattendProfile (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Autounattend.xml.template') -Raw) $profile
 $ns=[Xml.XmlNamespaceManager]::new($xml.NameTable);$ns.AddNamespace('u','urn:schemas-microsoft-com:unattend')
 Assert-Profile ($xml.SelectSingleNode('//u:InstallFrom/u:MetaData/u:Value',$ns).InnerText -ceq '4') 'Unattended setup would install Home.'
+$setupKey=$xml.SelectSingleNode('//u:component[@name="Microsoft-Windows-Setup"]/u:UserData/u:ProductKey',$ns)
+Assert-Profile ($setupKey.SelectSingleNode('u:Key',$ns).InnerText -ceq 'VK7JG-NPHTM-C97JM-9MPGT-3V66T' -and $setupKey.SelectSingleNode('u:WillShowUI',$ns).InnerText -ceq 'Never') 'Retail Pro setup lost its explicit non-activating edition key.'
+Assert-Profile ($xml.SelectNodes('//u:component[@name="Microsoft-Windows-Shell-Setup"]/u:ProductKey',$ns).Count -eq 0) 'A product key was passed to Windows activation.'
+Reject-Profile {Convert-LabUnattendProfile $xml.OuterXml $profile}
+$defaultXml=Convert-LabUnattendProfile (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Autounattend.xml.template') -Raw) (Get-LabGuestProfile Windows11EnterpriseEvaluation)
+Assert-Profile ($defaultXml.SelectNodes('//u:ProductKey',$ns).Count -eq 0) 'The default evaluation profile acquired a setup key.'
 foreach($node in $xml.SelectNodes('//u:SystemLocale | //u:UILanguage | //u:UserLocale',$ns)){Assert-Profile ($node.InnerText -ceq 'es-MX') 'Unattended setup retained another language.'}
 Assert-Profile ($xml.SelectSingleNode('//u:WillWipeDisk',$ns).InnerText -ceq 'true' -and $xml.SelectSingleNode('//u:InstallTo/u:DiskID',$ns).InnerText -ceq '0') 'The owned guest disk target changed.'
 # Exercise the actual mount verifier through inert adapters, including cleanup

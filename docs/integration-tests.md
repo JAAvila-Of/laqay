@@ -42,12 +42,17 @@ required before VM or switch creation. Only its own temporary read-only ISO
 mount without a drive letter is detached, including on metadata failure;
 an already mounted ISO is refused. The installed guest must report build 19045,
 Professional edition and es-MX before initialization succeeds. This does not
-activate Windows, determine license entitlement or transfer a host key.
+determine license entitlement or transfer a host key. The opt-in retail Pro
+answer file supplies only the public generic Pro edition-selection key in
+windowsPE/UserData, with no key in Shell-Setup and no activation call. The
+evaluation profile remains key-free.
 
 Pure preparation tests cover both plans, wrong edition/index/architecture/
 language/build rejection, unattended image selection and mocked mount ownership
-and cleanup. They never mount installation media or create VMs. Actual Windows
-10 installation remains unexecuted. Existing desktop, network, RDP and lifecycle
+and cleanup. They never mount installation media or create VMs. The first actual Windows
+10 attempt stopped in Setup with a ProductKey answer-file error before
+installation. The edition-selection key corrects that missing setup input;
+a successful installation is still pending. Existing desktop, network, RDP and lifecycle
 suites still require Windows 11; Windows 10 product coverage needs a separate
 reviewed adaptation and real execution. Provisioning alone is not acceptance.
 

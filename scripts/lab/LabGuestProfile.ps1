@@ -20,5 +20,15 @@ function Convert-LabUnattendProfile([string]$answer,$profile) {
     foreach($node in $xml.SelectNodes('//u:SetupUILanguage/u:UILanguage | //u:SystemLocale | //u:UILanguage | //u:UserLocale',$ns)){$node.InnerText=$profile.Language}
     foreach($node in $xml.SelectNodes('//u:InputLocale',$ns)){$node.InnerText=$profile.InputLocale}
     $xml.SelectSingleNode('//u:InstallFrom/u:MetaData/u:Value',$ns).InnerText=[string]$profile.ImageIndex
+    if($profile.Name -ceq 'Windows10ProEsMx'){
+        # Public generic Pro setup key: selects the edition, grants no license,
+        # and is never passed to activation or read from the host.
+        $userData=$xml.SelectSingleNode('//u:component[@name="Microsoft-Windows-Setup"]/u:UserData',$ns)
+        if($userData.SelectSingleNode('u:ProductKey',$ns)){throw 'Refusing to replace a pre-existing installation key.'}
+        $key=$xml.CreateElement('ProductKey',$ns.LookupNamespace('u'))
+        $value=$xml.CreateElement('Key',$ns.LookupNamespace('u'));$value.InnerText='VK7JG-NPHTM-C97JM-9MPGT-3V66T'
+        $display=$xml.CreateElement('WillShowUI',$ns.LookupNamespace('u'));$display.InnerText='Never'
+        [void]$key.AppendChild($value);[void]$key.AppendChild($display);[void]$userData.AppendChild($key)
+    }
     return $xml
 }
