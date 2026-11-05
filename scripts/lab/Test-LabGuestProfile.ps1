@@ -58,4 +58,21 @@ try {
     Remove-Item -LiteralPath (Join-Path $resolved 'sources/install.wim')
     [IO.Directory]::Delete((Join-Path $resolved 'sources'));[IO.Directory]::Delete($resolved)
 }
-Write-Output 'Explicit Pro selection, language, guest identity and ISO inspection ownership passed without mounting media.'
+# Run the actual descriptor assignment, network assignment and ready publication
+# with inert network/file adapters. This catches descriptor/network name reuse.
+$initAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Initialize-Guest.ps1'),[ref]$null,[ref]$null)
+$descriptor=@($initAst.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Right.Extent.Text -like 'Get-LabGuestProfile *'},$true))
+$network=@($initAst.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Right.Extent.Text -like '@(Get-NetConnectionProfile *'},$true))
+Assert-Profile ($descriptor.Count -eq 1 -and $network.Count -eq 1) 'The initialization metadata flow is ambiguous.'
+function Get-NetConnectionProfile {param($InterfaceIndex);[pscustomobject]@{Name='Synthetic private network'}}
+function Set-Content {param([Parameter(ValueFromPipeline)]$Value,[string]$LiteralPath,[string]$Encoding);process{$script:readyFixture=$Value}}
+$marker=[pscustomobject]@{GuestProfile='Windows10ProEsMx'}
+$adapters=@([pscustomobject]@{ifIndex=9})
+$os=[pscustomobject]@{Caption='Microsoft Windows 10 Pro';Version='10.0.19045';BuildNumber='19045';OSArchitecture='64-bit'}
+$edition='Professional';$language='es-MX';$LabId=$id;$Role='Primary';$root='C:\LaqayLab';$address='10.77.166.10'
+. ([scriptblock]::Create($descriptor[0].Extent.Text))
+. ([scriptblock]::Create($network[0].Extent.Text))
+. ([scriptblock]::Create($initAst.EndBlock.Statements[-1].Extent.Text))
+$ready=$script:readyFixture | ConvertFrom-Json
+Assert-Profile ($ready.GuestProfile -ceq 'Windows10ProEsMx' -and $ready.Edition -ceq 'Professional' -and $ready.Language -ceq 'es-MX') 'Guest readiness published network metadata instead of the Windows profile.'
+Write-Output 'Explicit Pro selection, language, guest identity, ready metadata and ISO inspection ownership passed without mounting media.'

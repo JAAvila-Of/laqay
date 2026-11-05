@@ -12,10 +12,10 @@ if ($computer.Manufacturer -ne 'Microsoft Corporation' -or $computer.Model -ne '
 }
 $os = Get-CimInstance Win32_OperatingSystem
 . (Join-Path $PSScriptRoot 'LabGuestProfile.ps1')
-$profile=Get-LabGuestProfile $(if($marker.GuestProfile){$marker.GuestProfile}else{'Windows11EnterpriseEvaluation'})
+$guestProfile=Get-LabGuestProfile $(if($marker.GuestProfile){$marker.GuestProfile}else{'Windows11EnterpriseEvaluation'})
 $edition=(Get-ItemProperty -LiteralPath 'HKLM:/SOFTWARE/Microsoft/Windows NT/CurrentVersion' -Name EditionID).EditionID
 $language=(Get-WinSystemLocale).Name
-Assert-LabGuestSystem $profile $os.Caption ([int]$os.BuildNumber) $edition $language
+Assert-LabGuestSystem $guestProfile $os.Caption ([int]$os.BuildNumber) $edition $language
 $adapters = @(Get-NetAdapter -Physical)
 if ($adapters.Count -ne 1) { throw 'Exactly one private lab adapter is required.' }
 $address = if ($Role -eq 'Primary') { '10.77.166.10' } else { '10.77.166.11' }
@@ -36,5 +36,5 @@ Expand-Archive -LiteralPath (Join-Path $root 'Laqay.zip') -DestinationPath (Join
 New-SmbShare -Name LaqayLab -Path (Join-Path $root 'Share') -FullAccess "$env:COMPUTERNAME\LaqayLab" | Out-Null
 [ordered]@{ LabId=$LabId; Role=$Role; ComputerName=$env:COMPUTERNAME; Caption=$os.Caption;
     Version=$os.Version; Build=$os.BuildNumber; Architecture=$os.OSArchitecture;
-    GuestProfile=$profile.Name; Edition=$edition; Language=$language; Ready=$true; TestsExecuted=$false; Address=$address; InitializedUtc=[DateTime]::UtcNow.ToString('o')
+    GuestProfile=$guestProfile.Name; Edition=$edition; Language=$language; Ready=$true; TestsExecuted=$false; Address=$address; InitializedUtc=[DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'ready.json') -Encoding UTF8
