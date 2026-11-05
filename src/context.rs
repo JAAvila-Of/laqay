@@ -66,7 +66,10 @@ pub(crate) fn native_empty_list(evidence: EmptyListEvidence<'_>) -> bool {
         && evidence.provider_matches_focus
         && evidence.role == FocusRole::List
         && evidence.enabled
-        && evidence.value_access == ValueAccess::Absent
+        && matches!(
+            evidence.value_access,
+            ValueAccess::Absent | ValueAccess::ReadOnly
+        )
         && !evidence.focused_descendant
         && !evidence.menu_or_capture
 }
@@ -131,6 +134,10 @@ mod tests {
     #[test]
     fn empty_list_requires_the_exact_non_editable_native_provider() {
         assert!(native_empty_list(empty_list()));
+        assert!(native_empty_list(EmptyListEvidence {
+            value_access: ValueAccess::ReadOnly,
+            ..empty_list()
+        }));
         for evidence in [
             EmptyListEvidence {
                 native_class: "Edit",
@@ -170,11 +177,7 @@ mod tests {
                 ..empty_list()
             }));
         }
-        for value_access in [
-            ValueAccess::ReadOnly,
-            ValueAccess::Writable,
-            ValueAccess::Unknown,
-        ] {
+        for value_access in [ValueAccess::Writable, ValueAccess::Unknown] {
             assert!(!native_empty_list(EmptyListEvidence {
                 value_access,
                 ..empty_list()

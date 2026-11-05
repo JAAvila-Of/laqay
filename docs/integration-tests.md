@@ -141,7 +141,8 @@ ImagePaste case remains failed and no additional paste was sent.
 The core now prepares a narrow alternative observation for that initial empty
 list. Only the specific global UIA_E_ELEMENTNOTAVAILABLE result enters it.
 Native and provider handles must agree on DirectUIHWND/UIItemsView, list type,
-enabled state, no value pattern and no focused subtree element; menus, mouse
+enabled state, an absent or confirmed read-only value pattern and no focused
+subtree element; menus, mouse
 capture and move/size mode are rejected. These observations and unavailable
 global focus must remain stable across the existing Shell handshake. The single
 focused visible filesystem view must independently report zero items before
@@ -166,6 +167,21 @@ failures. It includes native empty-list probe stages and Shell emptiness evidenc
 without reading accessible text or values. The original failed case remains
 failed; no supplementary observation counts as runtime acceptance. This
 diagnostic has not been executed in a guest yet.
+
+That supplementary trace has now run. It recorded six hook events, one Ctrl+V
+chord and one queued request with no queue rejection. The native list handle,
+class, type and enabled state matched; it had zero focused subtree elements and
+no menu, capture or move/size state. The core declined before image capture
+because the list advertised a value pattern, which the first adjustment labeled
+Unknown without querying whether it was read-only. Both application instances
+exited with code 0, trace capture drained without truncation, and the original
+installation and temporary logon were restored before shutdown. No PNG or
+passing product case was produced.
+
+The observation now queries the advertised pattern's IsReadOnly property,
+without reading its value. Only confirmed ReadOnly or Absent qualifies;
+Writable, Unknown and failed queries still decline, and all other native-list
+and Shell requirements remain. The new runtime result remains pending.
 
 ## Current automated coverage
 

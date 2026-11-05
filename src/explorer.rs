@@ -141,7 +141,14 @@ fn inspect_empty_list(
             provider_class: element.CurrentClassName()?.to_string(),
             enabled: element.CurrentIsEnabled()?.as_bool(),
             value_access: if bool::try_from(&value)? {
-                ValueAccess::Unknown
+                match element
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .and_then(|pattern| pattern.CurrentIsReadOnly())
+                {
+                    Ok(read_only) if read_only.as_bool() => ValueAccess::ReadOnly,
+                    Ok(_) => ValueAccess::Writable,
+                    Err(_) => ValueAccess::Unknown,
+                }
             } else {
                 ValueAccess::Absent
             },
