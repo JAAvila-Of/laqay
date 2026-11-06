@@ -81,7 +81,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();TabExclusionEvidence=$null;LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;RdpTabTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -177,6 +177,46 @@ function Invoke-CoreTrial {
                 if(-not $diagnostic.Closed -or $diagnostic.ExitCode -ne 0 -or $diagnostic.Forced){$report.CleanupErrors+=@('The supplementary core trial did not close normally.')}
             }catch{$diagnostic.Error+='; Trial cleanup: '+$_.Exception.Message;$report.CleanupErrors+=@($_.Exception.Message)}
         }
+    }
+    return [pscustomobject]$diagnostic
+}
+function Get-RdpTabTrialTarget($state,[string]$runRoot){
+    if(-not $state.IncludeRdp -or $state.GuestProfile -cne 'Windows11EnterpriseEvaluation' -or $state.SessionProtocol -ne 2 -or $state.Passed -or -not $state.ApplicationClosed -or $state.ApplicationExitCode -ne 0 -or $state.ForcedTermination){return $null}
+    if($state.Error -cne 'The expected image was not published in the active guest folder.' -or $state.Cases.Count -ne 9 -or $state.Cases[8].Name -cne 'ActiveTabSelection' -or $state.Cases[8].Passed -or @($state.Cases[0..7] | Where-Object {-not $_.Passed}).Count){return $null}
+    if($state.TabNavigations.Count -ne 1 -or -not $state.TabNavigations[0].Passed -or $state.TabNavigations[0].SelectedTab -cne 'tab-b' -or $state.ImagePastes.Count -eq 0){return $null}
+    $last=$state.ImagePastes[-1];$navigation=$state.TabNavigations[0]
+    if($last.CaseIndex -ne 9 -or $last.ExpectedCount -ne 1 -or $last.Published -or $last.ObservedPngCount -ne 0 -or $last.Error -cne $state.Error -or [long]$navigation.Window -le 0){return $null}
+    $path=[IO.Path]::GetFullPath((Join-Path $runRoot 'data/tab-b'))
+    if([IO.Path]::GetFullPath($navigation.Path) -cne $path -or -not (Test-Path -LiteralPath $path -PathType Container)){return $null}
+    foreach($file in @(Get-ChildItem -LiteralPath $path -Force)){if($file){return $null}}
+    return [pscustomobject]@{Window=[long]$navigation.Window;Path=$path}
+}
+function Invoke-RdpTabTrial($target){
+    $diagnostic=[ordered]@{DiagnosticOnly=$true;Window=$target.Window;Path=$target.Path;Pid=$null;Before=$null;BeforeSemantic=$null;Input=$null;After=$null;AfterSemantic=$null;PasteAttempts=0;PngCount=0;Closed=$false;ExitCode=$null;Forced=$false;Log=$null;Error=$null}
+    $started=$false
+    try{
+        # Preserve the failed tab and focus: no navigation, reopening or focus repair.
+        $diagnostic.Before=[LaqayGuestDesktop]::FolderInputState([IntPtr]$target.Window)
+        $diagnostic.BeforeSemantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$target.Window)
+        Assert-True ($diagnostic.Before.Foreground -and $diagnostic.Before.FocusWithinWindow) 'The failed tab no longer owns foreground focus.'
+        Assert-True ([LaqayGuestDesktop]::SelectedTabName([IntPtr]$target.Window) -ceq 'tab-b') 'The failed tab selection changed before diagnosis.'
+        Assert-True ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -eq $ExpectedExecutableSha256) 'Tab trial executable changed.'
+        $diagnostic.Pid=[LaqayGuestDesktop]::StartRdpTabTrialApplication($executable,$target.Path);$started=$true
+        Wait-For {[LaqayGuestDesktop]::ApplicationReady()} 'The bounded tab trial did not initialize.'
+        [LaqayGuestDesktop]::ImageClipboard()
+        $diagnostic.Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$target.Window)
+        $diagnostic.PasteAttempts=1
+        [LaqayGuestDesktop]::Chord([IntPtr]$target.Window,[System.UInt16[]]@(17,86))
+        Wait-For {@(Get-ChildItem -LiteralPath $target.Path -Filter '*.png').Count -gt 0} 'The supplementary tab trial did not publish a PNG.'
+    }catch{$diagnostic.Error=$_.Exception.Message}finally{
+        $diagnostic.PngCount=@(Get-ChildItem -LiteralPath $target.Path -Filter '*.png' -ErrorAction SilentlyContinue).Count
+        try{$diagnostic.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$target.Window)}catch{}
+        try{$diagnostic.AfterSemantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$target.Window)}catch{}
+        if($started){try{
+            $diagnostic.Closed=[LaqayGuestDesktop]::CloseApplication();$diagnostic.ExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$diagnostic.Forced=[LaqayGuestDesktop]::WasApplicationForced
+            $diagnostic.Log=[LaqayGuestDesktop]::CoreTrialLog()
+            if(-not $diagnostic.Closed -or $diagnostic.ExitCode -ne 0 -or $diagnostic.Forced){$report.CleanupErrors+=@('The supplementary tab trial did not close normally.')}
+        }catch{$diagnostic.Error+='; Trial cleanup: '+$_.Exception.Message;$report.CleanupErrors+=@($_.Exception.Message)}}
     }
     return [pscustomobject]$diagnostic
 }
@@ -673,6 +713,10 @@ try{
     if($GuestProfile -ceq 'Windows10ProEsMx' -and -not $report.Passed -and $report.ApplicationClosed -and $report.ApplicationExitCode -eq 0 -and -not $report.ForcedTermination -and $report.Cases.Count -eq 1 -and $report.Cases[0].Name -ceq 'ImagePaste' -and $report.Error -ceq 'The expected image was not published in the active guest folder.'){
         $report.CoreTrial=Invoke-CoreTrial
     }
+    try{
+        $tabTrialTarget=Get-RdpTabTrialTarget $report $root
+        if($tabTrialTarget){$report.RdpTabTrial=Invoke-RdpTabTrial $tabTrialTarget}
+    }catch{$report.CleanupErrors+=@('Tab trial setup: '+$_.Exception.Message);$report.Passed=$false}
     if($preferencesTouched){
         try{
             $key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Laqay',$true)

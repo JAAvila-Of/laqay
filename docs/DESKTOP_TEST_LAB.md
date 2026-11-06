@@ -370,6 +370,22 @@ runtime with both guests off, then apply the same 11/7 GiB admission limits.
 This does not test client-to-server file transfer, disconnection/reconnection,
 clipboard policy restrictions, Windows 10, or arbitrary RDP client versions.
 
+### Supplementary diagnosis after an RDP tab failure
+
+If the first eight cases pass but the first paste into `tab-b` fails, the guest
+may run a separate bounded trial after the normal application has closed.
+It requires the owned Windows 11 Peer RDP session, the recorded selected tab,
+the exact empty `data/tab-b` directory, and the unchanged executable hash.
+The trial preserves the failed window and focus without navigation or focus
+repair, makes one supplementary paste attempt, and captures the existing
+engine's context diagnostics through bounded stdout/stderr readers. It records
+input and semantic focus before and after the attempt and closes its own app.
+
+`RdpTabTrial` is diagnostic evidence only. The original case, error, and failed
+suite remain unchanged even if the trial publishes a PNG. No remaining cases
+are reported as passed, and no input or clipboard access occurs on the host.
+The supplementary trial must be included in the agreed disposable-lab scope.
+
 ### Explicit consent for the owned guest RDP file
 
 Windows can require a first-use account acknowledgement and per-connection

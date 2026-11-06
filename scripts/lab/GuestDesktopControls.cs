@@ -887,6 +887,21 @@ public static partial class LaqayGuestDesktop {
             if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0) throw new ArgumentException("A core trial ancestor is a reparse point.");
         return StartApplicationCore(path,arguments,true);
     }
+    public static string RdpTabTrialArguments(string directory) {
+        string full=Path.GetFullPath(directory);
+        if(!Regex.IsMatch(full,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}\\data\\tab-b$",RegexOptions.IgnoreCase)) throw new ArgumentException("Unexpected RDP tab trial directory.");
+        return "--trial 20 \""+full+"\"";
+    }
+    public static int StartRdpTabTrialApplication(string path,string directory) {
+        Guard();RequireRole("Peer");
+        if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows11EnterpriseEvaluation" || SessionProtocol()!=2)
+            throw new InvalidOperationException("Tab trials require the owned Windows 11 RDP session.");
+        string arguments=RdpTabTrialArguments(directory);
+        if(!Directory.Exists(directory)) throw new ArgumentException("The owned tab trial directory is missing.");
+        for(string current=Path.GetFullPath(directory);!String.IsNullOrEmpty(current);current=Path.GetDirectoryName(current))
+            if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0) throw new ArgumentException("A tab trial ancestor is a reparse point.");
+        return StartApplicationCore(path,arguments,true);
+    }
     static void CaptureTrialLine(string channel,string line,ManualResetEvent completed) {
         if(line==null) {completed.Set();return;}
         lock(trialLogLock) {
