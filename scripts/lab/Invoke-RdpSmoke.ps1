@@ -166,7 +166,7 @@ try{
         }
         $allocated[$role]=$true
         $credentials[$role]=[PSCredential]::new(($name+'\LaqayLab'),$credentials[$role].Password)
-        foreach($file in @('GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs','GuestSessionQuery.cs','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestRdpClient.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $sessions[$role]}
+        foreach($file in @('SmokeGuestProfile.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs','GuestSessionQuery.cs','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestRdpClient.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $sessions[$role]}
         Invoke-Command -Session $sessions[$role] -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$role,([bool]$AllowGuestRdpFileConsent)) -ScriptBlock {
             param($labId,$runId,$sha,$runRoot,$taskName,$role,$allowConsent)
             $ErrorActionPreference='Stop'
