@@ -770,7 +770,7 @@ fn run_inner(
     let (sender, worker) = if options.input_only {
         (None, None)
     } else {
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel::<Request>(1);
         let gate = Arc::clone(&activity);
         let approved = options.approved;
         let diagnostics = options.diagnostics;
