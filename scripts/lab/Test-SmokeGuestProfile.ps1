@@ -80,6 +80,10 @@ for($index=0;$index -lt 8;$index++){
 $trialDirectory='C:\LaqayLab\Runs\'+('0'*32)+'\data\core-trial'
 Assert-Smoke ([LaqayGuestDesktop]::CoreTrialArguments($trialDirectory) -ceq ('--trial 20 "'+$trialDirectory+'"')) 'The fixed core trial arguments changed.'
 foreach($directory in @('relative','C:\Users\Fixture\core-trial',('C:\LaqayLab\Runs\'+('0'*32)+'\data\..\outside'),($trialDirectory+'" --unknown'))){Reject-Smoke {[LaqayGuestDesktop]::CoreTrialArguments($directory)}}
+$tabTrialDirectory='C:\LaqayLab\Runs\'+('0'*32)+'\data\tab-b'
+Assert-Smoke ([LaqayGuestDesktop]::RdpTabTrialArguments($tabTrialDirectory) -ceq ('--trial 20 "'+$tabTrialDirectory+'"')) 'The fixed tab trial arguments changed.'
+foreach($directory in @('relative',$trialDirectory,($tabTrialDirectory+'-sibling'),($tabTrialDirectory+'" --unknown'))){Reject-Smoke {[LaqayGuestDesktop]::RdpTabTrialArguments($directory)}}
+Reject-Smoke {[LaqayGuestDesktop]::StartRdpTabTrialApplication('invalid',$tabTrialDirectory)}
 $flags=[Reflection.BindingFlags]::NonPublic -bor [Reflection.BindingFlags]::Static
 $buffer=[LaqayGuestDesktop].GetField('trialLog',$flags);$truncated=[LaqayGuestDesktop].GetField('trialLogTruncated',$flags)
 $capture=[LaqayGuestDesktop].GetMethod('CaptureTrialLine',$flags)
