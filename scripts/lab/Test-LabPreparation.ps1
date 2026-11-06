@@ -5,6 +5,8 @@ $root = Join-Path $env:LOCALAPPDATA ('LaqayTestLab/' + $labId)
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('Laqay.Lab.Media.' + $labId)
 function Assert-True($value,[string]$message) { if (-not $value) { throw $message } }
 try {
+    & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-WaitChainPreparation.ps1')
+    if($LASTEXITCODE -ne 0){throw 'The isolated wait-chain compilation check failed.'}
     & (Join-Path $PSScriptRoot 'Test-LabGuestProfile.ps1')
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
