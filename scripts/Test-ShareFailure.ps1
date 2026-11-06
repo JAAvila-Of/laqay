@@ -104,9 +104,9 @@ try{
     $proof=[regex]::Matches($text,'LAQAY_SHARE_RESULT (\{[^\r\n]+\})')
     if($proof.Count -ne 1){throw 'Missing unique native share evidence.'}
     $native=$proof[0].Groups[1].Value | ConvertFrom-Json
-    if($native.writer_error -ne $failure.error -or $native.no_incomplete_png -ne $true -or $native.original_preserved -ne $true -or $native.new_image_recovered -ne $true -or $native.staging_after_reconnect -notin @(0,1)){throw 'The native result did not prove safe failure and fresh-image recovery.'}
+    if($native.writer_error -ne $failure.error -or $native.no_incomplete_png -ne $true -or $native.original_preserved -ne $true -or $native.new_image_recovered -ne $true -or $native.staging_after_reconnect -notin @(0,1) -or $native.staging_after_recovery -ne 0 -or $native.writer_cleanup_verified -ne $true){throw 'The native result did not prove writer-owned cleanup and fresh-image recovery.'}
     $residue=@(Get-ChildItem -LiteralPath $plan.Data -Force | Where-Object Name -ne 'owner.txt')
-    if($residue.Count -ne $native.staging_after_reconnect -or @($residue | Where-Object {$_.Name -cne $staged.staging -or $_.Length -ne $staged.payload_bytes}).Count){throw 'Unexpected post-recovery residue.'}
+    if($residue.Count -ne 0){throw 'The writer left post-recovery residue; controller cleanup cannot satisfy this check.'}
     $report.Native=$native;$report.NativePassed=$true
 }catch{$report.Error=$_.Exception.Message}finally{
     if($child){try{
@@ -136,8 +136,8 @@ try{
         if([IO.Path]::GetFullPath($plan.Scope) -cne $plan.Scope -or [IO.Path]::GetFileName($plan.Scope) -cne ('Laqay.Share.'+$plan.Token)){throw 'Unexpected share cleanup path.'}
         [IO.Directory]::Delete($plan.Scope);$report.ScopeRemoved=-not (Test-Path -LiteralPath $plan.Scope)
     }catch{$report.CleanupErrors+=@($_.Exception.Message)}}
-    $report.Passed=$report.NativePassed -and $report.NativeExit -eq 0 -and -not $report.Forced -and $report.Withdrawn -and $report.Restored -and $report.ShareRemoved -and $report.ScopeRemoved -and -not $report.Error -and -not $report.CleanupErrors.Count
+    $report.Passed=$report.NativePassed -and $report.NativeExit -eq 0 -and -not $report.Forced -and $report.Withdrawn -and $report.Restored -and $report.ShareRemoved -and $report.ScopeRemoved -and $report.ControllerRemovedStaging -eq 0 -and -not $report.Error -and -not $report.CleanupErrors.Count
     [IO.File]::WriteAllText((Join-Path $output 'share-failure-report.json'),($report | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
 }
 if(-not $report.Passed){throw ('Share withdrawal validation or cleanup failed: '+$report.Error+' '+($report.CleanupErrors -join '; '))}
-Write-Output 'Real SMB withdrawal and fresh-image recovery passed; share and fixture removed. Controller staging cleanup is recorded separately.'
+Write-Output 'Real SMB withdrawal, writer-owned staging cleanup and fresh-image recovery passed; no staging cleanup was performed by the controller.'

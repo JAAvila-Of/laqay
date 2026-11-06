@@ -187,11 +187,16 @@ fn share_withdrawal_before_publication_recovers() {
         recovery_png
     );
     assert_eq!(fs::read(&original).unwrap(), original_png);
+    assert!(
+        !root.join(&staging).exists(),
+        "The writer did not retire its own disconnected staging file"
+    );
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
     fs::remove_file(output).unwrap();
     fs::remove_file(original).unwrap();
-    assert_eq!(fs::read_dir(&root).unwrap().count(), 1 + residue.len());
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     println!(
-        "LAQAY_SHARE_RESULT {{\"writer_error\":{code},\"staging_after_reconnect\":{},\"no_incomplete_png\":true,\"original_preserved\":true,\"new_image_recovered\":true}}",
+        "LAQAY_SHARE_RESULT {{\"writer_error\":{code},\"staging_after_reconnect\":{},\"staging_after_recovery\":0,\"writer_cleanup_verified\":true,\"no_incomplete_png\":true,\"original_preserved\":true,\"new_image_recovered\":true}}",
         residue.len()
     );
 }

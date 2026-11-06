@@ -315,9 +315,12 @@ with a native network-path error and leave the original PNG unchanged without
 publishing an incomplete PNG. The controller recreates the same owned share;
 a fresh request must publish a different valid image after access returns.
 
-An unavailable destination can prevent best-effort staging deletion. The test
-records any staging left after reconnection, and controller removal is reported
-separately from core cleanup. It does not claim automatic deferred cleanup.
+An unavailable destination can prevent immediate staging deletion. The writer
+now retains bounded in-process identity records and retries only recorded files
+on a later paste to the same directory. The revised test records any staging
+left immediately after reconnection, then requires zero staging after the fresh
+paste. Both native assertions and the host controller require writer-owned
+cleanup, and controller removal of any staging makes the run fail.
 The native process has bounded acknowledgements and owned-process teardown;
 cleanup must remove the share and fixture.
 
@@ -327,8 +330,21 @@ a new image was published after restoration. One complete staging `.tmp`
 remained after reconnection and was removed by the controller. Share and fixture
 removal passed without forced termination. This does not establish automatic
 core cleanup after disconnection or complete failed-write cleanup acceptance.
-This tests share withdrawal,
-not packet loss, a physical network outage, Explorer input or Windows 10.
+The revised hosted run on 11a924c passed with one complete staging file present
+after reconnection and zero after the recovery paste. Controller staging removal
+was zero. The original PNG survived and a different valid recovery image was
+published. The native process exited normally and the owned share and fixture
+were removed. All 63 ordinary native tests passed in CI, and the separate real
+disk-full and SMB steps passed as well.
+
+This tests share withdrawal, not packet loss, a physical network outage,
+Explorer input or Windows 10. It does not claim cleanup after process exit or
+without a later paste in that directory.
+
+Writer unit cases also cover an encoder unwind and a reader that denies deletion
+while encoding fails. Attribute-only snapshot capture retains verified ownership
+without requesting DELETE access prematurely; cleanup still requires DELETE on
+the verified handle after the reader releases it.
 
 ### Isolated storage capacity regression
 

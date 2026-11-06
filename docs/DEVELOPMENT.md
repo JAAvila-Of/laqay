@@ -126,6 +126,26 @@ writers, use increasing suffixes. Encoding failure removes the staging file
 when possible; a disconnected or changed destination can leave a `.tmp` file.
 The shared paste engine connects native PNG encoding to this module.
 
+Failed staging cleanup retains up to 32 in-memory ownership records in the
+current process. A subsequent paste to the same supplied directory retries at
+most four records. The writer records volume/file identity and creation time
+from the original handle, then final size and write time after closing encoding.
+Final metadata capture requests only attribute access; a reader denying deletion
+does not prevent retaining the ownership record for a later cleanup attempt.
+Cleanup opens only a recorded path, refuses reparse points, compares that
+evidence and marks the verified handle for deletion while denying write/delete
+sharing. Replacements, observable size/write-time changes and untracked files
+are preserved. There is no directory scan or background network polling.
+
+The record is dropped if the file is gone or its observed identity has changed.
+Other I/O failures remain eligible for a later paste, subject to the queue cap.
+Identity/snapshot failures, process exit and eviction can still leave a `.tmp`;
+there is no persistent scavenger or guarantee of recovery after a restart.
+Native I/O remains subject to filesystem/network timeouts.
+
+The handle checks use [volume and file identifiers](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)
+and [file disposition with DELETE access](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle).
+
 ## Bounded Ctrl+V experiment
 
 Build with `cargo build --locked --release --examples`. After agreeing on a
