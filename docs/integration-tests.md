@@ -341,6 +341,11 @@ This tests share withdrawal, not packet loss, a physical network outage,
 Explorer input or Windows 10. It does not claim cleanup after process exit or
 without a later paste in that directory.
 
+Writer unit cases also cover an encoder unwind and a reader that denies deletion
+while encoding fails. Attribute-only snapshot capture retains verified ownership
+without requesting DELETE access prematurely; cleanup still requires DELETE on
+the verified handle after the reader releases it.
+
 ### Isolated storage capacity regression
 
 The explicit hosted-Windows CI storage step creates a unique 64 MiB scratch

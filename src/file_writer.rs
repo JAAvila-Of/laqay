@@ -95,16 +95,16 @@ fn staging_snapshot(file: &File) -> io::Result<StagingSnapshot> {
     })
 }
 
-fn open_for_cleanup(path: &Path) -> io::Result<File> {
+fn open_staging(path: &Path, access: u32) -> io::Result<File> {
     OpenOptions::new()
-        .access_mode(DELETE.0 | FILE_READ_ATTRIBUTES.0)
+        .access_mode(access | FILE_READ_ATTRIBUTES.0)
         .share_mode(FILE_SHARE_READ.0)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(path)
 }
 
 fn cleanup_staging(staging: &OwnedStaging) -> io::Result<()> {
-    let file = match open_for_cleanup(&staging.path) {
+    let file = match open_staging(&staging.path, DELETE.0) {
         Ok(file) => file,
         Err(error) if error.raw_os_error() == Some(2) => return Ok(()),
         Err(error) => return Err(error),
@@ -259,7 +259,7 @@ impl PendingFile {
         // Capture final size/time after the writer has closed. If identity is
         // unavailable or changed, there is no authority for deferred deletion.
         if let (Some(path), Some(identity)) = (self.path.as_deref(), self.identity) {
-            self.snapshot = open_for_cleanup(path)
+            self.snapshot = open_staging(path, 0)
                 .and_then(|file| staging_snapshot(&file))
                 .ok()
                 .filter(|snapshot| snapshot.identity == identity);
@@ -424,6 +424,7 @@ pub fn create_screenshot_checked(
 mod tests {
     use super::*;
     use std::io::Write;
+    use windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -496,6 +497,48 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn encoder_unwind_removes_the_owned_staging_file() {
+        let directory = TestDirectory::new();
+        let panic = std::panic::catch_unwind(|| {
+            let _ = create_screenshot(&directory.0, time(), |file| {
+                file.write_all(b"partial before unwind")?;
+                panic!("Synthetic encoder panic");
+            });
+        });
+        assert!(panic.is_err());
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_encoding_failure_can_record_identity_while_a_reader_denies_delete() {
+        let directory = TestDirectory::new();
+        let mut held = None;
+        let mut path = None;
+        let result = create_screenshot(&directory.0, time(), |file| {
+            file.write_all(b"failed encoded data")?;
+            let entry = fs::read_dir(&directory.0)?.next().unwrap()?;
+            path = Some(entry.path());
+            held = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+                    .open(entry.path())?,
+            );
+            Err(io::Error::other("Synthetic encoding failure"))
+        });
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Synthetic encoding failure"
+        );
+        let staging = path.unwrap();
+        assert_eq!(fs::read(&staging).unwrap(), b"failed encoded data");
+        drop(held);
+        create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
+        assert!(!staging.exists());
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
     fn hold_failed_staging(directory: &Path) -> (PathBuf, File) {

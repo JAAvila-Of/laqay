@@ -130,6 +130,8 @@ Failed staging cleanup retains up to 32 in-memory ownership records in the
 current process. A subsequent paste to the same supplied directory retries at
 most four records. The writer records volume/file identity and creation time
 from the original handle, then final size and write time after closing encoding.
+Final metadata capture requests only attribute access; a reader denying deletion
+does not prevent retaining the ownership record for a later cleanup attempt.
 Cleanup opens only a recorded path, refuses reparse points, compares that
 evidence and marks the verified handle for deletion while denying write/delete
 sharing. Replacements, observable size/write-time changes and untracked files
