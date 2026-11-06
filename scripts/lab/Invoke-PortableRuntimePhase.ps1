@@ -2,37 +2,39 @@
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
-    [Parameter(Mandatory=$true)][ValidateSet('Boot','Old','New','Enable','Verify','Absent','Removed','Adverse')][string]$Phase,
+    [Parameter(Mandatory=$true)][ValidateSet('Boot','Old','New','Enable','Verify','Absent','Removed','Adverse','Basic')][string]$Phase,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [switch]$IncludeRealApplications,
     [switch]$IncludeWindowsTerminal
 )
 $ErrorActionPreference='Stop'
+if($GuestProfile -ceq 'Windows10ProEsMx' -and ($Phase -notin @('Boot','Basic') -or $IncludeRealApplications -or $IncludeWindowsTerminal)){throw 'The Pro runtime profile supports only Boot and Basic without extensions.'}
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 if($IncludeRealApplications -and $Phase -ne 'Adverse'){throw 'Real applications require the explicit adverse phase.'}
 if(-not $env:RUST_WORK_JOB){throw 'A RustWork runtime lease is required before any guest boot or application suite.'}
 $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
 $suite=Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1'
-$report=[ordered]@{LabId=$LabId;CycleId=$CycleId;Phase=$Phase;IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;Passed=$false;BootPerformed=$false;Suites=@();Error=$null}
+$report=[ordered]@{GuestProfile=$GuestProfile;LabId=$LabId;CycleId=$CycleId;Phase=$Phase;IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;Passed=$false;BootPerformed=$false;Suites=@();Error=$null}
 $reportPath=Join-Path $OutputDirectory 'phase-report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing a reused runtime phase.'}
 function Run-Suite([string]$name,[hashtable]$extra){
     $runId=[guid]::NewGuid().ToString('N');$destination=Join-Path $OutputDirectory $name
-    & $suite -LabId $LabId -RunId $runId -CycleId $CycleId -ExpectedExecutableSha256 $ExpectedExecutableSha256 -OutputDirectory $destination @extra | Out-Null
+    & $suite -GuestProfile $GuestProfile -LabId $LabId -RunId $runId -CycleId $CycleId -ExpectedExecutableSha256 $ExpectedExecutableSha256 -OutputDirectory $destination @extra | Out-Null
     $result=Get-Content -LiteralPath (Join-Path $destination 'host-report.json') -Raw | ConvertFrom-Json
     $report.Suites+=@($result)
     if(-not $result.Passed -or -not $result.TaskRemoved -or $result.TaskStopped -or $result.GuestReport.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $result.GuestReport.ApplicationExitCode -ne 0){throw ('Published-package suite failed: '+$name)}
 }
 try{
-    $status=& $control -Action Status -LabId $LabId | ConvertFrom-Json
+    $status=& $control -Action Status -LabId $LabId -GuestProfile $GuestProfile | ConvertFrom-Json
     if($status.State -eq 'Off'){
-        & $control -Action Start -LabId $LabId | Out-Null
+        & $control -Action Start -LabId $LabId -GuestProfile $GuestProfile | Out-Null
         $report.BootPerformed=$true
     }elseif($status.State -ne 'Running'){throw 'The owned guest must be off or running.'}
     $limit=[DateTime]::UtcNow.AddMinutes(5)
     do{
-        $status=& $control -Action Status -LabId $LabId | ConvertFrom-Json
+        $status=& $control -Action Status -LabId $LabId -GuestProfile $GuestProfile | ConvertFrom-Json
         if($status.Guest -and $status.Guest.Ready){break};Start-Sleep -Seconds 2
     }while([DateTime]::UtcNow -lt $limit)
     if(-not $status.Guest -or -not $status.Guest.Ready){throw 'The owned guest did not become ready.'}
@@ -56,6 +58,7 @@ try{
             $remaining=Invoke-Command -VMId ([guid]$entry.Id) -Credential $credential -ScriptBlock {@(Get-Process laqay -ErrorAction SilentlyContinue).Count}
             if($remaining -ne 0){throw 'A guest application remained after the boot-only phase.'}
         }
+        Basic {Run-Suite 'basic' @{}}
         Old {Run-Suite 'explorer' @{};Run-Suite 'portable' @{PortablePhase='Old'}}
         New {Run-Suite 'portable' @{PortablePhase='New'};Run-Suite 'explorer' @{}}
         Enable {Run-Suite 'startup' @{StartupPhase='Enable'}}
@@ -68,7 +71,7 @@ try{
 }catch{
     $report.Error=$_.Exception.Message
     # Do not release the Rust runtime lease with an unaccounted guest app alive.
-    try{& $control -Action Stop -LabId $LabId | Out-Null}catch{$report.Error+='; Guest shutdown failed: '+$_.Exception.Message}
+    try{& $control -Action Stop -LabId $LabId -GuestProfile $GuestProfile | Out-Null}catch{$report.Error+='; Guest shutdown failed: '+$_.Exception.Message}
 }finally{
     $report | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $reportPath -Encoding UTF8
 }

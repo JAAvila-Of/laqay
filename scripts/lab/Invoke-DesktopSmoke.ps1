@@ -4,6 +4,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
     [string]$OutputDirectory,
+    [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [ValidateSet('Explorer','Enable','Verify','Absent','Cleanup')][string]$StartupPhase='Explorer',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$CycleId,
     [switch]$StartGuestForStartup,
@@ -16,9 +17,11 @@ param(
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'SmokeGuestProfile.ps1')
+Assert-SmokeProfileModes $GuestProfile ([bool]($IncludeUnc -or $IncludeLifecycle -or $IncludeAdverse -or $IncludeRealApplications -or $IncludeWindowsTerminal -or $PortablePhase -or $StartGuestForStartup -or $StartupPhase -ne 'Explorer'))
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 $ProgressPreference='SilentlyContinue'
-if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
+if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly -GuestProfile $GuestProfile;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
 if($IncludeAdverse -and ($IncludeUnc -or $IncludeLifecycle -or $PortablePhase -or $StartupPhase -ne 'Explorer')){throw 'Adverse cases require a separate console Explorer suite.'}
 if($IncludeRealApplications -and -not $IncludeAdverse){throw 'Real applications require an explicit adverse extension.'}
 if($PortablePhase -and (-not $CycleId -or $StartupPhase -ne 'Explorer' -or $IncludeUnc -or $IncludeLifecycle -or $StartGuestForStartup)){throw 'Portable phases require their own cycle and running console guest.'}
@@ -33,6 +36,8 @@ if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Securi
 $root=[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA ('LaqayTestLab/'+$LabId)))
 $manifest=Get-Content -LiteralPath (Join-Path $root 'lab.json') -Raw | ConvertFrom-Json
 if($manifest.Kind -ne 'LaqayDesktopTestLab' -or $manifest.LabId -ne $LabId -or $manifest.Root -ne $root){throw 'Invalid lab ownership manifest.'}
+$declaredProfile=if($manifest.GuestProfile){$manifest.GuestProfile}else{'Windows11EnterpriseEvaluation'}
+if($declaredProfile -cne $GuestProfile){throw 'The requested suite profile differs from the owned lab manifest.'}
 $entry=@($manifest.VMs | Where-Object Role -eq Primary)
 if($entry.Count -ne 1){throw 'Exactly one owned primary guest is required.'}
 $entry=$entry[0]
@@ -54,7 +59,7 @@ $peerFixtureReserved=$false
 $smbVerified=$false
 $pendingVerified=$false
 $edgeScopeAttempted=$false
-$summary=[ordered]@{LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;EdgePoliciesPrepared=(-not $IncludeRealApplications);EdgePoliciesRestored=(-not $IncludeRealApplications);EdgePolicyPreparation=$null;EdgePolicyRestoration=$null;
+$summary=[ordered]@{GuestProfile=$GuestProfile;LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;EdgePoliciesPrepared=(-not $IncludeRealApplications);EdgePoliciesRestored=(-not $IncludeRealApplications);EdgePolicyPreparation=$null;EdgePolicyRestoration=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output=[IO.Path]::GetFullPath($OutputDirectory)
@@ -100,11 +105,12 @@ try{
         if(-not $status.Guest -or -not $status.Guest.Ready){throw 'The startup guest did not become ready within five minutes.'}
     }
     $session=New-PSSession -VMId $vm.Id -Credential $credential
-    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$StartupPhase -ScriptBlock {
-        param($labId,$runId,$runRoot,$startupPhase)
+    Invoke-Command -Session $session -ArgumentList $LabId,$RunId,$guestRoot,$StartupPhase,$GuestProfile -ScriptBlock {
+        param($labId,$runId,$runRoot,$startupPhase,$guestProfile)
         $ErrorActionPreference='Stop'
         $ready=Get-Content -LiteralPath 'C:/LaqayLab/ready.json' -Raw | ConvertFrom-Json
         if($ready.LabId -ne $labId -or $ready.Role -ne 'Primary' -or -not $ready.Ready){throw 'Guest readiness/identity mismatch.'}
+        if($guestProfile -ceq 'Windows10ProEsMx' -and ($ready.GuestProfile -cne $guestProfile -or $ready.Build -ne '19045' -or $ready.Edition -cne 'Professional' -or $ready.Language -ine 'es-MX')){throw 'The Pro ready marker differs from the selected suite profile.'}
         if($runRoot -ne ('C:\LaqayLab\Runs\'+$runId) -or (Test-Path -LiteralPath $runRoot)){throw 'Unexpected or existing guest run directory.'}
         New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
         $acl=Get-Acl -LiteralPath $runRoot
@@ -118,7 +124,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestTerminalReceiver.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('SmokeGuestProfile.ps1','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestTerminalReceiver.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -128,8 +134,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications),([bool]$IncludeWindowsTerminal)) -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications,$includeWindowsTerminal)
+    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications),([bool]$IncludeWindowsTerminal),$GuestProfile) -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications,$includeWindowsTerminal,$guestProfile='Windows11EnterpriseEvaluation')
         $ErrorActionPreference='Stop'
         if($includeUnc -isnot [bool] -or $includeLifecycle -isnot [bool]){throw 'Guest launch options must be Boolean values.'}
         if($includeAdverse -isnot [bool]){throw 'The adverse option must be Boolean.'}
@@ -140,7 +146,7 @@ $ErrorActionPreference='Stop'
 exit $LASTEXITCODE
 '@
         $launcher=$launcher.Replace('@@ROOT@@',$runRoot).Replace('@@LAB@@',$labId).Replace('@@RUN@@',$runId).Replace('@@SHA@@',$sha)
-        $driver='Invoke-GuestDesktopSmoke.ps1';$extra=''
+        $driver='Invoke-GuestDesktopSmoke.ps1';$extra=if($guestProfile -ceq 'Windows10ProEsMx'){"-GuestProfile 'Windows10ProEsMx'"}else{''}
         if($startupPhase -ne 'Explorer'){$driver='Invoke-GuestStartup.ps1';$extra="-CycleId '$cycleId' -Phase '$startupPhase'"}
         if($includeUnc){$extra='-IncludeUnc'}
         if($includeLifecycle){$extra='-IncludeLifecycle'}
@@ -255,7 +261,9 @@ exit $LASTEXITCODE
         if($StartupPhase -in @('Absent','Cleanup') -and -not $guest.SettingsRestored){throw 'Startup settings were not restored.'}
         if($StartupPhase -eq 'Absent' -and $guest.ObservationSeconds -lt 180){throw 'The disabled observation window was incomplete.'}
     }else{
-    $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery')
+    Assert-SmokeProfileReport $GuestProfile $guest
+    if($GuestProfile -ceq 'Windows10ProEsMx' -and ($guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ine $ExpectedExecutableSha256)){throw 'The Pro application exit or executable hash did not match.'}
+    $required=@(Get-BasicSmokeCases $GuestProfile)
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
     if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage')}

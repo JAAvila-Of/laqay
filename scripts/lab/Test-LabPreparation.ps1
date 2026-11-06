@@ -18,6 +18,8 @@ try {
         Assert-True $rejected 'An invalid administrative policy scope reached guest metadata or registry operations.'
     }
     & (Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1') -PrepareOnly
+    & (Join-Path $PSScriptRoot 'Test-SmokeGuestProfile.ps1')
+    & (Join-Path $PSScriptRoot 'Test-EmptyFolderFocusDiagnostic.ps1')
     # Exercise the actual serial input expressions with a Shell-shaped object.
     # Every call must bind successfully and then fail at the unarmed guard.
     $serialAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Invoke-GuestAdverseCases.ps1'),[ref]$null,[ref]$null)

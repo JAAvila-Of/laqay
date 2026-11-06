@@ -68,9 +68,235 @@ original sources were independently checked.
 
 This establishes readiness of the existing repaired guest and controlled closure.
 It is not an unattended fresh-install result for the corrected initializer.
-Existing desktop, network, RDP and lifecycle suites still require Windows 11;
-Windows 10 product coverage needs a separate reviewed adaptation and real
-execution. Provisioning alone is not product acceptance.
+The opt-in basic console suite described below is prepared for Pro; network,
+RDP, lifecycle, adverse and real-application extensions still require Windows 11.
+Windows 10 product execution remains pending. Provisioning alone is not product
+acceptance.
+
+## Opt-in Pro basic console suite: acceptance pending
+
+`Invoke-DesktopSmoke.ps1 -GuestProfile Windows10ProEsMx` selects only the basic
+console Explorer suite on an owned Pro build 19045 es-MX primary guest. The
+manifest, ready marker and live system must agree. Native controls additionally
+require Hyper-V hardware, the limited interactive token, unlocked input desktop,
+STA and a bounded armed interval. Other profiles and unsupported Pro extensions
+are refused before runtime/guest changes. Windows 11 remains the default.
+
+Pro requires the same twelve applicable basic cases: PNG content, preservation
+of an existing image, native multiple-file precedence, address/search/rename
+text, disabled/re-enabled behavior, Unicode paths, unchanged clipboard, active
+window destination and denied-write recovery. Native Explorer tabs are not a
+Windows 10 feature: ActiveTabSelection is separately recorded as NotApplicable,
+with zero unclassified file-tab candidates and an explicit reason. Ribbon tab
+items must be separately identified through their owned native Ribbon ancestor
+and fully accounted for. The exclusion is not counted as a pass.
+Windows 11 retains all thirteen cases, including ActiveTabSelection; its extended
+suites retain their existing cases. The controller rejects missing, extra or
+failed cases, mismatched platform evidence, or an incorrect non-applicable record.
+
+The runtime phase entry point accepts the explicit Pro profile only for Boot and
+Basic. Its existing runtime lease requirement remains in place. Normal developer
+commands and the default Windows 11 profile do not change. Preparation tests
+compile the native helper, exercise the actual Unicode locale ABI, reject wrong
+system/marker metadata and unsupported options, and check case accounting without
+arming desktop input. No Pro product run has been accepted yet.
+
+The first isolated run on 2026-11-05 UTC failed its initial ImagePaste case:
+the active physical folder remained without a PNG. The synthetic 2x2 clipboard
+image was present, native focus remained inside Explorer's DirectUIHWND, and
+the helper's STA semantic-focus query reported ElementNotAvailableException.
+This is a failed run, not evidence that the application or automation caused
+the failure. No later case or non-applicable tab observation was reached.
+
+The owned application exited normally with code 0, the scheduled task was
+removed, preferences were restored, and a third recovery boot restored temporary
+logon before normal shutdown. The controller Job ended empty and the other VMs
+remained off. Runtime acceptance remains open. Failure reporting now preserves
+the original case error before checking complete-suite evidence, and failed
+image pastes capture a bounded, read-only MTA semantic-focus comparison through
+both native COM and the managed UI Automation API. That
+diagnostic never substitutes for a successful paste or changes target policy.
+
+The diagnostic retry also failed its first paste. Both the native COM and
+managed MTA focused-element queries returned UIA_E_ELEMENTNOTAVAILABLE
+(0x80040201). Both could inspect the native UIItemsView list, which reported
+HasKeyboardFocus=false. The native focus handle matched that list. This narrows
+the failed observation; it does not establish whether populated folders behave
+the same way. Application exit, temporary logon restoration and shutdown again
+completed normally, with no passing product cases.
+
+The next Pro-only failure diagnostic compares the initially empty folder with
+one uniquely named temporary reference, selects that reference with Home, and
+removes it before observing the empty folder again. It sends no additional paste
+and does not alter the failed result. Nonempty or out-of-scope folders are
+refused before reference creation or input, and incomplete reference cleanup
+is reported as a cleanup error.
+
+The third run completed that diagnostic: the initially empty list had no global
+focused element; after reference creation and selection, both MTA APIs exposed
+an enabled, keyboard-focused UIItem/ListItem. The reference was removed, normal
+application exit and restoration completed, and all guests ended off. The
+immediate post-removal sample still exposed a ListItem, so it does not prove
+that an empty list remains accessible after Explorer refreshes. The original
+ImagePaste case remains failed and no additional paste was sent.
+
+The core now prepares a narrow alternative observation for that initial empty
+list. Only the specific global UIA_E_ELEMENTNOTAVAILABLE result enters it.
+Native and provider handles must agree on DirectUIHWND/UIItemsView, list type,
+enabled state, an absent or confirmed read-only value pattern and no focused
+subtree element; menus, mouse
+capture and move/size mode are rejected. These observations and unavailable
+global focus must remain stable across the existing Shell handshake. The single
+focused visible filesystem view must independently report zero items before
+and after its path is resolved. Missing or ambiguous evidence declines. The
+normal semantic-focus route remains intact. Native policy and snapshot tests
+cover rejected editor/value/focus/view conditions, but the corrected executable
+has not yet passed a guest runtime suite.
+
+The first candidate containing that alternative observation also failed its
+initial ImagePaste. Its exact executable hash was verified in the guest, and
+the original installation inventory, preferences and temporary logon were
+restored before shutdown. There were no passing cases. The added observation
+is therefore insufficient to establish Windows 10 compatibility.
+
+A supplementary diagnostic is now prepared for that specific first-case Pro
+failure. After the normal application closes cleanly, the helper uses the
+existing `--trial` mode for twenty seconds in a new owned empty folder. It
+captures stdout/stderr up to 65,536 characters, records the trial input and PNG
+count, and accounts its separate exit before restoring the fixture. That trace
+distinguishes missing input, declined context and image capture/publication
+failures. It includes native empty-list probe stages and Shell emptiness evidence
+without reading accessible text or values. The original failed case remains
+failed; no supplementary observation counts as runtime acceptance. This
+diagnostic has not been executed in a guest yet.
+
+That supplementary trace has now run. It recorded six hook events, one Ctrl+V
+chord and one queued request with no queue rejection. The native list handle,
+class, type and enabled state matched; it had zero focused subtree elements and
+no menu, capture or move/size state. The core declined before image capture
+because the list advertised a value pattern, which the first adjustment labeled
+Unknown without querying whether it was read-only. Both application instances
+exited with code 0, trace capture drained without truncation, and the original
+installation and temporary logon were restored before shutdown. No PNG or
+passing product case was produced.
+
+The observation now queries the advertised pattern's IsReadOnly property,
+without reading its value. Only confirmed ReadOnly or Absent qualifies;
+Writable, Unknown and failed queries still decline, and all other native-list
+and Shell requirements remain. Complete runtime acceptance remains pending.
+
+The next Pro candidate passed ImagePaste, CollisionPreservation,
+NativeFilePaste and AddressBarText. Its PNG dimensions/pixels, existing-image
+preservation, native file hashes and text/image precedence were verified.
+SearchText then stopped because the helper's focused-element query reported
+another process; no control text was read after that rejection. The remaining
+cases and the tab exclusion were not reached. Original installation,
+preferences and temporary logon were restored and all guests ended off.
+
+The helper now retries transient editable-field focus and records structural
+scope evidence. Pro alone may read a cross-process field when it is an enabled,
+keyboard-focused Edit control in the same guest session, both native focus and
+the UIA ancestry reach the exact owned foreground Explorer window, and its
+value pattern is writable. Unproven or unrelated controls remain refused;
+this does not change product target policy or remove any test. Whether that
+proof is available for this search field remains unverified at runtime.
+
+That Pro retry passed eight cases, including SearchText, RenameText and both
+disabled/re-enabled cases. The search field's RichEditBox belonged to a
+different PID but had verified same-session, native-focus and UIA ancestry
+within the owned foreground Explorer, with an enabled focused Edit control.
+The run then stopped because the original tab exclusion counted all UIA
+TabItems rather than distinguishing Ribbon controls from file tabs. It did not
+skip that condition or reach the remaining cases. All restoration and shutdown
+checks completed normally.
+
+The exclusion now classifies a Ribbon item only if its ancestry reaches the
+exact native UIRibbonCommandBarDock child of the owned Explorer. It records
+each item's structural evidence and counts every other item as an unclassified
+file-tab candidate. The host requires complete accounting and refuses any
+candidate or missing evidence. This classification still awaits its guest run.
+
+The next isolated repetition passed the first four cases, then SearchText
+timed out without confirming the token. Its final structural field scope was
+valid, but the report did not distinguish a value-read failure from a missing
+paste. It did not reach the Ribbon classifier. Restoration, application exit
+and guest shutdown completed normally; the repetition is not accepted.
+
+Before sending the single native paste, the helper now waits for an enabled,
+focused, writable Edit field with verified native and UIA ownership in the
+guest session. It records the pre-paste scope, whether paste was sent, and
+subsequent read success, length, token match and errors without storing field
+content. Missing readiness fails before paste; a failed paste is not retried.
+These diagnostics do not establish the cause of the preceding failure or alter
+product behavior. Full Pro acceptance and Windows 11 regression remain pending.
+
+The readiness repetition again passed four cases and failed SearchText. Its
+pre-paste evidence identified an owned ModernSearchBox Edit in Explorer; after
+the single paste, focus belonged to the proven owned RichEditBox in another
+guest process. Value reads succeeded with length one and no expected token.
+This exposes an input-surface transition that generic Edit readiness did not
+distinguish; it does not by itself establish why the paste was lost. Cleanup
+restored the original application and logon and left every guest off.
+
+For Pro SearchText alone, readiness now additionally requires the observed
+RichEditBox class with all existing ownership, session, focus and writable-value
+checks. ModernSearchBox and unknown classes cannot authorize the paste. The
+report records this required class. No second paste is sent, and other profiles
+retain the generic readiness rule. This stricter precondition awaits runtime
+validation; the Ribbon classification and full suite remain unverified.
+
+The next Pro run passed all twelve applicable cases. SearchText proved the
+owned RichEditBox before its single paste and confirmed the expected token.
+The tab exclusion also accounted for all three UIA tab items through the owned
+native Ribbon dock, with zero unclassified file-tab candidates. A leftover
+fixed thirteen-case assertion then rejected the run. The original report stays
+failed; restoration, application exit and shutdown completed normally.
+
+The completion guard now validates the exact ordered case names and successful
+results from the explicit profile contract: twelve for Pro, thirteen for
+Windows 11. Missing, duplicate, reordered, extra and failed cases are rejected.
+This repairs the inconsistent guest guard without removing coverage or changing
+product code.
+
+The subsequent end-to-end Pro cycle passed all twelve cases and its explicit
+file-tab exclusion. Guest, host, phase and controller reports passed on source
+7191bf9. All three observed tab items had the owned native Ribbon ancestry,
+with zero unclassified candidates. The cycle used two normal boots, restored
+the original application, preferences, fixture permissions and temporary logon,
+removed its task and shut down every guest. Application exit was zero without
+forced termination, and the controller Job had no remaining processes.
+
+This accepts the basic console suite on Windows 10 Pro 19045 es-MX only. It does
+not establish other editions, Windows 10 RDP or a fresh unattended installation.
+Regression with the current executable on Windows 11 remains required before
+integration; previous published-binary results do not cover this product change.
+
+The explicit Basic runtime phase now accepts the Windows 11 profile as well as
+Pro, using each profile's complete case contract. Pro still rejects every
+extended phase. Inert checks exercise the actual phase entry: both basic
+profiles must stop at the missing-lease guard before any guest operation or
+output creation, and unsupported Pro phases must stop at their profile guard.
+This enables preparation of the current-candidate Windows 11 regression; its
+preparation does not by itself establish guest acceptance.
+
+The Windows 11 regression then passed all thirteen basic cases on source
+742ce8d, including ActiveTabSelection, with no non-applicable cases. Guest,
+host, phase, controller and bootstrap reports passed. Two normal boots
+completed; the original application, preferences, fixture permissions and logon
+were restored, its task was removed and all guests ended off. Application exit
+was zero without forced termination, and the operation and every phase Job
+ended with zero active processes. The first private-CLI attempt remains failed
+and did not boot the guest or execute cases.
+
+| Explicit console profile | Tested source | Basic cases | Result |
+| --- | --- | --- | --- |
+| Windows 10 Pro 19045 es-MX | 7191bf9 | 12; native file tabs explicitly not applicable | Passed |
+| Windows 11 Enterprise Evaluation 26300 en-US | 742ce8d | 13; native file-tab case included | Passed |
+
+The Rust source and Cargo manifests did not change between these two tested
+revisions. This closes the basic Windows 11 regression for the current core;
+it does not rerun or extend earlier adverse, real-application, UNC or RDP
+acceptance to other binaries or Windows editions.
 
 ## Current automated coverage
 

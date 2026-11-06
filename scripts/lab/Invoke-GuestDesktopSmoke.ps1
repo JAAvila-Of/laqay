@@ -3,6 +3,7 @@ param(
     [ValidatePattern('^[a-f0-9]{32}$')][string]$LabId,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$RunId,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedExecutableSha256,
+    [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [switch]$IncludeUnc,
     [switch]$IncludeRdp,
     [switch]$IncludeLifecycle,
@@ -12,6 +13,8 @@ param(
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'SmokeGuestProfile.ps1')
+Assert-SmokeProfileModes $GuestProfile ([bool]($IncludeUnc -or $IncludeRdp -or $IncludeLifecycle -or $IncludeAdverse -or $IncludeRealApplications -or $IncludeWindowsTerminal))
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
 $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,
@@ -67,7 +70,7 @@ if($IncludeAdverse -and ($IncludeLifecycle -or $IncludeRdp -or $IncludeUnc)){thr
 if($IncludeRealApplications -and -not $IncludeAdverse){throw 'Real applications require the explicit adverse extension.'}
 $armLimit=[DateTime]::UtcNow.AddSeconds(30)
 while($true){
-    try{[LaqayGuestDesktop]::Arm($LabId);break}catch{
+    try{[LaqayGuestDesktop]::Arm($LabId,$GuestProfile);break}catch{
         if([DateTime]::UtcNow -ge $armLimit){throw}
         Start-Sleep -Milliseconds 500
     }
@@ -76,9 +79,9 @@ $root=[IO.Path]::GetFullPath((Join-Path 'C:/LaqayLab/Runs' $RunId))
 if($PSScriptRoot -ne $root){throw 'The smoke runner must execute from its exact guest run directory.'}
 $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
-$report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
+$report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();TabExclusionEvidence=$null;LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -151,8 +154,67 @@ function Open-Folder([string]$path){
     Wait-For {try{[LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND);$true}catch{$false}} 'Guest folder Items View did not become available.'
     return $window
 }
+function Invoke-CoreTrial {
+    $diagnostic=[ordered]@{DiagnosticOnly=$true;Pid=$null;Input=$null;PngCount=0;Closed=$false;ExitCode=$null;Forced=$false;Log=$null;Error=$null}
+    $started=$false;$path=$null
+    try{
+        $path=New-CaseFolder 'core-trial';$window=Open-Folder $path
+        Assert-True ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -eq $ExpectedExecutableSha256) 'Core trial executable changed.'
+        $diagnostic.Pid=[LaqayGuestDesktop]::StartTrialApplication($executable,$path);$started=$true
+        Wait-For {[LaqayGuestDesktop]::ApplicationReady()} 'The bounded core trial did not initialize.'
+        [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::ImageClipboard()
+        $diagnostic.Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+        Wait-For {@(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -gt 0} 'The supplementary core trial did not publish a PNG.'
+    }catch{$diagnostic.Error=$_.Exception.Message}finally{
+        if($path){$diagnostic.PngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -ErrorAction SilentlyContinue).Count}
+        if($started){
+            try{
+                $diagnostic.Closed=[LaqayGuestDesktop]::CloseApplication();$diagnostic.ExitCode=[LaqayGuestDesktop]::ApplicationExitCode;$diagnostic.Forced=[LaqayGuestDesktop]::WasApplicationForced
+                $diagnostic.Log=[LaqayGuestDesktop]::CoreTrialLog()
+                if(-not $diagnostic.Closed -or $diagnostic.ExitCode -ne 0 -or $diagnostic.Forced){$report.CleanupErrors+=@('The supplementary core trial did not close normally.')}
+            }catch{$diagnostic.Error+='; Trial cleanup: '+$_.Exception.Message;$report.CleanupErrors+=@($_.Exception.Message)}
+        }
+    }
+    return [pscustomobject]$diagnostic
+}
+function Compare-EmptyFolderFocus($window,[string]$path){
+    $comparison=[ordered]@{Status='DiagnosticOnly';InitiallyEmpty=$false;WithReference=$null;SelectedReference=$null;AfterRemoval=$null;ReferenceRemoved=$true;Error=$null}
+    $reference=$null;$created=$false
+    try{
+        $base=[IO.Path]::GetFullPath((Join-Path $root 'data')).TrimEnd('\')+'\'
+        $directory=[IO.Path]::GetFullPath($path)
+        if(-not $directory.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)){throw 'Focus reference is outside the owned case directory.'}
+        if(@(Get-ChildItem -LiteralPath $directory -Force).Count){$comparison.Status='SkippedNonEmpty';return [pscustomobject]$comparison}
+        $comparison.InitiallyEmpty=$true
+        $reference=Join-Path $directory ('focus-reference-'+$RunId+'.txt')
+        $file=[IO.File]::Open($reference,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $created=$true;$comparison.ReferenceRemoved=$false
+        $file.Dispose()
+        Wait-For {$window.Document.Folder.Items().Count -eq 1} 'Explorer did not expose the temporary focus reference.'
+        [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+        $comparison.WithReference=[pscustomobject]@{Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+        # Home selects the single owned reference; no additional paste is sent.
+        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(36))
+        Wait-For {$selection=$window.Document.SelectedItems();$selection.Count -eq 1 -and $selection.Item(0).Path -ieq $reference} 'The owned focus reference was not selected.'
+        $comparison.SelectedReference=[pscustomobject]@{SelectionVerified=$true;Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+    }catch{$comparison.Error=$_.Exception.Message}finally{
+        if($created){
+            try{
+                Remove-Item -LiteralPath $reference
+                $comparison.ReferenceRemoved=-not (Test-Path -LiteralPath $reference)
+                [LaqayGuestDesktop]::FocusFolder([IntPtr]$window.HWND)
+                $comparison.AfterRemoval=[pscustomobject]@{Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND);Semantic=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}
+            }catch{$comparison.Error+='; Reference cleanup: '+$_.Exception.Message}
+            if(-not $comparison.ReferenceRemoved){$report.CleanupErrors+=@('The temporary focus reference was not removed.')}
+        }
+    }
+    return [pscustomobject]$comparison
+}
 function Paste-Image($window,[string]$path,[int]$count){
-    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null}
+    $entry=[pscustomobject]@{CaseIndex=($report.Cases.Count+1);ExpectedCount=$count;Started=[DateTime]::UtcNow.ToString('o');Finished=$null;BeforeActivation=$null;Before=$null;After=$null;ObservedPngCount=0;Published=$false;Error=$null;FailureClipboard=$null;FailureSemanticFocus=$null;FailureFocusComparison=$null}
     try{
         $entry.BeforeActivation=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
         [LaqayGuestDesktop]::Activate([IntPtr]$window.HWND)
@@ -166,7 +228,11 @@ function Paste-Image($window,[string]$path,[int]$count){
         $entry.Finished=[DateTime]::UtcNow.ToString('o')
         $entry.ObservedPngCount=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count
         try{$entry.After=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)}catch{if(-not $entry.Error){$entry.Error=$_.Exception.Message}}
-        if($entry.Error){try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}}
+        if($entry.Error){
+            try{$entry.FailureClipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()}catch{}
+            try{$entry.FailureSemanticFocus=[LaqayGuestDesktop]::FolderSemanticProbe([IntPtr]$window.HWND)}catch{}
+            if($GuestProfile -ceq 'Windows10ProEsMx'){$entry.FailureFocusComparison=Compare-EmptyFolderFocus $window $path}
+        }
         $report.ImagePastes+=@($entry);Save-Report
     }
 }
@@ -274,10 +340,27 @@ try{
             $window=Open-Folder $path
             $key=if($field -eq 'AddressBarText'){76}else{70}
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,$key))
-            Start-Sleep -Milliseconds 200
-            [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
-            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
-            Wait-For { [LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayEditableToken') } 'Native text paste did not reach the editable guest field.'
+            $requireProSearchEditor=$GuestProfile -ceq 'Windows10ProEsMx' -and $field -ceq 'SearchText'
+            $observation=[pscustomobject]@{Case=$field;RequiredInputClass=$(if($requireProSearchEditor){'RichEditBox'}else{$null});BeforePaste=$null;PasteSent=$false;Scope=$null;Error=$null;ReadSucceeded=$false;TextLength=$null;TokenMatched=$false;ReadError=$null}
+            $report.EditableFields+=@($observation);Save-Report
+            try{
+                Wait-For {try{[LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND,$requireProSearchEditor)}catch{$false}} 'The owned editable guest field did not become ready before paste.'
+                $observation.BeforePaste=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND);Save-Report
+                [LaqayGuestDesktop]::TextAndImageClipboard('LaqayEditableToken')
+                [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+                $observation.PasteSent=$true;Save-Report
+                Wait-For {
+                    try{
+                        $text=[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND)
+                        $observation.ReadSucceeded=$true;$observation.TextLength=$text.Length
+                        $observation.TokenMatched=$text.Contains('LaqayEditableToken');$observation.ReadError=$null
+                        $observation.TokenMatched
+                    }catch{$observation.ReadError=$_.Exception.Message;$false}
+                } 'Native text paste did not reach the editable guest field.'
+            }finally{
+                try{$observation.Scope=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND)}catch{$observation.Error=$_.Exception.Message}
+                Save-Report
+            }
             Start-Sleep -Milliseconds 500
             Assert-True (@(Get-ChildItem -LiteralPath $path -Filter '*.png').Count -eq 0) 'An editable field caused an image write.'
             [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(27))
@@ -315,6 +398,13 @@ try{
         Paste-Image $enabledWindow $disabled 1
         Check-Png (Get-ChildItem -LiteralPath $disabled -Filter '*.png')[0].FullName
     }
+    if($GuestProfile -ceq 'Windows10ProEsMx'){
+        $report.TabExclusionEvidence=[LaqayGuestDesktop]::ExplorerTabEvidence([IntPtr]$enabledWindow.HWND);Save-Report
+        $tabs=$report.TabExclusionEvidence.FileTabCandidates
+        Assert-True ($tabs -eq 0) 'The Pro Explorer exposes unclassified tab items outside its owned Ribbon; do not omit the file-tab case.'
+        $report.NotApplicableCases+=@([pscustomobject]@{Name='ActiveTabSelection';Status='NotApplicable';Reason='Windows 10 Explorer has no native file tabs; owned Ribbon tabs are accounted separately.';ObservedTabs=$tabs;RibbonTabsObserved=$report.TabExclusionEvidence.RibbonTabItems})
+        Save-Report
+    }else{
     Run-Case 'ActiveTabSelection' {
         $tabA=New-CaseFolder 'tab-a';$tabB=New-CaseFolder 'tab-b'
         $window=Open-Folder $tabA
@@ -339,6 +429,7 @@ try{
         Assert-True ((Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -eq $hash) 'The original tab image changed.'
         Assert-True (@(Get-ChildItem -LiteralPath $tabB -Filter '*.png').Count -eq 1 -and (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash -eq $bHash) 'Inactive tab received or lost output.'
         foreach($file in @(Get-ChildItem -LiteralPath $tabA,$tabB -Filter '*.png')){Check-Png $file.FullName}
+    }
     }
     Run-Case 'UnicodePathImagePaste' {
         $path=New-CaseFolder ('spaces '+[char]0x00F1+[char]0x6D4B+' image folder')
@@ -406,7 +497,7 @@ try{
         Check-Png (Get-ChildItem -LiteralPath $path -Filter '*.png')[0].FullName
         Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 1) 'Recovery left unexpected temporary files.'
     }
-    Assert-True ($report.Cases.Count -eq 13) 'Not all required smoke cases executed.'
+    Assert-BasicSmokeCases $GuestProfile $report.Cases
     if($IncludeAdverse){
         # Dot-source only this reviewed guest-local driver, sharing owned fixtures and cleanup.
         if($IncludeRealApplications){. (Join-Path $PSScriptRoot 'Invoke-GuestRealApplicationCases.ps1')}
@@ -578,6 +669,9 @@ try{
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+    }
+    if($GuestProfile -ceq 'Windows10ProEsMx' -and -not $report.Passed -and $report.ApplicationClosed -and $report.ApplicationExitCode -eq 0 -and -not $report.ForcedTermination -and $report.Cases.Count -eq 1 -and $report.Cases[0].Name -ceq 'ImagePaste' -and $report.Error -ceq 'The expected image was not published in the active guest folder.'){
+        $report.CoreTrial=Invoke-CoreTrial
     }
     if($preferencesTouched){
         try{

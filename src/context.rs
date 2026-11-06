@@ -45,6 +45,35 @@ pub(crate) enum ValueAccess {
     Unknown,
 }
 
+#[cfg(any(windows, test))]
+pub(crate) struct EmptyListEvidence<'a> {
+    pub native_class: &'a str,
+    pub provider_class: &'a str,
+    pub provider_matches_focus: bool,
+    pub role: FocusRole,
+    pub enabled: bool,
+    pub value_access: ValueAccess,
+    pub focused_descendant: bool,
+    pub menu_or_capture: bool,
+}
+
+/// Recognize only the exact non-editable native folder list. The caller must
+/// also prove a stable unavailable global focus and an empty filesystem view.
+#[cfg(any(windows, test))]
+pub(crate) fn native_empty_list(evidence: EmptyListEvidence<'_>) -> bool {
+    evidence.native_class == "DirectUIHWND"
+        && evidence.provider_class == "UIItemsView"
+        && evidence.provider_matches_focus
+        && evidence.role == FocusRole::List
+        && evidence.enabled
+        && matches!(
+            evidence.value_access,
+            ValueAccess::Absent | ValueAccess::ReadOnly
+        )
+        && !evidence.focused_descendant
+        && !evidence.menu_or_capture
+}
+
 /// Allow static text only along a bounded, non-editable path to the exact
 /// native folder-list element. A list elsewhere in the UI tree is insufficient.
 #[cfg(any(windows, test))]
@@ -88,6 +117,73 @@ pub fn select_focused_view(views: &[ViewEvidence], context: ContextEvidence) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_list() -> EmptyListEvidence<'static> {
+        EmptyListEvidence {
+            native_class: "DirectUIHWND",
+            provider_class: "UIItemsView",
+            provider_matches_focus: true,
+            role: FocusRole::List,
+            enabled: true,
+            value_access: ValueAccess::Absent,
+            focused_descendant: false,
+            menu_or_capture: false,
+        }
+    }
+
+    #[test]
+    fn empty_list_requires_the_exact_non_editable_native_provider() {
+        assert!(native_empty_list(empty_list()));
+        assert!(native_empty_list(EmptyListEvidence {
+            value_access: ValueAccess::ReadOnly,
+            ..empty_list()
+        }));
+        for evidence in [
+            EmptyListEvidence {
+                native_class: "Edit",
+                ..empty_list()
+            },
+            EmptyListEvidence {
+                provider_class: "SearchBox",
+                ..empty_list()
+            },
+            EmptyListEvidence {
+                provider_matches_focus: false,
+                ..empty_list()
+            },
+            EmptyListEvidence {
+                enabled: false,
+                ..empty_list()
+            },
+            EmptyListEvidence {
+                focused_descendant: true,
+                ..empty_list()
+            },
+            EmptyListEvidence {
+                menu_or_capture: true,
+                ..empty_list()
+            },
+        ] {
+            assert!(!native_empty_list(evidence));
+        }
+        for role in [
+            FocusRole::Text,
+            FocusRole::ListItem,
+            FocusRole::DataGrid,
+            FocusRole::Other,
+        ] {
+            assert!(!native_empty_list(EmptyListEvidence {
+                role,
+                ..empty_list()
+            }));
+        }
+        for value_access in [ValueAccess::Writable, ValueAccess::Unknown] {
+            assert!(!native_empty_list(EmptyListEvidence {
+                value_access,
+                ..empty_list()
+            }));
+        }
+    }
 
     fn node(role: FocusRole) -> FocusNode {
         FocusNode {

@@ -15,9 +15,14 @@ using System.Windows.Forms;
 
 public static partial class LaqayGuestDesktop {
     static bool armed;
+    static Dictionary<string,object> observedDesktopProfile;
     static DateTime deadline;
     static readonly HashSet<IntPtr> windows = new HashSet<IntPtr>();
     static Process application;
+    static readonly object trialLogLock=new object();
+    static StringBuilder trialLog;
+    static bool trialLogTruncated,trialLogDrained;
+    static ManualResetEvent trialOutputDone,trialErrorDone;
     static IntPtr job;
     static bool peerConnected;
     const string PeerShare=@"\\10.77.166.11\LaqayLab";
@@ -91,7 +96,29 @@ public static partial class LaqayGuestDesktop {
         try { return ObjectName(GetProcessWindowStation())=="WinSta0" && ObjectName(GetThreadDesktop(GetCurrentThreadId()))=="Default" && ObjectName(input)=="Default"; }
         finally { if(input!=IntPtr.Zero) CloseDesktop(input); }
     }
-    public static void Arm(string labId) {
+    public static void ValidateDesktopProfile(string profile,Dictionary<string,object> ready,string caption,string build,string edition,string language) {
+        int number;
+        if(profile=="Windows11EnterpriseEvaluation") {
+            if(!caption.Contains("Windows 11 Enterprise") || !Int32.TryParse(build,out number) || number<22000 ||
+                (ready.ContainsKey("GuestProfile") && Convert.ToString(ready["GuestProfile"])!=profile))
+                throw new InvalidOperationException("The declared Windows 11 desktop profile does not match the system.");
+        } else if(profile=="Windows10ProEsMx") {
+            if(caption!="Microsoft Windows 10 Pro" || build!="19045" || edition!="Professional" || !String.Equals(language,"es-MX",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The Pro desktop system does not match the requested profile.");
+            foreach(var field in new[] {"GuestProfile","Caption","Build","Edition","Language"})
+                if(!ready.ContainsKey(field)) throw new InvalidOperationException("The Pro ready profile is incomplete.");
+            if(Convert.ToString(ready["GuestProfile"])!=profile || Convert.ToString(ready["Caption"])!=caption ||
+                Convert.ToString(ready["Build"])!=build || Convert.ToString(ready["Edition"])!=edition ||
+                !String.Equals(Convert.ToString(ready["Language"]),language,StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The Pro marker differs from the live desktop system.");
+        } else throw new InvalidOperationException("Unsupported explicit desktop profile.");
+    }
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,ExactSpelling=true)] static extern int GetSystemDefaultLocaleName(StringBuilder name,int count);
+    public static Dictionary<string,object> GuestProfileEvidence() {
+        Guard(); return new Dictionary<string,object>(observedDesktopProfile);
+    }
+    public static void Arm(string labId) { Arm(labId,"Windows11EnterpriseEvaluation"); }
+    public static void Arm(string labId,string profile) {
         armed=false;
         if(!Regex.IsMatch(labId,"^[a-f0-9]{32}$")) throw new InvalidOperationException("Invalid lab identity.");
         var identity=new WindowsPrincipal(WindowsIdentity.GetCurrent());
@@ -102,17 +129,26 @@ public static partial class LaqayGuestDesktop {
         var ready=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(readyPath));
         if(!ready.ContainsKey("LabId") || (string)ready["LabId"]!=labId || !ready.ContainsKey("Ready") || !(bool)ready["Ready"])
             throw new InvalidOperationException("Guest marker identity mismatch.");
-        bool guest=false,os=false;
+        if(profile=="Windows10ProEsMx" && (!ready.ContainsKey("Role") || Convert.ToString(ready["Role"])!="Primary" || !ready.ContainsKey("ComputerName") || !String.Equals(Convert.ToString(ready["ComputerName"]),Environment.MachineName,StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("The Pro marker does not identify this primary guest computer.");
+        bool guest=false; string caption="",build="",edition="";
         using(var query=new ManagementObjectSearcher("SELECT Manufacturer,Model FROM Win32_ComputerSystem"))
         using(var results=query.Get()) foreach(ManagementObject item in results) {
             using(item) guest=(string)item["Manufacturer"]=="Microsoft Corporation" && (string)item["Model"]=="Virtual Machine";
         }
-        using(var query=new ManagementObjectSearcher("SELECT Caption FROM Win32_OperatingSystem"))
+        using(var query=new ManagementObjectSearcher("SELECT Caption,BuildNumber FROM Win32_OperatingSystem"))
         using(var results=query.Get()) foreach(ManagementObject item in results) {
-            using(item) os=((string)item["Caption"]).Contains("Windows 11 Enterprise");
+            using(item) {caption=(string)item["Caption"];build=(string)item["BuildNumber"];}
         }
-        if(!guest || !os || !InputDesktopAvailable() || Thread.CurrentThread.GetApartmentState()!=ApartmentState.STA)
-            throw new InvalidOperationException("An unlocked Windows 11 lab desktop in STA is required.");
+        using(var key=Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion")) {
+            if(key!=null) edition=Convert.ToString(key.GetValue("EditionID",""));
+        }
+        var locale=new StringBuilder(85);
+        if(GetSystemDefaultLocaleName(locale,locale.Capacity)==0) throw new InvalidOperationException("The live system locale is unavailable.");
+        ValidateDesktopProfile(profile,ready,caption,build,edition,locale.ToString());
+        if(!guest || !InputDesktopAvailable() || Thread.CurrentThread.GetApartmentState()!=ApartmentState.STA)
+            throw new InvalidOperationException("An unlocked owned lab desktop in STA is required.");
+        observedDesktopProfile=new Dictionary<string,object> {{"Profile",profile},{"Caption",caption},{"Build",build},{"Edition",edition},{"Language",locale.ToString()}};
         deadline=DateTime.UtcNow.AddMinutes(5); armed=true;
     }
     static void Guard() {
@@ -640,6 +676,46 @@ public static partial class LaqayGuestDesktop {
             HasBitmap=IsClipboardFormatAvailable(2),HasDib=IsClipboardFormatAvailable(8),
             HasDibV5=IsClipboardFormatAvailable(17),HasFileDrop=IsClipboardFormatAvailable(15),HasPng=IsClipboardFormatAvailable(RegisterClipboardFormatW("PNG"))};
     }
+    // A read-only MTA comparison for failed guest input. No COM element leaves
+    // the worker and this observation never substitutes for a passing paste.
+    public static object FolderSemanticProbe(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        uint pid;uint thread=GetWindowThreadProcessId(window,out pid);
+        var info=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
+        if(!GetGUIThreadInfo(thread,ref info)) throw new InvalidOperationException("Guest input state was unavailable for semantic diagnostics.");
+        IntPtr focus=info.focus;
+        object result=null;
+        var worker=new Thread(delegate() {
+            var values=new Dictionary<string,object>();
+            values["Apartment"]="MTA";values["Completed"]=true;
+            values["NativeCom"]=ProbeNativeFolderFocus(focus);
+            try {
+                var element=AutomationElement.FocusedElement;
+                if(element==null) throw new InvalidOperationException("UI Automation returned no focused element.");
+                var current=element.Current;
+                values["Class"]=current.ClassName;values["AutomationId"]=current.AutomationId;
+                values["ControlType"]=current.ControlType.ProgrammaticName;values["ProcessId"]=current.ProcessId;
+                values["NativeWindow"]=current.NativeWindowHandle;values["HasKeyboardFocus"]=current.HasKeyboardFocus;values["Enabled"]=current.IsEnabled;
+                var ancestors=new List<object>();
+                for(int depth=0;element!=null && depth<8;depth++) {
+                    current=element.Current;
+                    if(current.ProcessId!=(int)pid) break;
+                    ancestors.Add(new {Class=current.ClassName,AutomationId=current.AutomationId,ControlType=current.ControlType.ProgrammaticName,NativeWindow=current.NativeWindowHandle});
+                    element=TreeWalker.ControlViewWalker.GetParent(element);
+                }
+                values["Ancestors"]=ancestors.ToArray();
+            }catch(Exception error){values["FocusedError"]=error.GetType().Name;values["FocusedHResult"]=error.HResult;}
+            try {
+                var element=AutomationElement.FromHandle(focus);
+                var current=element.Current;
+                values["NativeControl"]=new {Class=current.ClassName,AutomationId=current.AutomationId,ControlType=current.ControlType.ProgrammaticName,HasKeyboardFocus=current.HasKeyboardFocus,Enabled=current.IsEnabled,ProcessId=current.ProcessId};
+            }catch(Exception error){values["NativeError"]=error.GetType().Name;values["NativeHResult"]=error.HResult;}
+            result=values;
+        });
+        worker.IsBackground=true;worker.SetApartmentState(ApartmentState.MTA);worker.Start();
+        if(!worker.Join(2000)) return new {Apartment="MTA",Completed=false,Error="Semantic diagnostic exceeded two seconds."};
+        return result;
+    }
     public static void FocusFolder(IntPtr window) {
         Guard(); ExplorerWindow(window);
         if(GetForegroundWindow()!=window) throw new InvalidOperationException("Guest Explorer lost foreground.");
@@ -669,12 +745,98 @@ public static partial class LaqayGuestDesktop {
         }
         return "";
     }
+    public static bool OwnedRibbonAncestor(string nativeClass,bool withinWindow) {
+        return withinWindow && nativeClass=="UIRibbonCommandBarDock";
+    }
+    [DllImport("user32.dll",EntryPoint="GetParent")] static extern IntPtr NativeTabParent(IntPtr window);
+    public static object ExplorerTabEvidence(IntPtr window) {
+        Guard(); ExplorerWindow(window);
+        var items=AutomationElement.FromHandle(window).FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.TabItem));
+        int ribbon=0,candidates=0;var evidence=new List<object>();
+        foreach(AutomationElement item in items) {
+            var classes=new List<string>();bool knownRibbon=false;var ancestor=item;
+            for(int depth=0;ancestor!=null && depth<32;depth++) {
+                var current=ancestor.Current;
+                if(current.NativeWindowHandle!=0) {
+                    IntPtr handle=new IntPtr(current.NativeWindowHandle);
+                    if(handle==window) break;
+                    for(int hop=0;handle!=IntPtr.Zero && handle!=window && hop<32 && IsChild(window,handle);hop++,handle=NativeTabParent(handle)) {
+                        var nativeClass=new StringBuilder(128);GetClassNameW(handle,nativeClass,nativeClass.Capacity);classes.Add(nativeClass.ToString());
+                        if(OwnedRibbonAncestor(nativeClass.ToString(),true)) {knownRibbon=true;break;}
+                    }
+                    if(knownRibbon) break;
+                }
+                ancestor=TreeWalker.RawViewWalker.GetParent(ancestor);
+            }
+            if(knownRibbon) ribbon++;else candidates++;
+            evidence.Add(new {Class=item.Current.ClassName,AutomationId=item.Current.AutomationId,OwnedRibbon=knownRibbon,NativeAncestors=classes.ToArray()});
+        }
+        return new {AllTabItems=items.Count,RibbonTabItems=ribbon,FileTabCandidates=candidates,Items=evidence.ToArray()};
+    }
+    public static bool ForeignGuestFieldAllowed(bool pro,bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit) {
+        return pro && foreground && nativeWithin && rooted && sameSession && focused && enabled && edit;
+    }
+    static Dictionary<string,object> InspectGuestFieldScope(IntPtr window,AutomationElement focused) {
+        uint owner;uint thread=GetWindowThreadProcessId(window,out owner);
+        var native=new FolderGuiInfo {size=(uint)Marshal.SizeOf(typeof(FolderGuiInfo))};
+        bool nativeWithin=GetGUIThreadInfo(thread,ref native) && (native.focus==window || IsChild(window,native.focus));
+        var result=new Dictionary<string,object>();
+        result["Foreground"]=GetForegroundWindow()==window;result["NativeWithinWindow"]=nativeWithin;
+        result["RootReached"]=false;result["SameSession"]=false;result["ForeignReadAllowed"]=false;
+        if(focused==null) return result;
+        var info=focused.Current;
+        result["FocusedPid"]=info.ProcessId;result["ExplorerPid"]=owner;result["Class"]=info.ClassName;result["ControlType"]=info.ControlType.ProgrammaticName;
+        result["HasKeyboardFocus"]=info.HasKeyboardFocus;result["Enabled"]=info.IsEnabled;
+        bool sameSession=false,rooted=false;
+        try {using(var process=Process.GetProcessById(info.ProcessId)) sameSession=process.SessionId==Process.GetCurrentProcess().SessionId;}catch(ArgumentException){}
+        var ancestor=focused;
+        for(int depth=0;ancestor!=null && depth<32;depth++) {
+            var current=ancestor.Current;
+            if(current.NativeWindowHandle!=0 && unchecked((uint)current.NativeWindowHandle)==unchecked((uint)window.ToInt64())) {rooted=true;break;}
+            ancestor=TreeWalker.RawViewWalker.GetParent(ancestor);
+        }
+        result["RootReached"]=rooted;result["SameSession"]=sameSession;
+        result["ForeignReadAllowed"]=ForeignGuestFieldAllowed(observedDesktopProfile!=null && Convert.ToString(observedDesktopProfile["Profile"])=="Windows10ProEsMx",GetForegroundWindow()==window,nativeWithin,rooted,sameSession,info.HasKeyboardFocus,info.IsEnabled,info.ControlType==ControlType.Edit);
+        return result;
+    }
+    public static object FocusedFieldState(IntPtr window) {
+        Guard();ExplorerWindow(window);
+        return InspectGuestFieldScope(window,AutomationElement.FocusedElement);
+    }
+    public static bool EditableFieldReady(bool foreground,bool nativeWithin,bool rooted,bool sameSession,bool focused,bool enabled,bool edit,bool writable) {
+        return foreground && nativeWithin && rooted && sameSession && focused && enabled && edit && writable;
+    }
+    public static bool ProSearchFieldReady(bool pro,bool editable,string nativeClass) {
+        return pro && editable && nativeClass=="RichEditBox";
+    }
+    public static bool FocusedEditableReady(IntPtr window) {return FocusedEditableReady(window,false);}
+    public static bool FocusedEditableReady(IntPtr window,bool requireProSearchEditor) {
+        Guard();ExplorerWindow(window);
+        var focused=AutomationElement.FocusedElement;
+        if(focused==null) return false;
+        var scope=InspectGuestFieldScope(window,focused);
+        uint owner;GetWindowThreadProcessId(window,out owner);
+        if(focused.Current.ProcessId!=owner && !(bool)scope["ForeignReadAllowed"]) return false;
+        object pattern;
+        bool writable=focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern) && !((ValuePattern)pattern).Current.IsReadOnly;
+        bool ready=EditableFieldReady((bool)scope["Foreground"],(bool)scope["NativeWithinWindow"],(bool)scope["RootReached"],(bool)scope["SameSession"],focused.Current.HasKeyboardFocus,focused.Current.IsEnabled,focused.Current.ControlType==ControlType.Edit,writable);
+        if(requireProSearchEditor)
+            return ProSearchFieldReady(observedDesktopProfile!=null && Convert.ToString(observedDesktopProfile["Profile"])=="Windows10ProEsMx",ready,focused.Current.ClassName);
+        return ready;
+    }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);
         var focused=AutomationElement.FocusedElement;
         if(focused==null) return "";
         uint pid; GetWindowThreadProcessId(window,out pid);
-        if(focused.Current.ProcessId!=pid) throw new InvalidOperationException("Focused control belongs to another guest process.");
+        if(focused.Current.ProcessId!=pid) {
+            var scope=InspectGuestFieldScope(window,focused);
+            if(!(bool)scope["ForeignReadAllowed"]) throw new InvalidOperationException("The foreign guest field is not rooted in the owned foreground Explorer window.");
+            object value;
+            if(!focused.TryGetCurrentPattern(ValuePattern.Pattern,out value) || ((ValuePattern)value).Current.IsReadOnly || !focused.Current.HasKeyboardFocus || GetForegroundWindow()!=window)
+                throw new InvalidOperationException("The owned foreign input field has no stable writable value pattern.");
+            return ((ValuePattern)value).Current.Value;
+        }
         object pattern;
         if(focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern)) return ((ValuePattern)pattern).Current.Value;
         if(focused.TryGetCurrentPattern(TextPattern.Pattern,out pattern)) return ((TextPattern)pattern).DocumentRange.GetText(-1);
@@ -711,7 +873,34 @@ public static partial class LaqayGuestDesktop {
     public static void FilesAndImageClipboard(string[] files) {
         Guard(); using(var bitmap=Fixture()) { var data=new DataObject(); data.SetData(DataFormats.FileDrop,files); data.SetData(DataFormats.Bitmap,bitmap); Clipboard.SetDataObject(data,true); }
     }
-    public static int StartApplication(string path) {
+    public static string CoreTrialArguments(string directory) {
+        string full=Path.GetFullPath(directory);
+        if(!Regex.IsMatch(full,@"^C:\\LaqayLab\\Runs\\[a-f0-9]{32}\\data\\core-trial$",RegexOptions.IgnoreCase)) throw new ArgumentException("Unexpected core trial directory.");
+        return "--trial 20 \""+full+"\"";
+    }
+    public static int StartTrialApplication(string path,string directory) {
+        Guard();RequireRole("Primary");
+        if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows10ProEsMx") throw new InvalidOperationException("Core trials require the explicit Pro guest profile.");
+        string arguments=CoreTrialArguments(directory);
+        if(!Directory.Exists(directory)) throw new ArgumentException("The owned core trial directory is missing.");
+        for(string current=Path.GetFullPath(directory);!String.IsNullOrEmpty(current);current=Path.GetDirectoryName(current))
+            if((File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0) throw new ArgumentException("A core trial ancestor is a reparse point.");
+        return StartApplicationCore(path,arguments,true);
+    }
+    static void CaptureTrialLine(string channel,string line,ManualResetEvent completed) {
+        if(line==null) {completed.Set();return;}
+        lock(trialLogLock) {
+            string text=channel+": "+line+Environment.NewLine;
+            int remaining=65536-trialLog.Length;
+            if(text.Length>remaining) trialLogTruncated=true;
+            if(remaining>0) trialLog.Append(text,0,Math.Min(text.Length,remaining));
+        }
+    }
+    public static object CoreTrialLog() {
+        lock(trialLogLock) return new {Output=trialLog==null?"":trialLog.ToString(),Truncated=trialLogTruncated,Drained=trialLogDrained,MaximumCharacters=65536};
+    }
+    public static int StartApplication(string path) {return StartApplicationCore(path,"",false);}
+    static int StartApplicationCore(string path,string arguments,bool capture) {
         Guard();
         if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected application path or instance.");
         job=CreateJobObjectW(IntPtr.Zero,null);
@@ -719,10 +908,26 @@ public static partial class LaqayGuestDesktop {
         var limits=new JobLimits(); limits.basic.flags=0x2000;
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) { CloseHandle(job); job=IntPtr.Zero; throw new InvalidOperationException("Cannot configure the guest process job."); }
         try {
-            application=Process.Start(new ProcessStartInfo(path) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path)});
+            var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
+            if(capture) {start.StandardOutputEncoding=Encoding.UTF8;start.StandardErrorEncoding=Encoding.UTF8;}
+            application=Process.Start(start);
             if(!AssignProcessToJobObject(job,application.Handle)) { application.Kill(); application.WaitForExit(); throw new InvalidOperationException("Cannot contain the owned guest application."); }
+            if(capture) {
+                trialLog=new StringBuilder();trialLogTruncated=false;trialLogDrained=false;
+                trialOutputDone=new ManualResetEvent(false);trialErrorDone=new ManualResetEvent(false);
+                application.OutputDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stdout",eventArgs.Data,trialOutputDone);
+                application.ErrorDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stderr",eventArgs.Data,trialErrorDone);
+                application.BeginOutputReadLine();application.BeginErrorReadLine();
+            }
             return application.Id;
-        } catch { CloseHandle(job); job=IntPtr.Zero; throw; }
+        } catch {
+            if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;}
+            if(application!=null) {
+                try {if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application survived startup cleanup.");}
+                finally {application.Dispose();application=null;}
+            }
+            throw;
+        }
     }
     public static int AdoptStartupApplication(string path,DateTime bootUtc) {
         Guard();
@@ -778,7 +983,14 @@ public static partial class LaqayGuestDesktop {
             if(application.HasExited && application.ExitCode!=0) clean=false;
         }
         if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;}
-        if(application!=null) {if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application did not exit after job cleanup.");ApplicationExitCode=application.ExitCode;application.Dispose();application=null;}
+        if(application!=null) {
+            if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application did not exit after job cleanup.");
+            if(application.StartInfo.RedirectStandardOutput) {
+                trialLogDrained=trialOutputDone.WaitOne(1000) && trialErrorDone.WaitOne(1000);
+                if(!trialLogDrained) {try{application.CancelOutputRead();application.CancelErrorRead();}catch(InvalidOperationException){}}
+            }
+            ApplicationExitCode=application.ExitCode;application.Dispose();application=null;
+        }
         return clean;
     }
     public static void CloseExplorerWindows() {
