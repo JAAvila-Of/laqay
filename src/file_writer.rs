@@ -1,18 +1,176 @@
 //! Stage encoded image data in the destination folder and publish without replacement.
 
 use std::{
+    collections::VecDeque,
     fs::{self, File, OpenOptions},
     io,
-    os::windows::ffi::OsStrExt,
+    os::windows::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
+    },
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use windows::{
-    Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW},
+    Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+            FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx, MOVEFILE_WRITE_THROUGH,
+            MoveFileExW, SetFileInformationByHandle,
+        },
+    },
     core::PCWSTR,
 };
 
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+const MAX_PENDING_CLEANUPS: usize = 32;
+const MAX_CLEANUPS_PER_PASTE: usize = 4;
+static PENDING_CLEANUPS: Mutex<VecDeque<OwnedStaging>> = Mutex::new(VecDeque::new());
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    volume: u64,
+    id: [u8; 16],
+    created: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct StagingSnapshot {
+    identity: FileIdentity,
+    length: u64,
+    written: u64,
+}
+
+struct OwnedStaging {
+    path: PathBuf,
+    snapshot: StagingSnapshot,
+}
+
+fn windows_io(error: windows::core::Error) -> io::Error {
+    let hresult = error.code().0 as u32;
+    if hresult & 0xffff0000 == 0x80070000 {
+        io::Error::from_raw_os_error((hresult & 0xffff) as i32)
+    } else {
+        io::Error::other(error.to_string())
+    }
+}
+
+fn staging_snapshot(file: &File) -> io::Result<StagingSnapshot> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        return Err(io::Error::other("Staging is not an ordinary file"));
+    }
+    let mut id = FILE_ID_INFO::default();
+    // SAFETY: This live File owns the handle; the output buffer has the exact
+    // type and size required by FileIdInfo and remains valid through the call.
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileIdInfo,
+            (&raw mut id).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    }
+    .map_err(windows_io)?;
+    if id.FileId.Identifier == [0; 16] {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "No usable staging identity",
+        ));
+    }
+    Ok(StagingSnapshot {
+        identity: FileIdentity {
+            volume: id.VolumeSerialNumber,
+            id: id.FileId.Identifier,
+            created: metadata.creation_time(),
+        },
+        length: metadata.file_size(),
+        written: metadata.last_write_time(),
+    })
+}
+
+fn open_for_cleanup(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .access_mode(DELETE.0 | FILE_READ_ATTRIBUTES.0)
+        .share_mode(FILE_SHARE_READ.0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)
+}
+
+fn cleanup_staging(staging: &OwnedStaging) -> io::Result<()> {
+    let file = match open_for_cleanup(&staging.path) {
+        Ok(file) => file,
+        Err(error) if error.raw_os_error() == Some(2) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    // Denying write/delete sharing keeps this exact object stable between the
+    // identity check and disposition update. Never delete a replacement path.
+    if staging_snapshot(&file)? != staging.snapshot {
+        return Ok(());
+    }
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // SAFETY: The verified file is held with DELETE access and no write/delete
+    // sharing. Disposition targets that handle, not a newly resolved pathname.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileDispositionInfo,
+            (&raw const disposition).cast(),
+            size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    }
+    .map_err(windows_io)
+}
+
+fn remember_cleanup(staging: OwnedStaging) {
+    if let Ok(mut pending) = PENDING_CLEANUPS.lock() {
+        retain_cleanup(&mut pending, staging);
+    }
+}
+
+fn retain_cleanup(pending: &mut VecDeque<OwnedStaging>, staging: OwnedStaging) {
+    if pending.len() == MAX_PENDING_CLEANUPS {
+        pending.pop_front();
+    }
+    pending.push_back(staging);
+}
+
+fn cleanup_batch(pending: &mut VecDeque<OwnedStaging>, directory: &Path) -> Vec<OwnedStaging> {
+    let mut selected = Vec::new();
+    for _ in 0..MAX_CLEANUPS_PER_PASTE {
+        let Some(index) = pending
+            .iter()
+            .position(|entry| entry.path.parent() == Some(directory))
+        else {
+            break;
+        };
+        if let Some(entry) = pending.remove(index) {
+            selected.push(entry)
+        }
+    }
+    selected
+}
+
+fn retry_staging_cleanup(directory: &Path) {
+    let selected = PENDING_CLEANUPS
+        .lock()
+        .ok()
+        .map(|mut pending| cleanup_batch(&mut pending, directory))
+        .unwrap_or_default();
+    // No filesystem operations run while the process-wide queue is locked.
+    // Unavailable destinations wait for another paste, never a polling loop.
+    for entry in selected {
+        if cleanup_staging(&entry).is_err() {
+            remember_cleanup(entry)
+        }
+    }
+}
 
 /// A validated local wall-clock timestamp supplied by the caller at paste time.
 #[derive(Debug, Clone, Copy)]
@@ -86,15 +244,39 @@ impl ScreenshotTime {
 struct PendingFile {
     path: Option<PathBuf>,
     file: Option<File>,
+    identity: Option<FileIdentity>,
+    snapshot: Option<StagingSnapshot>,
+    closed: bool,
+}
+
+impl PendingFile {
+    fn close_staging(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.closed = true;
+        self.file.take();
+        // Capture final size/time after the writer has closed. If identity is
+        // unavailable or changed, there is no authority for deferred deletion.
+        if let (Some(path), Some(identity)) = (self.path.as_deref(), self.identity) {
+            self.snapshot = open_for_cleanup(path)
+                .and_then(|file| staging_snapshot(&file))
+                .ok()
+                .filter(|snapshot| snapshot.identity == identity);
+        }
+    }
 }
 
 impl Drop for PendingFile {
     fn drop(&mut self) {
-        self.file.take();
+        self.close_staging();
         if let Some(path) = self.path.take() {
-            // Cleanup is best-effort after an I/O failure, panic, or disconnected share.
-            // A stranded staging file retains its .tmp extension, never a .png name.
-            let _ = fs::remove_file(path);
+            if let Some(snapshot) = self.snapshot {
+                let staging = OwnedStaging { path, snapshot };
+                if cleanup_staging(&staging).is_err() {
+                    remember_cleanup(staging)
+                }
+            }
         }
     }
 }
@@ -117,11 +299,21 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
             }
         }
         let path = directory.join(format!(".laqay-{}-{id}.tmp", std::process::id()));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(FILE_SHARE_READ.0)
+            .open(&path)
+        {
             Ok(file) => {
                 return Ok(PendingFile {
                     path: Some(path),
+                    identity: staging_snapshot(&file)
+                        .ok()
+                        .map(|snapshot| snapshot.identity),
                     file: Some(file),
+                    snapshot: None,
+                    closed: false,
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -149,8 +341,10 @@ fn wide_path(path: &Path) -> io::Result<Vec<u16>> {
 /// Encode a complete PNG into a staging file and rename it to an unused final name.
 /// The encoder must produce valid PNG bytes and must not retain the file handle.
 /// Context authorization, PNG validation, and Shell notification belong to the caller.
-/// Directory changes and disconnected shares can leave a .tmp file after failure;
-/// no failed encoding is published with a PNG extension.
+/// Failed cleanup retains at most 32 verified records in this process. A later
+/// paste in the same directory retries up to four; replacements and changed
+/// size/write-time evidence are preserved. Unknown identity or process exit can
+/// still leave a .tmp file. No failed encoding is published as a PNG.
 pub fn create_screenshot(
     directory: &Path,
     time: ScreenshotTime,
@@ -175,14 +369,15 @@ pub fn create_screenshot_checked(
     }
     // Validate the path before creating any output.
     wide_path(directory)?;
+    retry_staging_cleanup(directory);
     let mut pending = reserve_staging_file(directory)?;
     let file = pending
         .file
         .as_mut()
         .ok_or_else(|| io::Error::other("Missing staging handle"))?;
-    encode(file)?;
-    file.sync_all()?;
-    pending.file.take();
+    let encoded = encode(file).and_then(|()| file.sync_all());
+    pending.close_staging();
+    encoded?;
     let source = wide_path(
         pending
             .path
@@ -211,12 +406,7 @@ pub fn create_screenshot_checked(
                 return Ok(destination);
             }
             Err(error) => {
-                let hresult = error.code().0 as u32;
-                let error = if hresult & 0xffff0000 == 0x80070000 {
-                    io::Error::from_raw_os_error((hresult & 0xffff) as i32)
-                } else {
-                    io::Error::other(error.to_string())
-                };
+                let error = windows_io(error);
                 if error.kind() != io::ErrorKind::AlreadyExists
                     && fs::symlink_metadata(&destination).is_err()
                 {
@@ -306,6 +496,144 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    fn hold_failed_staging(directory: &Path) -> (PathBuf, File) {
+        let mut held = None;
+        let mut path = None;
+        let result = create_screenshot_checked(
+            directory,
+            time(),
+            |file| file.write_all(b"staged image"),
+            || {
+                let entry = fs::read_dir(directory)?.next().unwrap()?;
+                path = Some(entry.path());
+                // Deny DELETE access until the simulated unavailable destination
+                // recovers. The writer must retain its own record, not force cleanup.
+                held = Some(
+                    OpenOptions::new()
+                        .read(true)
+                        .share_mode(FILE_SHARE_READ.0)
+                        .open(entry.path())?,
+                );
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Simulated publication failure",
+                ))
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        let path = path.unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"staged image");
+        (path, held.unwrap())
+    }
+
+    #[test]
+    fn a_later_paste_removes_its_own_failed_staging_after_recovery() {
+        let directory = TestDirectory::new();
+        let (staging, held) = hold_failed_staging(&directory.0);
+        drop(held);
+        let output =
+            create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
+        assert!(!staging.exists());
+        assert_eq!(fs::read(output).unwrap(), b"fresh image");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn cleanup_preserves_a_replacement_at_the_recorded_path() {
+        let directory = TestDirectory::new();
+        let (staging, held) = hold_failed_staging(&directory.0);
+        let original_id = staging_snapshot(&held).unwrap().identity.id;
+        drop(held);
+        fs::remove_file(&staging).unwrap();
+        fs::write(&staging, b"foreign data").unwrap();
+        assert!(
+            staging_snapshot(&File::open(&staging).unwrap())
+                .unwrap()
+                .identity
+                .id
+                != original_id
+        );
+        create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
+        assert_eq!(fs::read(staging).unwrap(), b"foreign data");
+    }
+
+    #[test]
+    fn cleanup_preserves_in_place_edits_with_changed_write_time() {
+        let directory = TestDirectory::new();
+        let (staging, held) = hold_failed_staging(&directory.0);
+        drop(held);
+        fs::write(&staging, b"changed data").unwrap();
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        OpenOptions::new()
+            .write(true)
+            .open(&staging)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
+        assert_eq!(fs::read(staging).unwrap(), b"changed data");
+    }
+
+    #[test]
+    fn cleanup_does_not_scan_lookalike_files_or_other_destinations() {
+        let directory = TestDirectory::new();
+        let other = TestDirectory::new();
+        let (staging, held) = hold_failed_staging(&directory.0);
+        drop(held);
+        let lookalike = directory
+            .0
+            .join(format!(".laqay-{}-999999999.tmp", std::process::id()));
+        fs::write(&lookalike, b"untracked data").unwrap();
+        create_screenshot(&other.0, time(), |file| file.write_all(b"other image")).unwrap();
+        assert!(staging.exists());
+        create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
+        assert!(!staging.exists());
+        assert_eq!(fs::read(lookalike).unwrap(), b"untracked data");
+    }
+
+    #[test]
+    fn cleanup_records_and_per_paste_work_are_bounded() {
+        let mut pending = VecDeque::new();
+        let parent = Path::new(r"C:\fixture-a");
+        for index in 0..MAX_PENDING_CLEANUPS + 1 {
+            let directory = if index % 2 == 0 {
+                parent
+            } else {
+                Path::new(r"C:\fixture-b")
+            };
+            retain_cleanup(
+                &mut pending,
+                OwnedStaging {
+                    path: directory.join(format!("{index}.tmp")),
+                    snapshot: StagingSnapshot {
+                        identity: FileIdentity {
+                            volume: 1,
+                            id: [1; 16],
+                            created: 1,
+                        },
+                        length: 1,
+                        written: 1,
+                    },
+                },
+            );
+        }
+        assert_eq!(pending.len(), MAX_PENDING_CLEANUPS);
+        assert!(
+            pending
+                .iter()
+                .all(|entry| entry.path.file_name().unwrap() != "0.tmp")
+        );
+        let batch = cleanup_batch(&mut pending, parent);
+        assert_eq!(batch.len(), MAX_CLEANUPS_PER_PASTE);
+        assert!(
+            batch
+                .iter()
+                .all(|entry| entry.path.parent() == Some(parent))
+        );
+        assert_eq!(pending.len(), MAX_PENDING_CLEANUPS - MAX_CLEANUPS_PER_PASTE);
+        assert!(cleanup_batch(&mut pending, Path::new(r"C:\absent")).is_empty());
     }
 
     #[test]
