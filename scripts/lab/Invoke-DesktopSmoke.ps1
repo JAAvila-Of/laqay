@@ -202,7 +202,7 @@ exit $LASTEXITCODE
                     $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,[Management.ManagementObjectSearcher].Assembly.Location,
                         [Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,[Windows.Automation.AutomationElement].Assembly.Location,
                         [Windows.Automation.ControlType].Assembly.Location,[Windows.Rect].Assembly.Location,[Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
-                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs')) -ReferencedAssemblies $references
+                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs'),(Join-Path $runRoot 'GuestAdverseControls.cs'),(Join-Path $runRoot 'GuestRealApplicationControls.cs')) -ReferencedAssemblies $references
                 }
                 [LaqayGuestWaitChain]::InspectJson($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
             }
