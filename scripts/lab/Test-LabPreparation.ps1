@@ -11,6 +11,7 @@ try {
     & (Join-Path $PSScriptRoot 'Test-PortablePackageFiles.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Test-LabReportSnapshots.ps1')
+    & (Join-Path $PSScriptRoot 'Test-TerminalReceiptReads.ps1')
     & (Join-Path $PSScriptRoot '../Test-StorageHarnessPreparation.ps1')
     & (Join-Path $PSScriptRoot '../Test-ShareHarnessPreparation.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
