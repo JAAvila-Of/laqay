@@ -330,9 +330,16 @@ a new image was published after restoration. One complete staging `.tmp`
 remained after reconnection and was removed by the controller. Share and fixture
 removal passed without forced termination. This does not establish automatic
 core cleanup after disconnection or complete failed-write cleanup acceptance.
-The revised cleanup gate still needs its hosted run. This tests share withdrawal,
-not packet loss, a physical network outage, Explorer input or Windows 10. It does
-not claim cleanup after process exit or without a later paste in that directory.
+The revised hosted run on 11a924c passed with one complete staging file present
+after reconnection and zero after the recovery paste. Controller staging removal
+was zero. The original PNG survived and a different valid recovery image was
+published. The native process exited normally and the owned share and fixture
+were removed. All 63 ordinary native tests passed in CI, and the separate real
+disk-full and SMB steps passed as well.
+
+This tests share withdrawal, not packet loss, a physical network outage,
+Explorer input or Windows 10. It does not claim cleanup after process exit or
+without a later paste in that directory.
 
 ### Isolated storage capacity regression
 
