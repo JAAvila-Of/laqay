@@ -1,6 +1,28 @@
 # Loaded only by the armed adverse runner in its exact owned run directory.
 if(-not $IncludeAdverse -or -not $IncludeRealApplications -or $PSScriptRoot -ne $root -or $report.Cases.Count -ne 13){throw 'Real application cases require the owned basic context and explicit opt-in.'}
 [LaqayGuestDesktop]::RequireRole('Primary')
+function Read-TerminalReceiver {
+    $path=Join-Path $root 'real-apps/Terminal/receiver.json'
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        $stream=$null;$reader=$null
+        try{
+            # Keep the opened snapshot readable while the publisher replaces it.
+            $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $reader=[IO.StreamReader]::new($stream,[Text.Encoding]::UTF8,$true)
+            $json=$reader.ReadToEnd()
+        }catch [IO.IOException]{
+            $code=$_.Exception.GetBaseException().HResult -band 0xFFFF
+            # A replace can briefly hide the pathname from a new Windows reader.
+            if($code -notin @(2,32,33) -or $watch.Elapsed.TotalSeconds -ge 2){throw}
+            Start-Sleep -Milliseconds 20
+            continue
+        }finally{
+            if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}
+        }
+        return ($json | ConvertFrom-Json)
+    }
+}
 $realKinds=@('Notepad','Edge');if($IncludeWindowsTerminal){$realKinds+=@('Terminal')}
 foreach($kind in $realKinds){
     $entry=[pscustomobject]@{Kind=$kind;Inventory=$null;Info=$null;Text=@();Image=$null;Cleanup=$null;Error=$null}
@@ -23,7 +45,7 @@ foreach($kind in $realKinds){
             $terminalPath=Join-Path $root 'real-apps/Terminal/receiver.json'
             if($kind -eq 'Terminal'){
                 Wait-For {(Test-Path -LiteralPath $terminalPath)} 'The owned Terminal receiver did not become ready.'
-                $receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json
+                $receiver=Read-TerminalReceiver
                 $entry | Add-Member -NotePropertyName ReceiverReady -NotePropertyValue $receiver
                 Assert-True ($receiver.LabId -eq $LabId -and $receiver.RunId -eq $RunId -and $receiver.OwnerPid -eq $PID -and $receiver.SessionId -eq $report.SessionId -and $receiver.ScriptSha256 -eq $entry.Info.TerminalReceiverScriptSha256 -and $receiver.Ready -and -not $receiver.Error) 'The Terminal receiver identity does not match its owned fixture.'
                 Assert-True ($receiver.ContainedBeforeReady -and $receiver.JobName -ceq $entry.Info.TerminalReceiverJobName -and $receiver.JobName -ceq [LaqayGuestDesktop]::RealTerminalReceiverJobName($LabId,$RunId,$PID)) 'The receiver did not enter the exact pre-created Job before readiness.'
@@ -48,8 +70,8 @@ foreach($kind in $realKinds){
                         Wait-For {([LaqayGuestDesktop]::RealApplicationText()).Contains('Laqay real application fixture.')} 'The Terminal display did not expose its pasted text.'
                         [LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(13))
                         $terminalIndex++
-                        Wait-For {$receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json;@($receiver.Inputs).Count -eq $terminalIndex} 'The Terminal receiver did not acknowledge the native input.'
-                        $receiver=Get-Content -LiteralPath $terminalPath -Raw | ConvertFrom-Json
+                        Wait-For {$receiver=Read-TerminalReceiver;@($receiver.Inputs).Count -eq $terminalIndex} 'The Terminal receiver did not acknowledge the native input.'
+                        $receiver=Read-TerminalReceiver
                         Assert-True ($receiver.Pid -eq $entry.Receiver.Pid -and $receiver.Inputs[-1].Index -eq $terminalIndex -and $receiver.Inputs[-1].Text -ceq 'Laqay real application fixture.' -and -not $receiver.Error) 'The Terminal receiver did not get exact clipboard text.'
                         $text.Receiver=$receiver
                     }else{Wait-For {[LaqayGuestDesktop]::RealApplicationText() -ceq 'Laqay real application fixture.'} 'The real application did not receive exact clipboard text.'}
