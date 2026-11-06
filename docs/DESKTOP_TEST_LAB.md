@@ -380,6 +380,8 @@ Stdout and stderr are drained asynchronously into a bounded 262,144-character
 capture. After normal application exit, `NormalModeLog` retains that capture
 before any supplementary trial can reset the shared capture buffer. Undrained
 readers fail cleanup. Truncation is reported explicitly.
+Worker-side request records include the window, native focus, clipboard
+sequence, and queue delay for correlation with the case input snapshots.
 Logging can affect timing; a successful diagnostic run does not establish that
 an earlier intermittent failure has been fixed.
 

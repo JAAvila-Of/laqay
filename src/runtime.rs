@@ -776,6 +776,15 @@ fn run_inner(
         let diagnostics = options.diagnostics;
         let worker = std::thread::spawn(move || {
             while let Ok(request) = receiver.recv() {
+                if diagnostics {
+                    println!(
+                        "Paste request: window={}, focus={}, clipboard_sequence={}, queued_ms={}",
+                        request.window,
+                        request.focus,
+                        request.sequence,
+                        request.received.elapsed().as_millis()
+                    );
+                }
                 let result = save(request, &gate, deadline, approved.as_deref(), diagnostics);
                 if diagnostics {
                     match result {
