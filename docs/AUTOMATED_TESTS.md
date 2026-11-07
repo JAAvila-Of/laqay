@@ -25,6 +25,15 @@ by a 30-second watchdog that owns only the spawned process.
 
 ## Isolated native clipboard suite
 
+The initial paste-context check may take one fresh complete observation after
+the existing narrowly recognized read-only folder-text identity transition.
+It requires the same canonical directory and native view, the original request's
+window/focus/clipboard sequence, and valid activity before and after each read.
+The transition alone never authorizes a clipboard read or file write. Ordinary
+rejections, provider errors, changed targets, repeated transitions, and
+cancellation remain terminal. Pure runtime tests cover these boundaries;
+live transition validation remains a separate guest test.
+
 ```sh
 cargo test --locked --all-features
 ```
