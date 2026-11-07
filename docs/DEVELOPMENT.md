@@ -172,6 +172,12 @@ blocks nor synthesizes input. In this mode both sources count events, but only
 the hook submits paste requests, avoiding duplicate writes. The hook is removed
 before shutdown. No event history, text, or clipboard contents enter these logs.
 Context rejection diagnostics include structural focus metadata and view counts.
+Rejections identify the `Initial` or `BeforePublish` context check. When an
+available UI Automation focus becomes unstable, diagnostics name the first
+failed check: element identity, control type, keyboard focus, enabled state or
+static-text ancestry. Provider errors include the check and HRESULT. These
+checks keep their original order and stop at the first rejection or error;
+diagnostics do not query additional properties of a stale element.
 
 To isolate input reception from clipboard and folder handling, use
 `scripts/Invoke-PasteProbe.ps1 -InputOnly -Seconds 30
@@ -261,8 +267,10 @@ Copied files and virtual Shell files take priority over image conversion.
 
 The application operates offline, with no accounts, telemetry, clipboard
 history, or keyboard history. Clipboard inspection is limited to paste
-requests. Normal mode does not emit diagnostic logs. Bounded diagnostic modes
-can log structural context and destination paths, but never clipboard contents.
+requests. Normal mode has diagnostics off by default. `LAQAY_DIAGNOSTICS=1`
+explicitly enables diagnostic output for that process; the RDP lab sets it
+only on its owned application child. Diagnostic output can contain structural
+context and destination paths, but never clipboard contents.
 Automatic startup is disabled by default.
 
 ## Releases
