@@ -148,6 +148,14 @@ process with exit code zero within five seconds. Registry values are restored
 and process cleanup is checked by the existing probe. Reports are retained in
 `laqay-preference-validation`.
 
+On a confirmed end-session notification, the application stops its activity,
+removes its notification icon, and performs the existing bounded observer
+teardown before explicitly ending its own process. It does not rely on a queued
+quit message being dispatched after the notification returns: Windows may end
+the session then. A teardown ownership error exits nonzero. Query and cancelled
+notifications keep the application running. See Microsoft's
+[end-session contract](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-endsession).
+
 This never calls a Windows logoff/shutdown API, broadcasts a message, sends input,
 or activates a window. Six inert tests exercise the actual hosted/explicit-mode
 guards; local or self-hosted automated execution is refused. It tests application
