@@ -51,10 +51,35 @@ Windows CI job and release validation run all features on an ephemeral hosted
 VM with the required permissions. See [Windows station isolation](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations)
 and [hosted runner privileges](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#administrative-privileges).
 
-Two child entry points appear as `ignored` during flat test discovery. Their
+Child entry points appear as `ignored` during flat test discovery. Their
 parent tests explicitly execute them with `--exact --ignored` in fresh processes
 and require a successful result containing one executed test. They are not
 optional coverage in the all-features CI run.
+
+## Isolated real Shell view
+
+The `isolated-shell-tests` feature hosts the Windows `IExplorerBrowser` and
+`IFolderView` implementations in hidden owned windows on a newly created,
+nonvisible window station. It uses the same station isolation as the clipboard
+suite, in a separate child with a 30-second watchdog. Station creation failure
+fails the test before COM or window creation; there is no interactive fallback.
+Regular `cargo test --locked` does not enable this capability.
+
+The real writer supplies a completed staging file and its pinned identity.
+The production Shell-item lookup must accept that singleton only with its lease,
+reject an unpinned singleton and a same-name/same-bytes copy in another folder,
+and reject a view containing an additional foreign file. Successful publication
+encodes once; rejection removes only the owned staging file and preserves the
+foreign file. Each view must report the expected filesystem path and item count;
+navigation success alone is insufficient. View state and travel history are not
+persisted. The CI validation log retains the successful child output.
+
+This exercises real PIDL/path resolution and staging exclusion, without input,
+clipboard access, foreground changes, or opening the Explorer application.
+It does not reproduce a UIA identity transition, drive Ctrl+V, or prove the cause
+of an intermittent RDP failure. See Microsoft's
+[ExplorerBrowser contract](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-iexplorerbrowser)
+and [browser options](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-explorer_browser_options).
 
 ## Hosted storage capacity check
 

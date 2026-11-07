@@ -34,6 +34,13 @@ mod storage_tests;
 #[cfg(all(test, windows))]
 mod test_support;
 
+#[cfg(all(
+    test,
+    windows,
+    any(feature = "isolated-clipboard-tests", feature = "isolated-shell-tests")
+))]
+mod test_station;
+
 #[cfg(windows)]
 mod probe_environment;
 

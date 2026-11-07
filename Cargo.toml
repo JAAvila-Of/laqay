@@ -10,6 +10,7 @@ publish = false
 
 [features]
 isolated-clipboard-tests = []
+isolated-shell-tests = []
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
