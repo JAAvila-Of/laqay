@@ -929,12 +929,17 @@ public static partial class LaqayGuestDesktop {
         if(capture) {start.StandardOutputEncoding=Encoding.UTF8;start.StandardErrorEncoding=Encoding.UTF8;}
         return start;
     }
-    static int StartApplicationCore(string path,string arguments,bool capture,bool normalDiagnostics=false) {
+    static bool shutdownLifetime;
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr handle,uint exitCode);
+    static int StartApplicationCore(string path,string arguments,bool capture,bool normalDiagnostics=false,bool shutdown=false) {
         Guard();
         if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected application path or instance.");
         job=CreateJobObjectW(IntPtr.Zero,null);
         if(job==IntPtr.Zero) throw new InvalidOperationException("Cannot create the owned guest process job.");
-        var limits=new JobLimits(); limits.basic.flags=0x2000;
+        // The shutdown-only fixture lets Windows end the app even if its driver
+        // is notified first. Ordinary fixtures retain kill-on-close containment.
+        shutdownLifetime=shutdown;
+        var limits=new JobLimits(); limits.basic.flags=shutdown?0u:0x2000u;
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) { CloseHandle(job); job=IntPtr.Zero; throw new InvalidOperationException("Cannot configure the guest process job."); }
         try {
             var start=ApplicationStartInfo(path,arguments,capture,normalDiagnostics);
@@ -1010,7 +1015,11 @@ public static partial class LaqayGuestDesktop {
             if(!application.HasExited) {var window=AppWindow(); if(window!=IntPtr.Zero) PostMessageW(window,0x10,IntPtr.Zero,IntPtr.Zero); if(!application.WaitForExit(5000)) {clean=false;WasApplicationForced=true;}}
             if(application.HasExited && application.ExitCode!=0) clean=false;
         }
-        if(job!=IntPtr.Zero) {CloseHandle(job);job=IntPtr.Zero;}
+        if(job!=IntPtr.Zero) {
+            if(shutdownLifetime && application!=null && !application.HasExited && !TerminateJobObject(job,1))
+                throw new InvalidOperationException("The owned shutdown fixture job could not be terminated after failed cleanup.");
+            CloseHandle(job);job=IntPtr.Zero;
+        }
         if(application!=null) {
             if(!application.WaitForExit(5000)) throw new InvalidOperationException("The owned application did not exit after job cleanup.");
             if(application.StartInfo.RedirectStandardOutput) {
@@ -1019,7 +1028,7 @@ public static partial class LaqayGuestDesktop {
             }
             ApplicationExitCode=application.ExitCode;application.Dispose();application=null;
         }
-        return clean;
+        shutdownLifetime=false;return clean;
     }
     public static void CloseExplorerWindows() {
         foreach(var window in windows) {

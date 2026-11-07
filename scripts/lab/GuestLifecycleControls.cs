@@ -19,6 +19,9 @@ public static partial class LaqayGuestDesktop {
     [StructLayout(LayoutKind.Sequential)] struct RectangleBounds {public int left,top,right,bottom;}
     static DelayedPng delayedPng;
     static void LifecycleGuard() {RequireRole("Primary");if(SessionProtocol()!=0) throw new InvalidOperationException("Lifecycle cases require the owned guest console.");}
+    public static int StartShutdownApplication(string path) {
+        LifecycleGuard();return StartApplicationCore(path,"",false,false,true);
+    }
     public static bool TrayIconRegistered() {
         LifecycleGuard();IntPtr window=AppWindow();if(window==IntPtr.Zero) return false;
         var identity=new IconIdentity {size=(uint)Marshal.SizeOf(typeof(IconIdentity)),window=window,id=1};RectangleBounds rectangle;

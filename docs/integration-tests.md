@@ -41,6 +41,12 @@ and the intermittent semantic-context rejection tracked in
 exercise the new recovery branch or prove the historical rejection's cause.
 These results do not by themselves declare stable-release readiness.
 
+A separate opt-in Primary-console shutdown protocol is now prepared. It uses
+an actual pending read and kernel process events collected across guest
+power-off and a later boot; preparation and CI fixtures do not establish its
+runtime acceptance. The ordinary desktop suites remain unchanged. See the
+[automated-test protocol](AUTOMATED_TESTS.md#opt-in-guest-shutdown-protocol).
+
 ## Acceptance policy
 
 Release acceptance prioritizes core risks: correct Explorer destination and

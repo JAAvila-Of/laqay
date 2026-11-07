@@ -186,3 +186,29 @@ membership, duplicate package and an inert resource-free file. The binary hash
 must remain unchanged. The `laqay-version-validation` artifact retains the result.
 These checks never launch the executable. The normal Release workflow uses
 the same resource checker before packaging its current compiled binaries.
+
+## Opt-in guest shutdown protocol
+
+`Test-ShutdownPreparation.ps1` exercises process-event parsing, exact
+PID/creation-time correlation, rejected incomplete or nonzero exits, bounded
+snapshot publication and unarmed desktop guards. It compiles the guest driver
+without clipboard access, input, trace collection, VM operations or shutdown.
+Ordinary application fixtures retain their kill-on-close Jobs.
+
+The separate `Invoke-ShutdownRuntimePhase.ps1` is an explicit disposable
+Windows 11 Primary-console operation. It records a bounded temporary kernel
+process trace only inside that guest, proves a reference paste, and requires a
+controller-verified native clipboard-read dependency before requesting
+`shutdown /s /t 0`. A positive timeout would imply forced application closure
+and is deliberately excluded. This shutdown-only fixture retains Job accounting
+without killing the app merely because its driver is notified first; aborted
+cleanup can terminate only that owned Job and cannot become a passing test.
+
+Power-off completes the request phase with `AcceptancePending=true`. Product
+acceptance requires the subsequent boot and `Complete-GuestShutdown.ps1`:
+matching process start/stop with exit code zero, the exact shutdown marker,
+clean system stop, no unexpected power loss, preserved reference, no pending
+PNG/staging, and restored preferences, task and trace. This protocol is prepared
+coverage until an explicitly authorized isolated run passes. It proves work was
+retained at the shutdown request, not every encoding/publication stage or the
+provider remaining alive throughout Windows shutdown. It never targets the host.
