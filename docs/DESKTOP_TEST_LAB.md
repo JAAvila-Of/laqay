@@ -377,6 +377,18 @@ runtime with both guests off, then apply the same 11/7 GiB admission limits.
 This does not test client-to-server file transfer, disconnection/reconnection,
 clipboard policy restrictions, Windows 10, or arbitrary RDP client versions.
 
+### Preparing an owned tab address
+
+Tab fixture navigation prepares a direct case-directory path through the
+focused Explorer editor's writable UIA ValuePattern. It checks the guest scope,
+run identity, native foreground/root/session ownership, editability, and an
+existing non-reparse case directory. A bounded preparation loop reacquires the
+address editor when a newly opened Home tab changes focus, then requires exact
+text readback before Enter and exact folder/tab identity afterward.
+`TabNavigations` records `PreparationMethod=OwnedValuePattern` and `PreparedText`.
+This prepares a destination; the actual image-paste requests still use Ctrl+V.
+The separate native address-bar, search, and rename paste cases are unchanged.
+
 ### Supplementary diagnosis after an RDP tab failure
 
 The RDP guest suite starts its original application in normal mode with

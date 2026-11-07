@@ -825,6 +825,25 @@ public static partial class LaqayGuestDesktop {
             return ProSearchFieldReady(observedDesktopProfile!=null && Convert.ToString(observedDesktopProfile["Profile"])=="Windows10ProEsMx",ready,focused.Current.ClassName);
         return ready;
     }
+    public static void SetNavigationAddress(IntPtr window,string path,string runId) {
+        Guard();ExplorerWindow(window);
+        if(!Regex.IsMatch(runId ?? "","^[a-f0-9]{32}$")) throw new InvalidOperationException("Navigation requires an owned run identity.");
+        string target=Path.GetFullPath(path);
+        string data=Path.GetFullPath(Path.Combine(@"C:\LaqayLab\Runs",runId,"data"));
+        if(!String.Equals(Path.GetDirectoryName(target),data,StringComparison.OrdinalIgnoreCase) || !Directory.Exists(target) ||
+            (File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0)
+            throw new InvalidOperationException("Navigation requires an owned direct case directory.");
+        var focused=AutomationElement.FocusedElement;
+        if(focused==null) throw new InvalidOperationException("The navigation editor is missing.");
+        var scope=InspectGuestFieldScope(window,focused);
+        uint owner;GetWindowThreadProcessId(window,out owner);
+        object pattern;
+        bool writable=focused.TryGetCurrentPattern(ValuePattern.Pattern,out pattern) && !((ValuePattern)pattern).Current.IsReadOnly;
+        if((focused.Current.ProcessId!=owner && !(bool)scope["ForeignReadAllowed"]) || focused.Current.IsPassword ||
+            !EditableFieldReady((bool)scope["Foreground"],(bool)scope["NativeWithinWindow"],(bool)scope["RootReached"],(bool)scope["SameSession"],focused.Current.HasKeyboardFocus,focused.Current.IsEnabled,focused.Current.ControlType==ControlType.Edit,writable))
+            throw new InvalidOperationException("The owned navigation editor is not focused and writable.");
+        ((ValuePattern)pattern).SetValue(target);
+    }
     public static string FocusedText(IntPtr window) {
         Guard(); ExplorerWindow(window);
         var focused=AutomationElement.FocusedElement;
