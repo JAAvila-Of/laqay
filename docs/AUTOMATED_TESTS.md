@@ -174,3 +174,15 @@ An automated Run-value round trip does not log out or restart Windows.
 Desktop scenarios must run in a suitable isolated Windows session, with any
 control of a person's working desktop agreed beforehand. Do not mark them as
 passed based on component tests or launch a live observer as part of Cargo test.
+
+## Static Windows version resources
+
+CI checks the compiled executable with `Test-VersionResourceValidation.ps1`.
+It reads Windows `FileVersionInfo` and compares the product name, original
+filename, description, full SemVer string, fixed numeric versions and prerelease
+flag with the Laqay workspace package in `cargo metadata`. Two positive reads
+fence five rejections: stale version, wrong description, absent workspace
+membership, duplicate package and an inert resource-free file. The binary hash
+must remain unchanged. The `laqay-version-validation` artifact retains the result.
+These checks never launch the executable. The normal Release workflow uses
+the same resource checker before packaging its current compiled binaries.

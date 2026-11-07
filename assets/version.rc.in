@@ -1,0 +1,27 @@
+LANGUAGE 0x09, 0x01
+1 VERSIONINFO
+FILEVERSION @VERSION_NUMBERS@
+PRODUCTVERSION @VERSION_NUMBERS@
+FILEFLAGSMASK 0x3fL
+FILEFLAGS @FILE_FLAGS@L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "@DESCRIPTION@\0"
+            VALUE "FileVersion", "@FILE_VERSION@\0"
+            VALUE "InternalName", "@PACKAGE_NAME@\0"
+            VALUE "OriginalFilename", "laqay.exe\0"
+            VALUE "ProductName", "Laqay\0"
+            VALUE "ProductVersion", "@PRODUCT_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
