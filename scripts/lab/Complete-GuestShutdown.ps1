@@ -90,7 +90,7 @@ finally{
     try{
         $name='LaqayShutdown-'+$CycleId;$task=Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
         if($task){
-            if(@($task.Actions).Count -ne 1 -or $task.Actions[0].Arguments -notlike ('*C:\LaqayLab\Runs\'+$CycleId+'\Invoke-GuestShutdown.ps1*') -or @($task.Triggers).Count){throw 'Unexpected task ownership.'}
+            if(-not (Test-ShutdownTaskOwnership $task $CycleId)){throw 'Unexpected task ownership.'}
             if($task.State -eq 'Running'){throw 'The shutdown task unexpectedly survived into collection.'}
             Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
         }
