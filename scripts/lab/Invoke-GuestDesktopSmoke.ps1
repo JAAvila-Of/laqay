@@ -419,11 +419,36 @@ try{
         $window=Open-Folder $path
         $item=$window.Document.Folder.ParseName('rename-source.txt')
         $window.Document.SelectItem($item,29)
+        Wait-For {
+            try{$selected=$window.Document.SelectedItems();$selected.Count -eq 1 -and $selected.Item(0).Path -ieq $file}catch{$false}
+        } 'The owned rename fixture did not become the sole selection.'
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(113))
-        Start-Sleep -Milliseconds 200
-        [LaqayGuestDesktop]::TextAndImageClipboard('LaqayRenameToken')
-        [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
-        Wait-For { [LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND).Contains('LaqayRenameToken') } 'Text paste did not reach the rename field.'
+        $observation=[pscustomobject]@{Case='RenameText';RequiredInputClass=$null;BeforePaste=$null;PasteSent=$false;Scope=$null;Error=$null;ReadSucceeded=$false;TextLength=$null;TokenMatched=$false;ReadError=$null;OriginalNameMatched=$false}
+        $report.EditableFields+=@($observation);Save-Report
+        try{
+            Wait-For {
+                try{
+                    if(-not [LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND)){return $false}
+                    $observation.OriginalNameMatched=[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND) -cin @('rename-source','rename-source.txt')
+                    $observation.OriginalNameMatched
+                }catch{$false}
+            } 'The owned rename editor did not become ready with the original filename.'
+            $observation.BeforePaste=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND);Save-Report
+            [LaqayGuestDesktop]::TextAndImageClipboard('LaqayRenameToken')
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(17,86))
+            $observation.PasteSent=$true;Save-Report
+            Wait-For {
+                try{
+                    $text=[LaqayGuestDesktop]::FocusedText([IntPtr]$window.HWND)
+                    $observation.ReadSucceeded=$true;$observation.TextLength=$text.Length
+                    $observation.TokenMatched=$text.Contains('LaqayRenameToken');$observation.ReadError=$null
+                    $observation.TokenMatched -and [LaqayGuestDesktop]::FocusedEditableReady([IntPtr]$window.HWND)
+                }catch{$observation.ReadError=$_.Exception.Message;$false}
+            } 'Text paste did not reach the rename field.'
+        }finally{
+            try{$observation.Scope=[LaqayGuestDesktop]::FocusedFieldState([IntPtr]$window.HWND)}catch{$observation.Error=$_.Exception.Message}
+            Save-Report
+        }
         [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[System.UInt16[]]@(27))
         Start-Sleep -Milliseconds 500
         Assert-True ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -eq $hash) 'Cancelled rename altered the original file.'
