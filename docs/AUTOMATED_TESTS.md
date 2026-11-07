@@ -56,6 +56,17 @@ parent tests explicitly execute them with `--exact --ignored` in fresh processes
 and require a successful result containing one executed test. They are not
 optional coverage in the all-features CI run.
 
+The private clipboard child also couples real DIB snapshots, WIC encoding and
+native file publication to the runtime's production request-matching predicate.
+It checks an unchanged control through a filename collision, a real sequence
+change before encoding, a real sequence change after staging/before publication,
+and a generation revoked by disabling/re-enabling during encoding. Each revoked
+case must preserve the existing file, remove only staging, and permit a fresh
+snapshot to recover without overwrite. Window/focus values in this component
+fixture are fixed synthetic fields; it does not drive Explorer, a physical key,
+or a desktop focus race. The parent requires all four stage markers and retains
+the child output in CI.
+
 ## Isolated real Shell view
 
 The `isolated-shell-tests` feature hosts the Windows `IExplorerBrowser` and

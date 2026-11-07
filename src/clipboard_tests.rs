@@ -105,7 +105,137 @@ fn dib() -> Vec<u8> {
 fn native_clipboard_matrix_runs_without_the_interactive_clipboard() {
     let png = crate::image::to_png(&dib(), false).unwrap();
     let hex: String = png.iter().map(|byte| format!("{byte:02x}")).collect();
-    crate::test_support::child_test(CHILD, &[("LAQAY_TEST_PNG", &hex)]);
+    let output = crate::test_support::child_test(CHILD, &[("LAQAY_TEST_PNG", &hex)]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for stage in ["control", "before-encode", "before-publish", "generation"] {
+        assert!(stdout.contains(&format!("Native publication guard: {stage} checked")));
+    }
+    print!("{stdout}");
+}
+
+fn publication_checks(window: &Window) {
+    use crate::{
+        activity::Activity,
+        file_writer::{ScreenshotTime, create_screenshot_with_staging_checked},
+    };
+    use std::{
+        fs,
+        io::{self, Write},
+        path::PathBuf,
+    };
+    struct Directory(PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn sequence() -> u32 {
+        // SAFETY: This helper is called only after the child has established
+        // and verified its private, noninteractive window station.
+        unsafe { GetClipboardSequenceNumber() }
+    }
+    let text: Vec<u8> = "replacement fixture\0"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    for (case, stage) in ["control", "before-encode", "before-publish", "generation"]
+        .into_iter()
+        .enumerate()
+    {
+        let path = std::env::temp_dir().join(format!(
+            "Laqay.ClipboardPublication.{}.{case}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).unwrap();
+        let directory = Directory(path);
+        let time = ScreenshotTime::new(2026, 1, 2, 3, 4, 5).unwrap();
+        let original = directory.0.join(time.filename(0));
+        fs::write(&original, b"preserve original").unwrap();
+        let captured = window.replace(&[(8, &dib())]);
+        let source = read_image(captured).unwrap().unwrap();
+        assert!(!source.is_png);
+        let activity = Activity::new(true);
+        let ticket = activity.ticket().unwrap();
+        let mut encodes = 0;
+        let mut validations = 0;
+        let result = create_screenshot_with_staging_checked(
+            &directory.0,
+            time,
+            |file| {
+                encodes += 1;
+                if stage == "before-encode" {
+                    window.replace(&[(13, &text)]);
+                }
+                let png = crate::image::to_png(&source.bytes, source.is_png).unwrap();
+                file.write_all(&png)?;
+                if stage == "generation" {
+                    activity.set_enabled(false);
+                    activity.set_enabled(true);
+                }
+                Ok(())
+            },
+            |staging| {
+                validations += 1;
+                let lease = staging.pin()?;
+                let staged = fs::read_dir(&directory.0)?
+                    .map(|e| e.unwrap().path())
+                    .find(|p| p.extension().is_some_and(|e| e == "tmp"))
+                    .unwrap();
+                assert!(lease.matches_view_item(&staged));
+                if stage == "before-publish" {
+                    window.replace(&[(13, &text)]);
+                }
+                if !activity.valid(ticket)
+                    || !crate::runtime::clipboard_sequences_match_for_test(captured, sequence())
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Paste snapshot revoked",
+                    ));
+                }
+                Ok(())
+            },
+        );
+        assert_eq!(encodes, 1);
+        assert_eq!(fs::read(&original).unwrap(), b"preserve original");
+        if stage == "control" {
+            let output = result.unwrap();
+            assert_eq!(validations, 2); // The occupied name forces a second guard.
+            assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
+            let png = fs::read(output).unwrap();
+            assert_eq!(crate::image::to_png(&png, true).unwrap(), png);
+        } else {
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+            assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+            if stage != "generation" {
+                assert_ne!(sequence(), captured);
+            } else {
+                assert!(!activity.valid(ticket));
+            }
+            let fresh_sequence = window.replace(&[(8, &dib())]);
+            let fresh = read_image(fresh_sequence).unwrap().unwrap();
+            let fresh_ticket = activity.ticket().unwrap();
+            let recovered = create_screenshot_with_staging_checked(
+                &directory.0,
+                time,
+                |file| file.write_all(&crate::image::to_png(&fresh.bytes, fresh.is_png).unwrap()),
+                |_| {
+                    assert!(activity.valid(fresh_ticket));
+                    assert!(crate::runtime::clipboard_sequences_match_for_test(
+                        fresh_sequence,
+                        sequence()
+                    ));
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
+            assert_eq!(fs::read(&original).unwrap(), b"preserve original");
+            let png = fs::read(recovered).unwrap();
+            assert_eq!(crate::image::to_png(&png, true).unwrap(), png);
+        }
+        println!("Native publication guard: {stage} checked");
+    }
 }
 
 #[test]
@@ -234,6 +364,8 @@ fn child_exercises_private_clipboard() {
         assert_eq!(read_image(sequence).unwrap().unwrap().bytes, png);
         window.replace(&[]);
     }
+    publication_checks(&window);
+    window.replace(&[]);
     drop(window);
     station.finish();
 }
