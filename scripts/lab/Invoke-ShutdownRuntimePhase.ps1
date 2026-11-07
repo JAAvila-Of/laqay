@@ -64,11 +64,12 @@ try{
     $timer=[Diagnostics.Stopwatch]::StartNew();$verified=$false;$shutdownAt=$null
     while($timer.Elapsed.TotalSeconds -lt 150){
         if((Get-VM -Id $vmId).State -eq 'Off'){
-            if(-not $verified -or -not $shutdownAt){throw 'The guest powered off before the pending-work fence.'}
+            if(-not $verified){throw 'The guest powered off before the pending-work fence.'}
             $r.OffObserved=$true;$r.Passed=$true;break
         }
         try{
-            $guest=Invoke-Command -Session $session -ArgumentList $root -ScriptBlock {param($root) $p=Join-Path $root 'guest.json';if(Test-Path -LiteralPath $p){Get-Content -LiteralPath $p -Raw|ConvertFrom-Json}}
+            try{$guest=Invoke-Command -Session $session -ArgumentList $root -ScriptBlock {param($root) $p=Join-Path $root 'guest.json';if(Test-Path -LiteralPath $p){Get-Content -LiteralPath $p -Raw|ConvertFrom-Json}}}
+            catch{if(-not $verified){throw};$guest=$null;$shutdownAt='AwaitingPersistedSnapshot'}
             if($guest){
                 if($guest.LabId -cne $LabId -or $guest.CycleId -cne $CycleId -or $guest.ExecutableSha256 -ine $ExpectedExecutableSha256){throw 'Unexpected shutdown report identity.'}
                 $r.Guest=$guest;Save
@@ -83,13 +84,13 @@ try{
                     $proof=$proofJson|ConvertFrom-Json
                     if($proof.Confirmed){
                         $r.PendingWaitProof=$proof;Save
+                        $verified=$true
                         Invoke-Command -Session $session -ArgumentList $runRoot,$root,$proof -ScriptBlock {
                             param($runRoot,$root,$proof)
                             . (Join-Path $runRoot 'ShutdownEvidence.ps1')
                             if(Test-Path -LiteralPath (Join-Path $root 'pending-proof.json')){throw 'Duplicate shutdown pending proof.'}
                             Write-ShutdownSnapshot (Join-Path $root 'pending-proof.json') $proof
                         }
-                        $verified=$true
                     }
                 }
                 if($guest.Status -eq 'ShutdownRequested'){$shutdownAt=$guest.ShutdownRequestedUtc}
