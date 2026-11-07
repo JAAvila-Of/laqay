@@ -29,6 +29,17 @@ $sessions=@{};$credentials=@{};$registered=@{};$allocated=@{};$targetSessions=@{
 $report=[ordered]@{LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;Client=$null;Peer=$null;RelayedOperations=@();TasksRemoved=@{};ServerSessionId=$null;ServerDisconnected=$false;
     CredentialRemoved=$false;TasksStopped=@{};CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $expectedOperations=@('Paste','Image','Paste','Paste','Text','Paste')
+$report['TaskSessionComparison']=$null
+function Get-RdpTaskSessionComparison($clientReport,$peerReport,[int]$primarySession,[int]$peerSession,[int]$serverSession){
+    if($primarySession -le 0 -or $peerSession -le 0 -or $serverSession -le 0){throw 'The owned task session IDs were not established.'}
+    $primaryObserved=$null;$peerObserved=$null
+    if($null -ne $clientReport){$primaryObserved=$clientReport.SessionId}
+    if($null -ne $peerReport){$peerObserved=$peerReport.SessionId}
+    $complete=$null -ne $clientReport -and $null -ne $peerReport
+    [pscustomobject]@{ExpectedPrimary=$primarySession;ExpectedPeer=$peerSession;ServerPeer=$serverSession;
+        ObservedPrimary=$primaryObserved;ObservedPeer=$peerObserved;Complete=$complete;
+        Matches=($complete -and $primaryObserved -eq $primarySession -and $peerObserved -eq $peerSession -and $peerObserved -eq $serverSession)}
+}
 function Save-Report {$report | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $reportPath -Encoding UTF8}
 function Read-Task([string]$role){
     Invoke-Command -Session $sessions[$role] -ArgumentList $taskName,$guestRoot,$role -ScriptBlock {
@@ -253,12 +264,19 @@ exit $LASTEXITCODE
             }
             $handled++;$report.RelayedOperations+=@($pending.Operation);$pending=$null
         }
-        if($peer.Report.FinishedUtc -and $peer.State -ne 'Running'){break}
+        if($peer.Report.FinishedUtc -and $peer.State -ne 'Running'){
+            $report.TaskSessionComparison=Get-RdpTaskSessionComparison $client.Report $peer.Report $targetSessions.Primary $targetSessions.Peer $report.ServerSessionId
+            Save-Report
+            if($report.TaskSessionComparison.Complete){break}
+        }
         Start-Sleep -Milliseconds 200
     }while([DateTime]::UtcNow -lt $until)
     $required=@('ImagePaste','CollisionPreservation','NativeFilePaste','AddressBarText','SearchText','RenameText','DisabledImageDoesNotSave','ReenabledImageSaves','ActiveTabSelection','UnicodePathImagePaste','ClipboardPreservedAfterImagePaste','ActiveWindowSelection','DeniedWriteRecovery','RdpSessionImagePaste','RdpRedirectedImagePaste','RdpNativeFilePaste','RdpRedirectedTextPaste')
     $guest=$peer.Report
-    if($guest.SessionId -ne $targetSessions.Peer -or $guest.SessionId -ne $report.ServerSessionId -or $client.Report.SessionId -ne $targetSessions.Primary){throw 'A task ran in a different guest session than requested.'}
+    $report.TaskSessionComparison=Get-RdpTaskSessionComparison $client.Report $guest $targetSessions.Primary $targetSessions.Peer $report.ServerSessionId
+    Save-Report
+    if(-not $report.TaskSessionComparison.Complete){throw 'The final task session reports were unavailable before the deadline.'}
+    if(-not $report.TaskSessionComparison.Matches){throw 'A task ran in a different guest session than requested.'}
     if(-not $guest.FinishedUtc -or -not $guest.Passed -or -not $guest.IncludeRdp -or $guest.SessionProtocol -ne 2 -or $guest.RdpClientAddress -ne '10.77.166.10' -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.Cases.Count -ne 17 -or @(Compare-Object $required @($guest.Cases.Name)).Count -or @($guest.Cases | Where-Object {-not $_.Passed}).Count -or -not $guest.ApplicationClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ForcedTermination -or -not $guest.PreferencesRestored -or -not $guest.PermissionsRestored -or @($guest.CleanupErrors).Count -or $peer.LastResult -ne 0 -or $handled -ne 6 -or $pending){throw 'The complete limited RDP suite did not pass.'}
     Write-ClientCommand 7 Close
     $ackLimit=[DateTime]::UtcNow.AddSeconds(10)
