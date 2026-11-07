@@ -68,9 +68,10 @@ fn open_image_clipboard(
                 return Ok(None);
             }
             if started.elapsed() >= MAX_OPEN_WAIT {
-                return Err(Error::from_hresult(windows::core::HRESULT::from_win32(
-                    ERROR_ACCESS_DENIED.0,
-                )));
+                return Err(Error::new(
+                    windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0),
+                    "The clipboard remained busy during the image request",
+                ));
             }
             match OpenClipboard(None) {
                 Ok(()) => {
@@ -84,7 +85,12 @@ fn open_image_clipboard(
                     if error.code()
                         == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0)
                         && started.elapsed() < MAX_OPEN_WAIT => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    return Err(Error::new(
+                        error.code(),
+                        "The clipboard could not be opened for the image request",
+                    ));
+                }
             }
         }
         std::thread::sleep(
