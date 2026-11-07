@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- confirm transient folder identity before initial image reads
 - retry transient clipboard contention within the original request
 - complete teardown before ending the Windows session
 - embed Cargo-derived Windows version metadata ([#52](https://github.com/JAAvila-Of/laqay/pull/52))
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- prepare owned tab navigation through its value pattern
 - handle null trigger collections in shutdown cleanup
 - capture optional console paste diagnostics
 - scope shutdown script policy to guest processes
