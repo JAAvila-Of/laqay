@@ -26,6 +26,8 @@ if(Test-Path -LiteralPath $path){throw 'Refusing a reused shutdown phase.'}
 $r=[ordered]@{LabId=$LabId;CycleId=$CycleId;Phase=$Phase;GuestProfile=$GuestProfile;BootPerformed=$false;IncludeRealApplications=$false;IncludeWindowsTerminal=$false;Suites=@();Passed=$false;AcceptancePending=$true;OffObserved=$false;TaskCreated=$false;PendingWaitProof=$null;Guest=$null;Error=$null;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 function Save {$r|ConvertTo-Json -Depth 16|Set-Content -LiteralPath $path -Encoding UTF8}
 $session=$null
+$r.Add('GuestProcessPolicyBefore',$null);$r.Add('GuestProcessPolicyRestored',$false);$r.Add('GuestProcessPolicyEnded',$false)
+$policyBefore=$null;$policyConfigured=$false
 try{
     Save
     $session=New-PSSession -VMId $vmId -Credential $credential
@@ -42,6 +44,18 @@ try{
         if((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $runRoot)){throw 'Refusing reused guest shutdown data.'}
         New-Item -ItemType Directory -Path $root,$runRoot -ErrorAction Stop|Out-Null
     }
+    $policyBefore=Invoke-Command -Session $session -ScriptBlock {
+        $ErrorActionPreference='Stop'
+        $before=[string](Get-ExecutionPolicy -Scope Process)
+        if((Get-ExecutionPolicy -Scope MachinePolicy) -ne 'Undefined' -or (Get-ExecutionPolicy -Scope UserPolicy) -ne 'Undefined'){throw 'The disposable protocol does not override Group Policy.'}
+        try{
+            Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
+            if((Get-ExecutionPolicy) -ne 'RemoteSigned'){throw 'The temporary guest process policy was not applied.'}
+        }catch{Set-ExecutionPolicy -Scope Process -ExecutionPolicy $before -Force;throw}
+        $before
+    }
+    $policyConfigured=$true
+    $r.GuestProcessPolicyBefore=$policyBefore;Save
     foreach($name in @('ShutdownEvidence.ps1','Complete-GuestShutdown.ps1','Invoke-GuestShutdown.ps1','Invoke-GuestDesktopSmoke.ps1','SmokeGuestProfile.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestVirtualFileControls.cs','GuestRealApplicationControls.cs')){
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $runRoot $name) -ToSession $session
     }
@@ -53,7 +67,7 @@ try{
         if(@(Get-Process laqay -ErrorAction SilentlyContinue).Count -or (Get-FileHash 'C:\LaqayLab\App\laqay.exe').Hash -ine $sha){throw 'The shutdown application baseline changed.'}
         if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'The shutdown task already exists.'}
         Start-ShutdownTrace $lab $cycle
-        $arguments='-NoProfile -NonInteractive -STA -WindowStyle Hidden -File "'+$runRoot+'\Invoke-GuestShutdown.ps1" -LabId '+$lab+' -CycleId '+$cycle+' -ExpectedExecutableSha256 '+$sha
+        $arguments='-NoProfile -NonInteractive -STA -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File "'+$runRoot+'\Invoke-GuestShutdown.ps1" -LabId '+$lab+' -CycleId '+$cycle+' -ExpectedExecutableSha256 '+$sha
         $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $arguments
         $principal=New-ScheduledTaskPrincipal -UserId ($env:COMPUTERNAME+'\LaqayLab') -LogonType Interactive -RunLevel Limited
         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew
@@ -107,6 +121,20 @@ try{
     if(-not $r.Passed){throw 'The guest did not power off within the shutdown phase.'}
 }catch{$r.Error=$_.Exception.Message}
 finally{
+    if($session -and $policyConfigured){
+        try{
+            if((Get-VM -Id $vmId).State -eq 'Running'){
+                Invoke-Command -Session $session -ArgumentList $policyBefore -ScriptBlock {
+                    param($before)
+                    Set-ExecutionPolicy -Scope Process -ExecutionPolicy $before -Force -ErrorAction Stop
+                    if([string](Get-ExecutionPolicy -Scope Process) -cne $before){throw 'Guest process policy restoration differs.'}
+                }
+                $r.GuestProcessPolicyRestored=$true
+            }elseif((Get-VM -Id $vmId).State -eq 'Off'){
+                $r.GuestProcessPolicyEnded=$true
+            }
+        }catch{$r.CleanupErrors+=@($_.Exception.Message);$r.Passed=$false}
+    }
     if($session){Remove-PSSession -Session $session -ErrorAction SilentlyContinue}
     $r.FinishedUtc=[DateTime]::UtcNow.ToString('o');Save
 }
