@@ -284,7 +284,11 @@ The application operates offline, with no accounts, telemetry, clipboard
 history, or keyboard history. Clipboard inspection is limited to paste
 requests. Normal mode has diagnostics off by default. `LAQAY_DIAGNOSTICS=1`
 explicitly enables diagnostic output for that process; the RDP lab sets it
-only on its owned application child. Diagnostic output can contain structural
+only on its owned application child. `LAQAY_DIAGNOSTICS=failures` enables
+rejection and error reports without verbose context observations or successful
+request records. Both values must match exactly. Failure reports can still
+affect subsequent timing; neither mode proves an intermittent issue fixed.
+Diagnostic output can contain structural
 context and destination paths, but never clipboard contents.
 Automatic startup is disabled by default.
 

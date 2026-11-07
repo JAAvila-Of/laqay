@@ -6,6 +6,19 @@ if(($arguments -join '|') -cne ('/s|/t|0|/d|p:0:0|/c|Laqay shutdown '+$cycle)){t
 function Must-Reject([scriptblock]$Action){$rejected=$false;try{& $Action|Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Invalid shutdown evidence was accepted.'}}
 Must-Reject {Get-ShutdownArguments 'invalid'}
 Must-Reject {Assert-ShutdownGuest $cycle $cycle}
+$action=[pscustomobject]@{Arguments='-File "C:\LaqayLab\Runs\'+$cycle+'\Invoke-GuestShutdown.ps1"'}
+foreach($triggers in @($null,@())){
+    $task=[pscustomobject]@{Actions=@($action);Triggers=$triggers}
+    if(-not (Test-ShutdownTaskOwnership $task $cycle)){throw 'A triggerless owned task was rejected.'}
+}
+foreach($task in @(
+    [pscustomobject]@{Actions=@($action);Triggers=@([pscustomobject]@{Enabled=$true})},
+    [pscustomobject]@{Actions=@($action,$action);Triggers=$null},
+    [pscustomobject]@{Actions=$null;Triggers=$null},
+    [pscustomobject]@{Actions=@([pscustomobject]@{Arguments='-File unrelated.ps1'});Triggers=$null}
+)){
+    if(Test-ShutdownTaskOwnership $task $cycle){throw 'An unrelated or triggered task was accepted.'}
+}
 $created='2026-01-01T01:00:00.0000000Z'
 $requested='2026-01-01T01:00:10.0000000Z'
 function Event-Xml([int]$Id,[string]$Extra){

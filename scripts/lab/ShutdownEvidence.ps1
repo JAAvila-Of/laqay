@@ -3,6 +3,13 @@ function Get-ShutdownArguments([string]$CycleId) {
     if($CycleId -cnotmatch '^[a-f0-9]{32}$'){throw 'Invalid shutdown identity.'}
     return @('/s','/t','0','/d','p:0:0','/c',('Laqay shutdown '+$CycleId))
 }
+function Test-ShutdownTaskOwnership($Task,[string]$CycleId) {
+    if($CycleId -cnotmatch '^[a-f0-9]{32}$' -or $null -eq $Task){return $false}
+    $actions=@($Task.Actions|Where-Object {$null -ne $_})
+    $triggers=@($Task.Triggers|Where-Object {$null -ne $_})
+    return $actions.Count -eq 1 -and $triggers.Count -eq 0 -and
+        $actions[0].Arguments -like ('*C:\LaqayLab\Runs\'+$CycleId+'\Invoke-GuestShutdown.ps1*')
+}
 function Assert-ShutdownGuest([string]$LabId, [string]$CycleId) {
     if ($LabId -cnotmatch '^[a-f0-9]{32}$' -or $CycleId -cnotmatch '^[a-f0-9]{32}$' -or
         [Security.Principal.WindowsIdentity]::GetCurrent().Name -notmatch '\\LaqayLab$') {

@@ -11,6 +11,12 @@ foreach($diagnostic in @($false,$true)){
     elseif($info.EnvironmentVariables.ContainsKey('LAQAY_DIAGNOSTICS')){throw 'The ordinary child inherited diagnostic opt-in.'}
 }
 if([Environment]::GetEnvironmentVariable('LAQAY_DIAGNOSTICS') -cne $before){throw 'The child launch changed the parent environment.'}
+$failureFactory=[LaqayGuestDesktop].GetMethod('FailureAwareStartInfo',$flags)
+$failureInfo=$failureFactory.Invoke($null,@('C:\LaqayLab\App\laqay.exe','',$true,$true,$true))
+if($failureInfo.EnvironmentVariables['LAQAY_DIAGNOSTICS'] -cne 'failures' -or $failureInfo.Arguments -cne '' -or -not $failureInfo.RedirectStandardOutput -or -not $failureInfo.RedirectStandardError){throw 'The failure-only diagnostic child changed its mode or stream capture.'}
+$rejected=$false;try{$failureFactory.Invoke($null,@('fixture','',$true,$false,$true))|Out-Null}catch{$rejected=$true}
+if(-not $rejected){throw 'Failure diagnostics without explicit diagnostic capture were accepted.'}
+if([Environment]::GetEnvironmentVariable('LAQAY_DIAGNOSTICS') -cne $before){throw 'Failure diagnostics changed the parent environment.'}
 $rejected=$false;try{[LaqayGuestDesktop]::StartNormalRdpDiagnosticApplication('invalid')|Out-Null}catch{$rejected=$true}
 if(-not $rejected){throw 'Unarmed normal-mode diagnostics were accepted.'}
 Add-Type @'
@@ -63,4 +69,4 @@ try{
         if($log.Output.Length -ne $limit -or $log.MaximumCharacters -ne $limit -or -not $log.Truncated){throw 'A diagnostic buffer exceeded or lost its declared bound.'}
     }
 }finally{$maximum.SetValue($null,$oldMaximum);$buffer.SetValue($null,$oldBuffer);$truncated.SetValue($null,$oldTruncated);$done.Dispose()}
-Write-Output 'Normal RDP launch, child-only opt-in, preserved original failure/log, reader drain, and both capture bounds passed without input.'
+Write-Output 'Normal diagnostic launch, child-only verbose/failure opt-in, preserved original failure/log, reader drain, and both capture bounds passed without input.'
