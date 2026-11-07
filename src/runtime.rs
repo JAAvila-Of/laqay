@@ -329,6 +329,26 @@ fn request_matches(request: Request, current: Option<Request>) -> bool {
     matches!(current, Some(now) if now.window == request.window && now.focus == request.focus && now.sequence == request.sequence)
 }
 
+#[cfg(all(test, feature = "isolated-clipboard-tests"))]
+pub(crate) fn clipboard_sequences_match_for_test(expected: u32, observed: u32) -> bool {
+    // Only the sequence is native in this component fixture. The window/focus
+    // fields are fixed synthetic values, never used as real HWNDs or permission.
+    let request = Request {
+        window: 1,
+        focus: 2,
+        sequence: expected,
+        received: Instant::now(),
+        ticket: 0,
+    };
+    request_matches(
+        request,
+        Some(Request {
+            sequence: observed,
+            ..request
+        }),
+    )
+}
+
 fn target(
     request: Request,
     diagnostics: bool,
