@@ -63,7 +63,7 @@ public static partial class LaqayGuestDesktop {
     }
     // Pure fixture generation is also checked without arming or opening a desktop.
     public static byte[] MatrixPng(int size) {
-        if(size!=2 && size!=2048) throw new ArgumentOutOfRangeException("size");
+        if(size!=2 && size!=2048 && size!=4096) throw new ArgumentOutOfRangeException("size");
         using(var bitmap=new Bitmap(size,size,PixelFormat.Format32bppArgb)) using(var output=new MemoryStream()) {
             using(var graphics=Graphics.FromImage(bitmap)) graphics.Clear(Color.White);
             bitmap.SetPixel(0,0,Color.FromArgb(MatrixPixel(0)));bitmap.SetPixel(size-1,0,Color.FromArgb(MatrixPixel(1)));

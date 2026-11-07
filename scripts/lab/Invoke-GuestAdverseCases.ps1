@@ -300,6 +300,68 @@ Run-Case 'SerialPasteResourceSample' {
     foreach($file in $files){Check-Png $file.FullName}
     $report.ResourceSamples+=@([pscustomobject]@{Phase='Serial';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
 }
-$expectedCases=if($IncludeRealApplications){33}else{29}
+Run-Case 'VirtualFileImageNativePaste' {
+    Assert-True ((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq 1) 'The virtual-file reference requires the running application enabled initially.'
+    foreach($enabled in @($false,$true)){
+        [LaqayGuestDesktop]::ToggleEnabled()
+        Wait-For {(Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Laqay' -Name Enabled) -eq [int]$enabled} 'The virtual-file reference could not set Enabled.'
+        $path=New-CaseFolder ('virtual-file-'+$enabled);$window=Open-Folder $path
+        $proof=[pscustomobject]@{LaqayEnabled=$enabled;Before=$null;After=$null;Input=$null;FileSha256=$null;OnlyExpectedFile=$false;ProviderClosed=$false;Error=$null}
+        $report.AdverseFixturesClosed=$false
+        try{
+            [LaqayGuestDesktop]::BeginVirtualFileClipboard()
+            $proof.Before=[LaqayGuestDesktop]::VirtualFileClipboardState()
+            Assert-True ($proof.Before.Current -and $proof.Before.OwnerPid -eq $proof.Before.SourcePid -and $proof.Before.HasPng -and $proof.Before.HasDescriptor -and $proof.Before.HasContents -and -not $proof.Before.HasFileDrop -and -not $proof.Before.Expired -and -not $proof.Before.Error) 'The live virtual provider did not offer both virtual files and PNG.'
+            $proof.Input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+            Assert-True ($proof.Input.Foreground -and $proof.Input.FocusWithinWindow) 'The virtual-file target lost folder focus.'
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
+            $expected=Join-Path $path $proof.Before.FileName
+            Wait-For {(Test-Path -LiteralPath $expected) -and (Get-Item -LiteralPath $expected).Length -eq $proof.Before.Length} 'Native Shell did not paste the virtual file.'
+            Start-Sleep -Milliseconds 700
+            $proof.After=[LaqayGuestDesktop]::VirtualFileClipboardState()
+            $proof.FileSha256=(Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash
+            $files=@(Get-ChildItem -LiteralPath $path -Force)
+            $proof.OnlyExpectedFile=($files.Count -eq 1 -and -not $files[0].PSIsContainer -and $files[0].Name -ceq $proof.Before.FileName)
+            Assert-True ($proof.OnlyExpectedFile -and $proof.FileSha256 -ceq $proof.Before.Sha256) 'Virtual-file paste produced an image, staging output, or changed file bytes.'
+            Assert-True ($proof.After.Current -and $proof.After.OwnerPid -eq $proof.Before.OwnerPid -and $proof.After.SourceThread -eq $proof.Before.SourceThread -and $proof.After.HasPng -and $proof.After.HasDescriptor -and $proof.After.HasContents -and -not $proof.After.HasFileDrop -and $proof.After.ContentReads -gt $proof.Before.ContentReads -and -not $proof.After.Expired -and -not $proof.After.Error) 'The same live OLE provider did not supply native file contents.'
+        }catch{$proof.Error=$_.Exception.Message;throw}finally{
+            try{[LaqayGuestDesktop]::EndVirtualFileClipboard();$proof.ProviderClosed=$true;$report.AdverseFixturesClosed=$true}finally{$report.VirtualFileProof+=@($proof);Save-Report}
+        }
+    }
+}
+Run-Case 'SustainedLargePngResponsive' {
+    $path=New-CaseFolder 'sustained-large-png';$window=Open-Folder $path
+    $watch=[Diagnostics.Stopwatch]::StartNew();$before=[LaqayGuestDesktop]::MatrixResources()
+    $report.SustainedLargePng=[pscustomobject]@{Dimension=4096;RequiredCount=12;Completed=@();ElapsedMilliseconds=0;MinimumMilliseconds=30000;BudgetMilliseconds=120000;Error=$null}
+    try{
+        for($index=1;$index -le 12;$index++){
+            Assert-True ($watch.ElapsedMilliseconds -lt 120000) 'The sustained PNG workload exceeded its budget.'
+            $frame=[Diagnostics.Stopwatch]::StartNew()
+            [LaqayGuestDesktop]::MatrixPngClipboard(4096)
+            $input=[LaqayGuestDesktop]::FolderInputState([IntPtr]$window.HWND)
+            Assert-True ($input.Foreground -and $input.FocusWithinWindow -and $input.ItemsViewFocused) 'The sustained PNG workload lost the folder view.'
+            [LaqayGuestDesktop]::Chord([IntPtr]$window.HWND,[UInt16[]]@(17,86))
+            Wait-For {Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The tray stopped responding during the sustained PNG workload.';@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq $index} 'A sustained large PNG was not published.' 30
+            $files=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File | Sort-Object LastWriteTimeUtc,Name)
+            $image=[Drawing.Bitmap]::new($files[-1].FullName)
+            $width=$image.Width;$height=$image.Height;$pixels=@()
+            try{
+                Assert-True ($image.Width -eq 4096 -and $image.Height -eq 4096) 'A sustained PNG changed dimensions.'
+                $points=@(@(0,0),@(4095,0),@(0,4095),@(4095,4095))
+                for($corner=0;$corner -lt 4;$corner++){$pixel=$image.GetPixel($points[$corner][0],$points[$corner][1]).ToArgb();$pixels+=@($pixel);Assert-True ($pixel -eq [LaqayGuestDesktop]::MatrixPixel($corner)) 'A sustained PNG changed alpha/channels.'}
+            }finally{$image.Dispose()}
+            Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq $index) 'The sustained workload left staging output.'
+            $report.SustainedLargePng.Completed+=@([pscustomobject]@{Index=$index;File=$files[-1].Name;Width=$width;Height=$height;CornerPixels=$pixels;Sha256=(Get-FileHash -LiteralPath $files[-1].FullName -Algorithm SHA256).Hash;ElapsedMilliseconds=$frame.ElapsedMilliseconds;Input=$input;Responsive=[LaqayGuestDesktop]::MatrixApplicationResponsive();Resources=[LaqayGuestDesktop]::MatrixResources()})
+            Save-Report
+            # Keep the bounded sample active for at least 30 seconds, rather than
+            # presenting a fast burst as a sustained workload.
+            $pace=3000-$frame.ElapsedMilliseconds;if($pace -gt 0){Start-Sleep -Milliseconds $pace}
+        }
+        foreach($previous in $report.SustainedLargePng.Completed){Assert-True ((Get-FileHash -LiteralPath (Join-Path $path $previous.File) -Algorithm SHA256).Hash -ceq $previous.Sha256) 'A later sustained paste changed an earlier image.'}
+        Assert-True ($watch.ElapsedMilliseconds -ge 30000 -and $watch.ElapsedMilliseconds -le 120000) 'The sustained PNG sample duration is outside its declared bounds.'
+        $report.ResourceSamples+=@([pscustomobject]@{Phase='SustainedLargePng';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
+    }catch{$report.SustainedLargePng.Error=$_.Exception.Message;throw}finally{$report.SustainedLargePng.ElapsedMilliseconds=$watch.ElapsedMilliseconds;Save-Report}
+}
+$expectedCases=if($IncludeRealApplications){35}else{31}
 if($IncludeWindowsTerminal){$expectedCases+=2}
 Assert-True ($report.Cases.Count -eq $expectedCases) 'The complete adverse suite did not execute.'

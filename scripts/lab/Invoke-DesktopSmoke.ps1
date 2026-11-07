@@ -124,7 +124,7 @@ try{
             Set-Acl -LiteralPath $startupRoot -AclObject $acl
         }
     }
-    foreach($file in @('SmokeGuestProfile.ps1','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestTerminalReceiver.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
+    foreach($file in @('SmokeGuestProfile.ps1','Invoke-GuestDesktopSmoke.ps1','Invoke-GuestStartup.ps1','Invoke-GuestPortableSession.ps1','Invoke-GuestAdverseCases.ps1','Invoke-GuestRealApplicationCases.ps1','GuestTerminalReceiver.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestVirtualFileControls.cs','GuestRealApplicationControls.cs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $guestRoot -ToSession $session}
     if($IncludeUnc){
         Invoke-Command -Session $session -ArgumentList $guestRoot,$peerCredential -ScriptBlock {
             param($runRoot,$peerCredential)
@@ -202,7 +202,7 @@ exit $LASTEXITCODE
                     $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,[Management.ManagementObjectSearcher].Assembly.Location,
                         [Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,[Windows.Automation.AutomationElement].Assembly.Location,
                         [Windows.Automation.ControlType].Assembly.Location,[Windows.Rect].Assembly.Location,[Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
-                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs'),(Join-Path $runRoot 'GuestAdverseControls.cs'),(Join-Path $runRoot 'GuestRealApplicationControls.cs')) -ReferencedAssemblies $references
+                    Add-Type -Path @((Join-Path $runRoot 'GuestDesktopControls.cs'),(Join-Path $runRoot 'GuestLifecycleControls.cs'),(Join-Path $runRoot 'GuestAdverseControls.cs'),(Join-Path $runRoot 'GuestVirtualFileControls.cs'),(Join-Path $runRoot 'GuestRealApplicationControls.cs')) -ReferencedAssemblies $references
                 }
                 [LaqayGuestWaitChain]::InspectJson($labId,$runId,$appPid,$providerPid,$providerThread,$sessionId)
             }
@@ -266,14 +266,19 @@ exit $LASTEXITCODE
     $required=@(Get-BasicSmokeCases $GuestProfile)
     if($IncludeUnc){$required+=@('UncImagePaste','UncExistingImagePreserved','UncNativeFilePaste')}
     if($IncludeLifecycle){$required+=@('ExplorerRestartRecovery','ExitWithPendingClipboard')}
-    if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage')}
+    if($IncludeAdverse){$required+=@('EmptyClipboardNoOutput','LockedClipboardRecovery','PngAlphaExact','LargePngResponsive','HeldPasteSingleImage','RapidPastePreservesImages','SecondInstanceExits','VirtualFolderDeclines','NativeEditNativeText','NativeEditImageDoesNotWrite','RichEditNativeText','RichEditImageDoesNotWrite','IdleResponsivenessSample','SerialPasteResourceSample','RenderedPngReferencePaste','TabSwitchCancelsPendingImage','VirtualFileImageNativePaste','SustainedLargePngResponsive')}
     if($IncludeRealApplications){$required+=@('NotepadRealText','NotepadRealImageDoesNotWrite','EdgeRealText','EdgeRealImageDoesNotWrite')}
     if($IncludeWindowsTerminal){$required+=@('TerminalRealText','TerminalRealImageDoesNotWrite')}
     $names=@($guest.Cases | ForEach-Object Name)
     if(-not $guest.PermissionsRestored){throw 'Guest fixture permissions were not restored.'}
     if($guest.LabId -ne $LabId -or $guest.RunId -ne $RunId -or -not $guest.Passed -or -not $guest.ApplicationClosed -or -not $guest.PreferencesRestored -or $guest.SessionId -le 0 -or $guest.ForcedTermination -or @($guest.CleanupErrors).Count -ne 0 -or @($guest.Cases).Count -ne $required.Count -or @(Compare-Object $required $names).Count -ne 0 -or @($guest.Cases | Where-Object { -not $_.Passed }).Count -ne 0 -or $result.LastResult -ne 0){throw ('Guest validation failed: '+$guest.Error)}
     if($IncludeLifecycle -and (-not $pendingVerified -or -not $summary.PendingWaitProof.Confirmed -or -not $guest.IncludeLifecycle -or -not $guest.PendingWaitVerified -or -not $guest.ProviderStopped -or $guest.SessionProtocol -ne 0 -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or -not $guest.ExplorerRestart.IconRegistered -or -not $guest.ExplorerRestart.ImageVerified -or $guest.ExplorerRestart.ApplicationPid -ne $guest.ApplicationPid -or $guest.ExplorerRestart.OldPid -le 0 -or $guest.ExplorerRestart.NewPid -le 0 -or $guest.ExplorerRestart.OldPid -eq $guest.ExplorerRestart.NewPid)){throw 'The exact lifecycle cases and pending-work proof did not pass.'}
-    if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 4 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
+    if($IncludeAdverse -and (-not $guest.IncludeAdverse -or -not $guest.AdverseFixturesClosed -or $guest.ApplicationExitCode -ne 0 -or $guest.ExecutableSha256 -ne $ExpectedExecutableSha256 -or $guest.ResourceSamples.Count -ne 5 -or $guest.SecondInstance.ExitCode -ne 0 -or $guest.SecondInstance.Forced -or $guest.SecondInstance.OriginalPid -ne $guest.ApplicationPid)){throw 'The complete adverse suite, resources, or owned-fixture cleanup did not pass.'}
+    if($IncludeAdverse){
+        . (Join-Path $PSScriptRoot 'VirtualFileProof.ps1')
+        Assert-VirtualFileProof @($guest.VirtualFileProof) $guest.ApplicationPid
+        Assert-SustainedLargePngProof $guest.SustainedLargePng $guest.ApplicationPid
+    }
     if($IncludeAdverse){
         $race=$guest.TabClipboardRace;$proof=$summary.PendingWaitProof
         $source=$race.SourceInputBefore;$providerBefore=$race.SourceProviderBefore;$providerAfter=$race.SourceProviderAfter
