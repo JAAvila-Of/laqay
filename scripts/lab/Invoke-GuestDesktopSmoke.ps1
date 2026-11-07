@@ -36,6 +36,7 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::StartShutdownApplication('C:\LaqayLab\App\laqay.exe')},
         {[LaqayGuestDesktop]::StartNormalConsoleDiagnosticApplication('C:\LaqayLab\App\laqay.exe')},
         {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
+        {[LaqayGuestDesktop]::SetNavigationAddress([IntPtr]::Zero,'invalid','invalid')},
         {[LaqayGuestDesktop]::BeginRenderedDelayedPng()},{[LaqayGuestDesktop]::ReleaseRenderedDelayedPng()},
         {[LaqayGuestDesktop]::ClipboardReadAvailable()},
         {[LaqayGuestDesktop]::RunRdpClient('invalid','invalid','invalid',$null)})){
@@ -297,16 +298,20 @@ function Check-Png([string]$path){
     }finally{$image.Dispose()}
 }
 function Navigate-Tab([IntPtr]$window,[string]$path){
-    $entry=[pscustomobject]@{Window=$window.ToInt64();Path=$path;Stage='BeforeAddress';StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null;Before=$null;AddressFocus=$null;PastedText=$null;Clipboard=$null;After=$null;SelectedTab=$null;ShellWindows=@();Passed=$false;Error=$null}
+    $entry=[pscustomobject]@{Window=$window.ToInt64();Path=$path;Stage='BeforeAddress';PreparationMethod='OwnedValuePattern';StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null;Before=$null;AddressFocus=$null;PreparedText=$null;After=$null;SelectedTab=$null;ShellWindows=@();Passed=$false;Error=$null}
     try{
         $entry.Before=[LaqayGuestDesktop]::FolderInputState($window)
-        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
-        $entry.Stage='AddressFocused';$entry.AddressFocus=[LaqayGuestDesktop]::FolderInputState($window)
-        [LaqayGuestDesktop]::TextClipboard($path)
-        $entry.Clipboard=[LaqayGuestDesktop]::ClipboardDiagnostic()
-        $entry.Stage='PasteAddress'
-        [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,86))
-        Wait-For {$entry.PastedText=[LaqayGuestDesktop]::FocusedText($window);$entry.PastedText -ceq $path} 'The guest address bar did not receive the exact navigation path.'
+        $entry.Stage='PrepareAddress'
+        Wait-For {
+            [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(17,76))
+            if(-not [LaqayGuestDesktop]::FocusedEditableReady($window)){return $false}
+            try{
+                $entry.AddressFocus=[LaqayGuestDesktop]::FolderInputState($window)
+                [LaqayGuestDesktop]::SetNavigationAddress($window,$path,$RunId)
+                $entry.PreparedText=[LaqayGuestDesktop]::FocusedText($window)
+                return $entry.PreparedText -ceq $path
+            }catch{return $false}
+        } 'The owned guest address editor did not retain the exact navigation path.'
         $entry.Stage='SubmitAddress'
         [LaqayGuestDesktop]::Chord($window,[System.UInt16[]]@(13))
         Wait-For { $null -ne (Find-Folder $path) } 'The new guest tab did not navigate to its test folder.'
