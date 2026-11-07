@@ -399,7 +399,27 @@ fn child_exercises_private_clipboard() {
                 if attempts == 2 {
                     release_tx.send(scenario == 2).unwrap();
                     if scenario == 2 {
-                        changed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        // EmptyClipboard notifies the previous owner on this
+                        // private thread. Pump its messages instead of blocking
+                        // that notification behind a channel wait.
+                        let limit = std::time::Instant::now() + Duration::from_secs(2);
+                        loop {
+                            match changed_rx.try_recv() {
+                                Ok(()) => break,
+                                Err(mpsc::TryRecvError::Empty) => {}
+                                Err(error) => panic!("Private clipboard owner failed: {error}"),
+                            }
+                            assert!(std::time::Instant::now() < limit);
+                            // SAFETY: This child verified its private station and
+                            // desktop before creating these owned static windows.
+                            unsafe {
+                                let mut message = MSG::default();
+                                if PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                                    DispatchMessageW(&message);
+                                }
+                            }
+                            std::thread::yield_now();
+                        }
                     }
                 }
                 scenario != 1 || attempts < 2
