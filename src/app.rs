@@ -76,6 +76,23 @@ fn message(window: HWND, text: &str, flags: MESSAGEBOX_STYLE) {
 }
 
 impl State {
+    fn teardown(&self) -> Result<()> {
+        self.activity.stop();
+        let tray = self
+            .tray
+            .try_borrow_mut()
+            .map_err(|_| Error::from_hresult(E_UNEXPECTED))?
+            .take();
+        drop(tray);
+        let observer = self
+            .observer
+            .try_borrow_mut()
+            .map_err(|_| Error::from_hresult(E_UNEXPECTED))?
+            .take();
+        drop(observer);
+        Ok(())
+    }
+
     fn update_icon(&self) -> Result<()> {
         if let Some(tray) = self
             .tray
@@ -211,10 +228,15 @@ unsafe extern "system" fn window_proc(
                 }
                 return LRESULT(0);
             }
-            if event == runtime::ENGINE_STOPPED
-                || event == WM_CLOSE
-                || (event == WM_ENDSESSION && wparam.0 != 0)
-            {
+            if event == WM_ENDSESSION && wparam.0 != 0 {
+                // Windows may terminate the process after this callback returns.
+                // Complete bounded teardown now: a queued quit message does not
+                // guarantee that the message loop will resume during shutdown.
+                // Explicit teardown is required because exit skips Rust drops.
+                let code = if state.teardown().is_ok() { 0 } else { 1 };
+                std::process::exit(code);
+            }
+            if event == runtime::ENGINE_STOPPED || event == WM_CLOSE {
                 state.activity.stop();
                 PostQuitMessage(0);
                 return LRESULT(0);
@@ -267,9 +289,7 @@ impl Drop for Window {
 struct Session<'a>(&'a State);
 impl Drop for Session<'_> {
     fn drop(&mut self) {
-        self.0.activity.stop();
-        self.0.tray.borrow_mut().take();
-        self.0.observer.borrow_mut().take();
+        let _ = self.0.teardown();
     }
 }
 
