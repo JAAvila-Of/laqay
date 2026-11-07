@@ -361,6 +361,13 @@ diagnostic screenshot of Primary's disposable desktop in private output only;
 the same guest identity, role, and unlocked-desktop guards apply. No host desktop
 is captured. A diagnostic image is not evidence that a paste case passed.
 
+Final task-session checks retain the expected and observed IDs in
+`TaskSessionComparison`. A temporarily unreadable report remains pending within
+the existing suite deadline; it is not treated as a different session. Once
+both reports are available, a wrong or missing session ID fails immediately.
+Missing reports at the deadline also fail, with a separate diagnostic. No
+additional client command or paste is sent while waiting for a report.
+
 `Set-RdpLabTrust.ps1 -Action Cleanup` removes only trust added by this run and
 restores the exact original hosts bytes/hash and timestamp. Unexpected edits
 prevent overwrite and fail cleanup. A calling cycle must also remove its own

@@ -27,6 +27,7 @@ try {
     & (Join-Path $PSScriptRoot 'Test-EmptyFolderFocusDiagnostic.ps1')
     & (Join-Path $PSScriptRoot 'Test-RdpTabFailureDiagnostic.ps1')
     & (Join-Path $PSScriptRoot 'Test-NormalRdpDiagnostics.ps1')
+    & (Join-Path $PSScriptRoot 'Test-RdpTaskSessions.ps1')
     # Exercise the actual serial input expressions with a Shell-shaped object.
     # Every call must bind successfully and then fail at the unarmed guard.
     $serialAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Invoke-GuestAdverseCases.ps1'),[ref]$null,[ref]$null)
