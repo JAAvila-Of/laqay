@@ -13,25 +13,26 @@ function Test-LaunchArguments([string]$source,[int]$count,[int[]]$booleanIndices
     foreach($GuestProfile in @('Windows11EnterpriseEvaluation','Windows10ProEsMx')){
     foreach($unc in @($false,$true)){foreach($lifecycle in @($false,$true)){foreach($consent in @($false,$true)){
         [switch]$IncludeUnc=$unc;[switch]$IncludeLifecycle=$lifecycle;[switch]$AllowGuestRdpFileConsent=$consent
-        foreach($adverse in @($false,$true)){foreach($real in @($false,$true)){foreach($terminal in @($false,$true)){foreach($PortablePhase in @('','Old','New','Removed')){
+        foreach($adverse in @($false,$true)){foreach($real in @($false,$true)){foreach($terminal in @($false,$true)){foreach($diagnostics in @($false,$true)){foreach($PortablePhase in @('','Old','New','Removed')){
             [switch]$IncludeAdverse=$adverse
             [switch]$IncludeRealApplications=$real
             [switch]$IncludeWindowsTerminal=$terminal
+            [switch]$CaptureNormalDiagnostics=$diagnostics
             # This is trusted repository source, evaluated only against the local mock.
             $arguments=& ([scriptblock]::Create($commands[0].Extent.Text))
             if($arguments.Count -ne $count){throw ('Guest launch argument count changed in '+$source)}
-            $expected=if($count -eq 14){@($unc,$lifecycle,$adverse,$real,$terminal)}else{@($consent)}
+            $expected=if($count -eq 15){@($unc,$lifecycle,$adverse,$real,$terminal,$diagnostics)}else{@($consent)}
             for($index=0;$index -lt $booleanIndices.Count;$index++){
                 $value=$arguments[$booleanIndices[$index]]
                 if($value -isnot [bool] -or $value -ne $expected[$index]){throw ('Guest launch switch changed type/value in '+$source)}
             }
-            if($count -eq 14 -and $arguments[13] -cne $GuestProfile){throw 'The explicit guest profile changed during argument binding.'}
-            if($count -eq 14 -and $arguments[9] -cne $PortablePhase){throw 'The portable phase changed during argument binding.'}
-        }}}}
+            if($count -eq 15 -and $arguments[13] -cne $GuestProfile){throw 'The explicit guest profile changed during argument binding.'}
+            if($count -eq 15 -and $arguments[9] -cne $PortablePhase){throw 'The portable phase changed during argument binding.'}
+        }}}}}
     }}}
     }
 }
-Test-LaunchArguments 'Invoke-DesktopSmoke.ps1' 14 @(7,8,10,11,12)
+Test-LaunchArguments 'Invoke-DesktopSmoke.ps1' 15 @(7,8,10,11,12,14)
 Test-LaunchArguments 'Invoke-RdpSmoke.ps1' 7 @(6)
 # Evaluate the actual task-action selection against an inert scheduler mock.
 $tokens=$null;$errors=$null

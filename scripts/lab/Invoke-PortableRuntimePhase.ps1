@@ -7,17 +7,20 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [ValidateSet('Windows11EnterpriseEvaluation','Windows10ProEsMx')][string]$GuestProfile='Windows11EnterpriseEvaluation',
     [switch]$IncludeRealApplications,
-    [switch]$IncludeWindowsTerminal
+    [switch]$IncludeWindowsTerminal,
+    [switch]$CaptureNormalDiagnostics
 )
 $ErrorActionPreference='Stop'
 if($GuestProfile -ceq 'Windows10ProEsMx' -and ($Phase -notin @('Boot','Basic') -or $IncludeRealApplications -or $IncludeWindowsTerminal)){throw 'The Pro runtime profile supports only Boot and Basic without extensions.'}
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
 if($IncludeRealApplications -and $Phase -ne 'Adverse'){throw 'Real applications require the explicit adverse phase.'}
+if($CaptureNormalDiagnostics -and ($Phase -ne 'Adverse' -or $GuestProfile -cne 'Windows11EnterpriseEvaluation')){throw 'Console diagnostics require the explicit Windows 11 adverse phase.'}
 if(-not $env:RUST_WORK_JOB){throw 'A RustWork runtime lease is required before any guest boot or application suite.'}
 $control=Join-Path $PSScriptRoot 'Invoke-DesktopTestLab.ps1'
 $suite=Join-Path $PSScriptRoot 'Invoke-DesktopSmoke.ps1'
 $report=[ordered]@{GuestProfile=$GuestProfile;LabId=$LabId;CycleId=$CycleId;Phase=$Phase;IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;Passed=$false;BootPerformed=$false;Suites=@();Error=$null}
 $reportPath=Join-Path $OutputDirectory 'phase-report.json'
+$report.Add('CaptureNormalDiagnostics',[bool]$CaptureNormalDiagnostics)
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing a reused runtime phase.'}
 function Run-Suite([string]$name,[hashtable]$extra){
     $runId=[guid]::NewGuid().ToString('N');$destination=Join-Path $OutputDirectory $name
@@ -65,7 +68,7 @@ try{
         Verify {Run-Suite 'startup' @{StartupPhase='Verify'}}
         Absent {Run-Suite 'startup' @{StartupPhase='Absent'}}
         Removed {Run-Suite 'portable' @{PortablePhase='Removed'}}
-        Adverse {Run-Suite 'adverse' @{IncludeAdverse=$true;IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal}}
+        Adverse {Run-Suite 'adverse' @{IncludeAdverse=$true;IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;CaptureNormalDiagnostics=[bool]$CaptureNormalDiagnostics}}
     }
     $report.Passed=$true
 }catch{
