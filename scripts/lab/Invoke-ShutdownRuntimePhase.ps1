@@ -26,6 +26,7 @@ if(Test-Path -LiteralPath $path){throw 'Refusing a reused shutdown phase.'}
 $r=[ordered]@{LabId=$LabId;CycleId=$CycleId;Phase=$Phase;GuestProfile=$GuestProfile;BootPerformed=$false;IncludeRealApplications=$false;IncludeWindowsTerminal=$false;Suites=@();Passed=$false;AcceptancePending=$true;OffObserved=$false;TaskCreated=$false;PendingWaitProof=$null;Guest=$null;Error=$null;CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 function Save {$r|ConvertTo-Json -Depth 16|Set-Content -LiteralPath $path -Encoding UTF8}
 $session=$null
+$r.Add('GuestProcessPolicyBefore',$null);$r.Add('GuestProcessPolicyRestored',$false);$r.Add('GuestProcessPolicyEnded',$false)
 $policyBefore=$null;$policyConfigured=$false
 try{
     Save
@@ -54,6 +55,7 @@ try{
         $before
     }
     $policyConfigured=$true
+    $r.GuestProcessPolicyBefore=$policyBefore;Save
     foreach($name in @('ShutdownEvidence.ps1','Complete-GuestShutdown.ps1','Invoke-GuestShutdown.ps1','Invoke-GuestDesktopSmoke.ps1','SmokeGuestProfile.ps1','GuestDesktopControls.cs','GuestLifecycleControls.cs','GuestAdverseControls.cs','GuestVirtualFileControls.cs','GuestRealApplicationControls.cs')){
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $runRoot $name) -ToSession $session
     }
@@ -127,6 +129,9 @@ finally{
                     Set-ExecutionPolicy -Scope Process -ExecutionPolicy $before -Force -ErrorAction Stop
                     if([string](Get-ExecutionPolicy -Scope Process) -cne $before){throw 'Guest process policy restoration differs.'}
                 }
+                $r.GuestProcessPolicyRestored=$true
+            }elseif((Get-VM -Id $vmId).State -eq 'Off'){
+                $r.GuestProcessPolicyEnded=$true
             }
         }catch{$r.CleanupErrors+=@($_.Exception.Message);$r.Passed=$false}
     }
