@@ -258,6 +258,50 @@ impl ExplorerSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SemanticFocusCheck {
+    ElementIdentity,
+    ControlType,
+    KeyboardFocus,
+    Enabled,
+    TextAncestry,
+}
+
+impl SemanticFocusCheck {
+    const ORDER: [Self; 5] = [
+        Self::ElementIdentity,
+        Self::ControlType,
+        Self::KeyboardFocus,
+        Self::Enabled,
+        Self::TextAncestry,
+    ];
+}
+
+fn semantic_focus_unchanged(
+    diagnostics: bool,
+    mut check: impl FnMut(SemanticFocusCheck) -> Result<bool>,
+) -> Result<bool> {
+    // Preserve short-circuit order: a rejected or unavailable element must not
+    // receive later property queries just to produce a more detailed log.
+    for step in SemanticFocusCheck::ORDER {
+        let result = check(step);
+        if diagnostics {
+            match &result {
+                Ok(false) => println!("Semantic focus changed: check={step:?}"),
+                Err(error) => eprintln!(
+                    "Semantic focus check failed: check={step:?}, hresult={:#010x}",
+                    error.code().0 as u32
+                ),
+                Ok(true) => {}
+            }
+        }
+        if !result? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn observe_semantic_focus(
     ready: mpsc::Sender<bool>,
     finish: mpsc::Receiver<()>,
@@ -304,13 +348,24 @@ fn observe_semantic_focus(
                 windows::Win32::Foundation::E_ABORT,
             ));
         }
-        let after = automation.GetFocusedElement()?;
-        let unchanged = automation.CompareElements(&focused, &after)?.as_bool()
-            && after.CurrentControlType()? == kind
-            && after.CurrentHasKeyboardFocus()?.as_bool()
-            && after.CurrentIsEnabled()?.as_bool()
-            && (kind != UIA_TextControlTypeId
-                || folder_text_path(&automation, &after, info.hwndFocus, diagnostics)?);
+        let after = automation.GetFocusedElement().inspect_err(|error| {
+            if diagnostics {
+                eprintln!(
+                    "Semantic focus check failed: check=FocusedElement, hresult={:#010x}",
+                    error.code().0 as u32
+                );
+            }
+        })?;
+        let unchanged = semantic_focus_unchanged(diagnostics, |step| match step {
+            SemanticFocusCheck::ElementIdentity => {
+                Ok(automation.CompareElements(&focused, &after)?.as_bool())
+            }
+            SemanticFocusCheck::ControlType => Ok(after.CurrentControlType()? == kind),
+            SemanticFocusCheck::KeyboardFocus => Ok(after.CurrentHasKeyboardFocus()?.as_bool()),
+            SemanticFocusCheck::Enabled => Ok(after.CurrentIsEnabled()?.as_bool()),
+            SemanticFocusCheck::TextAncestry => Ok(kind != UIA_TextControlTypeId
+                || folder_text_path(&automation, &after, info.hwndFocus, diagnostics)?),
+        })?;
         Ok(FocusObservation {
             control_type: kind.0,
             global_control_window,
@@ -589,6 +644,70 @@ fn observe_shell(check_empty: bool, diagnostics: bool) -> Result<ExplorerSnapsho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_checks_stop_at_each_changed_property() {
+        for diagnostics in [false, true] {
+            for (index, changed) in SemanticFocusCheck::ORDER.into_iter().enumerate() {
+                let mut observed = Vec::new();
+                let stable = semantic_focus_unchanged(diagnostics, |step| {
+                    observed.push(step);
+                    Ok(step != changed)
+                })
+                .unwrap();
+                assert!(!stable);
+                assert_eq!(observed, SemanticFocusCheck::ORDER[..=index]);
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_checks_preserve_provider_errors_without_later_queries() {
+        for diagnostics in [false, true] {
+            for (index, unavailable) in SemanticFocusCheck::ORDER.into_iter().enumerate() {
+                let mut observed = Vec::new();
+                let result = semantic_focus_unchanged(diagnostics, |step| {
+                    observed.push(step);
+                    if step == unavailable {
+                        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+                            UIA_E_ELEMENTNOTAVAILABLE as i32,
+                        )))
+                    } else {
+                        Ok(true)
+                    }
+                });
+                assert_eq!(
+                    result.unwrap_err().code().0 as u32,
+                    UIA_E_ELEMENTNOTAVAILABLE
+                );
+                assert_eq!(observed, SemanticFocusCheck::ORDER[..=index]);
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_checks_require_every_property_in_original_order() {
+        for diagnostics in [false, true] {
+            let mut observed = Vec::new();
+            assert!(
+                semantic_focus_unchanged(diagnostics, |step| {
+                    observed.push(step);
+                    Ok(true)
+                })
+                .unwrap()
+            );
+            assert_eq!(
+                observed,
+                [
+                    SemanticFocusCheck::ElementIdentity,
+                    SemanticFocusCheck::ControlType,
+                    SemanticFocusCheck::KeyboardFocus,
+                    SemanticFocusCheck::Enabled,
+                    SemanticFocusCheck::TextAncestry,
+                ]
+            );
+        }
+    }
 
     fn empty_snapshot() -> ExplorerSnapshot {
         ExplorerSnapshot {

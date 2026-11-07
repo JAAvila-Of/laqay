@@ -313,31 +313,42 @@ fn explorer_process(window: usize) -> Result<bool> {
     }
 }
 
-fn target(request: Request, diagnostics: bool) -> Result<Option<PathBuf>> {
+fn target(request: Request, diagnostics: bool, phase: &str) -> Result<Option<PathBuf>> {
     let current = current_request();
     if !matches!(current, Some(now) if now.window == request.window && now.focus == request.focus && now.sequence == request.sequence)
     {
         if diagnostics {
-            println!("Context declined: window, focus, or clipboard sequence changed");
+            println!(
+                "Context declined: phase={phase}, window, focus, or clipboard sequence changed"
+            );
         }
         return Ok(None);
     }
     if !explorer_process(request.window)? {
         if diagnostics {
-            println!("Context declined: foreground process is not Explorer");
+            println!("Context declined: phase={phase}, foreground process is not Explorer");
         }
         return Ok(None);
     }
-    let snapshot = explorer::observe_with_diagnostics(diagnostics)?;
+    let snapshot = explorer::observe_with_diagnostics(diagnostics).inspect_err(|error| {
+        if diagnostics {
+            eprintln!(
+                "Context check failed: phase={phase}, hresult={:#010x}",
+                error.code().0 as u32
+            );
+        }
+    })?;
     if snapshot.foreground_window != request.window || snapshot.focus_window != request.focus {
         if diagnostics {
-            println!("Context declined: Explorer snapshot no longer matches request");
+            println!(
+                "Context declined: phase={phase}, Explorer snapshot no longer matches request"
+            );
         }
         return Ok(None);
     }
     if diagnostics && snapshot.diagnostic_directory().is_none() {
         println!(
-            "Context declined: foreground_stable={}, native_focus_stable={}, unresolved_views={}, focused_views={}, semantic_focus={:?}",
+            "Context declined: phase={phase}, foreground_stable={}, native_focus_stable={}, unresolved_views={}, focused_views={}, semantic_focus={:?}",
             snapshot.foreground_unchanged,
             snapshot.native_focus_unchanged,
             snapshot.unresolved_entries,
@@ -369,7 +380,7 @@ fn save(
         }
         return Ok(None);
     }
-    let Some(directory) = target(request, diagnostics)? else {
+    let Some(directory) = target(request, diagnostics, "Initial")? else {
         return Ok(None);
     };
     if approved_directory.is_some_and(|approved| directory != approved) {
@@ -412,7 +423,7 @@ fn save(
                     "Observer paused or stopped",
                 ));
             }
-            let again = target(request, diagnostics)
+            let again = target(request, diagnostics, "BeforePublish")
                 .map_err(|error| io::Error::other(error.to_string()))?;
             if !active() || again.as_deref() != Some(directory.as_path()) {
                 return Err(io::Error::new(
