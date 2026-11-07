@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Enabled', 'Startup')]
+    [ValidateSet('Enabled', 'Startup', 'SessionEnd')]
     [string]$Scenario = 'Enabled',
     [ValidateRange(10, 30)]
     [int]$Seconds = 30,
@@ -27,6 +27,9 @@ if ($PrepareOnly) {
 }
 $preferencePath = 'Software\Laqay'
 $startupPath = 'Software\Microsoft\Windows\CurrentVersion\Run'
+if ($Scenario -eq 'SessionEnd' -and -not $Automated) {
+    throw 'Session notification checks require the explicit isolated automated mode.'
+}
 
 function Read-Value([string]$Path, [string]$Name) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($Path, $false)
@@ -117,7 +120,8 @@ $report = [ordered]@{
     Scenario = $Scenario; Seconds = $Seconds; Before = $before
     ObservedChange = $false; Restarted = $false; StartupRemoved = $false
     Passed = $false; Restored = $false; ForcedTermination = $false; Error = $null
-    Automated = [bool]$Automated; ApplicationRoundTrip = $false
+    Automated = [bool]$Automated; ApplicationRoundTrip = $false; SessionEndProof = $null
+    ExecutableSha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
 }
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -147,13 +151,35 @@ try {
     $desired = [int](-not $initialEnabled)
     $process = Start-OwnedApp
     Write-Output "Ready. Normal-mode preferences trial; process $($process.Id); scenario $Scenario; deadline $Seconds seconds."
-    if ($Automated) {
+    if ($Scenario -eq 'SessionEnd') {
+        $window = [LaqayPreferencesWindow]::Find([uint32]$process.Id)
+        $proof = [ordered]@{Pid=$process.Id;Window=$window.ToInt64();Queries=@();CancelledStayedAlive=$false;PreferencesUnchanged=$false;ConfirmedQueryAccepted=$false;ConfirmedExit=$false;ExitCode=$null;ExitMilliseconds=$null}
+        $report.SessionEndProof=$proof
+        foreach($logoff in @($false,$true)){
+            $accepted=[LaqayPreferencesWindow]::SessionNotification([uint32]$process.Id,$true,$false,$logoff)
+            if($accepted -ne 1){throw 'The application vetoed the owned session query.'}
+            $null=[LaqayPreferencesWindow]::SessionNotification([uint32]$process.Id,$false,$false,$logoff)
+            if($process.WaitForExit(500) -or [LaqayPreferencesWindow]::Find([uint32]$process.Id) -ne $window){throw 'A cancelled session notification closed or replaced the application.'}
+            $proof.Queries+=@([pscustomobject]@{Logoff=$logoff;Accepted=$true;Cancelled=$true;SameWindowAlive=$true})
+        }
+        $proof.CancelledStayedAlive=$true
+        $unchanged=@((Read-Value $preferencePath 'Enabled'),(Read-Value $startupPath 'Laqay'))
+        if(-not (Same-Value $before $unchanged)){throw 'Session queries or cancellation changed application preferences.'}
+        $proof.PreferencesUnchanged=$true
+        if([LaqayPreferencesWindow]::SessionNotification([uint32]$process.Id,$true,$false,$true) -ne 1){throw 'The application vetoed the final owned session query.'}
+        $proof.ConfirmedQueryAccepted=$true
+        $confirmed=[Diagnostics.Stopwatch]::StartNew()
+        $null=[LaqayPreferencesWindow]::SessionNotification([uint32]$process.Id,$false,$true,$true)
+        if(-not $process.WaitForExit(5000) -or $process.ExitCode -ne 0){throw 'Confirmed session notification did not close the application normally.'}
+        $proof.ConfirmedExit=$true;$proof.ExitCode=$process.ExitCode;$proof.ExitMilliseconds=$confirmed.ElapsedMilliseconds
+        $report.ApplicationRoundTrip=$true
+    } elseif ($Automated) {
         $command = if ($Scenario -eq 'Enabled') { 1001 } else { 1002 }
         if (-not [LaqayPreferencesWindow]::Command([uint32]$process.Id, $command)) {
             throw 'The owned application did not complete the first command.'
         }
     }
-    while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
+    while ($Scenario -ne 'SessionEnd' -and $clock.Elapsed.TotalSeconds -lt $Seconds) {
         if ($Scenario -eq 'Enabled') {
             $value = Read-Value $preferencePath 'Enabled'
             if ($value.Exists -and $value.Kind -eq 'DWord' -and $value.Data -eq $desired) {
@@ -209,7 +235,9 @@ try {
         }
         Start-Sleep -Milliseconds 100
     }
-    if ($Scenario -eq 'Enabled') {
+    if ($Scenario -eq 'SessionEnd') {
+        if(-not $report.SessionEndProof.ConfirmedExit){throw 'The session notification check was not completed.'}
+    } elseif ($Scenario -eq 'Enabled') {
         if (-not $report.Restarted -or -not $report.LoadedValueOnRestart.Exists -or
             $report.LoadedValueOnRestart.Data -ne $desired) { throw 'The persistence check was not completed.' }
     } elseif (-not $report.StartupRemoved) { throw 'The startup add/remove check was not completed.' }
