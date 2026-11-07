@@ -29,7 +29,7 @@ $mutations=@(
 foreach($mutation in $mutations){$proofs=@(New-Proofs);& $mutation $proofs;$rejected=$false;try{Assert-VirtualFileProof $proofs 42}catch{$rejected=$true};if(-not $rejected){throw 'A corrupted virtual-file proof was accepted.'}}
 Write-Output 'Virtual-file report acceptance and 13 evidence-corruption rejections passed without clipboard access.'
 function New-Stress {
-    $frames=@(1..12 | ForEach-Object {[pscustomobject]@{Index=$_;File=('Screenshot_20260102_030405_'+('{0:D3}' -f $_)+'.png');Sha256=('A'*64);Responsive=$true;ElapsedMilliseconds=100;Input=[pscustomobject]@{Foreground=$true;FocusWithinWindow=$true;ItemsViewFocused=$true};Resources=[pscustomobject]@{Pid=42;WorkingSetBytes=1;PrivateBytes=1;Handles=1;Threads=1}}})
+    $frames=@(1..12 | ForEach-Object {[pscustomobject]@{Index=$_;File=('Screenshot_20260102_030405_'+('{0:D3}' -f $_)+'.png');Width=4096;Height=4096;CornerPixels=@(0,1090453504,-2147418368,-16776961);Sha256=('A'*64);Responsive=$true;ElapsedMilliseconds=100;Input=[pscustomobject]@{Foreground=$true;FocusWithinWindow=$true;ItemsViewFocused=$true};Resources=[pscustomobject]@{Pid=42;WorkingSetBytes=1;PrivateBytes=1;Handles=1;Threads=1}}})
     [pscustomobject]@{Error=$null;Dimension=4096;RequiredCount=12;MinimumMilliseconds=30000;BudgetMilliseconds=120000;ElapsedMilliseconds=36000;Completed=$frames}
 }
 Assert-SustainedLargePngProof (New-Stress) 42
@@ -43,6 +43,8 @@ foreach($mutation in @(
     {param($p) $p.Completed[1].Input.ItemsViewFocused=$false},
     {param($p) $p.Completed[1].Resources.Pid=999},
     {param($p) $p.Completed[1].Sha256='invalid'},
-    {param($p) $p.Completed[1].Index=1}
+    {param($p) $p.Completed[1].Index=1},
+    {param($p) $p.Completed[1].Width=2048},
+    {param($p) $p.Completed[1].CornerPixels[1]=0}
 )){$proof=New-Stress;& $mutation $proof;$rejected=$false;try{Assert-SustainedLargePngProof $proof 42}catch{$rejected=$true};if(-not $rejected){throw 'A corrupted sustained-PNG proof was accepted.'}}
-Write-Output 'Sustained large-PNG report acceptance and 10 evidence-corruption rejections passed without image generation or input.'
+Write-Output 'Sustained large-PNG report acceptance and 12 evidence-corruption rejections passed without image generation or input.'

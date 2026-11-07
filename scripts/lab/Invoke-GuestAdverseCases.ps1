@@ -344,18 +344,20 @@ Run-Case 'SustainedLargePngResponsive' {
             Wait-For {Assert-True ([LaqayGuestDesktop]::MatrixApplicationResponsive()) 'The tray stopped responding during the sustained PNG workload.';@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File).Count -eq $index} 'A sustained large PNG was not published.' 30
             $files=@(Get-ChildItem -LiteralPath $path -Filter '*.png' -File | Sort-Object LastWriteTimeUtc,Name)
             $image=[Drawing.Bitmap]::new($files[-1].FullName)
+            $width=$image.Width;$height=$image.Height;$pixels=@()
             try{
                 Assert-True ($image.Width -eq 4096 -and $image.Height -eq 4096) 'A sustained PNG changed dimensions.'
                 $points=@(@(0,0),@(4095,0),@(0,4095),@(4095,4095))
-                for($corner=0;$corner -lt 4;$corner++){Assert-True ($image.GetPixel($points[$corner][0],$points[$corner][1]).ToArgb() -eq [LaqayGuestDesktop]::MatrixPixel($corner)) 'A sustained PNG changed alpha/channels.'}
+                for($corner=0;$corner -lt 4;$corner++){$pixel=$image.GetPixel($points[$corner][0],$points[$corner][1]).ToArgb();$pixels+=@($pixel);Assert-True ($pixel -eq [LaqayGuestDesktop]::MatrixPixel($corner)) 'A sustained PNG changed alpha/channels.'}
             }finally{$image.Dispose()}
             Assert-True (@(Get-ChildItem -LiteralPath $path -Force).Count -eq $index) 'The sustained workload left staging output.'
-            $report.SustainedLargePng.Completed+=@([pscustomobject]@{Index=$index;File=$files[-1].Name;Sha256=(Get-FileHash -LiteralPath $files[-1].FullName -Algorithm SHA256).Hash;ElapsedMilliseconds=$frame.ElapsedMilliseconds;Input=$input;Responsive=[LaqayGuestDesktop]::MatrixApplicationResponsive();Resources=[LaqayGuestDesktop]::MatrixResources()})
+            $report.SustainedLargePng.Completed+=@([pscustomobject]@{Index=$index;File=$files[-1].Name;Width=$width;Height=$height;CornerPixels=$pixels;Sha256=(Get-FileHash -LiteralPath $files[-1].FullName -Algorithm SHA256).Hash;ElapsedMilliseconds=$frame.ElapsedMilliseconds;Input=$input;Responsive=[LaqayGuestDesktop]::MatrixApplicationResponsive();Resources=[LaqayGuestDesktop]::MatrixResources()})
             Save-Report
             # Keep the bounded sample active for at least 30 seconds, rather than
             # presenting a fast burst as a sustained workload.
             $pace=3000-$frame.ElapsedMilliseconds;if($pace -gt 0){Start-Sleep -Milliseconds $pace}
         }
+        foreach($previous in $report.SustainedLargePng.Completed){Assert-True ((Get-FileHash -LiteralPath (Join-Path $path $previous.File) -Algorithm SHA256).Hash -ceq $previous.Sha256) 'A later sustained paste changed an earlier image.'}
         Assert-True ($watch.ElapsedMilliseconds -ge 30000 -and $watch.ElapsedMilliseconds -le 120000) 'The sustained PNG sample duration is outside its declared bounds.'
         $report.ResourceSamples+=@([pscustomobject]@{Phase='SustainedLargePng';Before=$before;After=[LaqayGuestDesktop]::MatrixResources()})
     }catch{$report.SustainedLargePng.Error=$_.Exception.Message;throw}finally{$report.SustainedLargePng.ElapsedMilliseconds=$watch.ElapsedMilliseconds;Save-Report}
