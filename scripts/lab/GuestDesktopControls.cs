@@ -922,6 +922,12 @@ public static partial class LaqayGuestDesktop {
         return StartApplicationCore(path,"",true,true);
     }
     public static int StartApplication(string path) {return StartApplicationCore(path,"",false);}
+    public static int StartNormalConsoleDiagnosticApplication(string path) {
+        Guard();RequireRole("Primary");
+        if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows11EnterpriseEvaluation" || SessionProtocol()!=0)
+            throw new InvalidOperationException("Normal console diagnostics require the owned Windows 11 Primary console.");
+        return StartApplicationCore(path,"",true,true);
+    }
     static ProcessStartInfo ApplicationStartInfo(string path,string arguments,bool capture,bool normalDiagnostics) {
         var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
         start.EnvironmentVariables.Remove("LAQAY_DIAGNOSTICS");

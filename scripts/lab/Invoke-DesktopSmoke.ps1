@@ -13,6 +13,7 @@ param(
     [switch]$IncludeAdverse,
     [switch]$IncludeRealApplications,
     [switch]$IncludeWindowsTerminal,
+    [switch]$CaptureNormalDiagnostics,
     [ValidateSet('Old','New','Removed')][string]$PortablePhase,
     [switch]$PrepareOnly
 )
@@ -20,6 +21,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'SmokeGuestProfile.ps1')
 Assert-SmokeProfileModes $GuestProfile ([bool]($IncludeUnc -or $IncludeLifecycle -or $IncludeAdverse -or $IncludeRealApplications -or $IncludeWindowsTerminal -or $PortablePhase -or $StartGuestForStartup -or $StartupPhase -ne 'Explorer'))
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
+if($CaptureNormalDiagnostics -and (-not $IncludeAdverse -or $GuestProfile -cne 'Windows11EnterpriseEvaluation')){throw 'Console diagnostics require an explicit Windows 11 adverse suite.'}
 $ProgressPreference='SilentlyContinue'
 if($PrepareOnly){& (Join-Path $PSScriptRoot 'Invoke-GuestDesktopSmoke.ps1') -PrepareOnly -GuestProfile $GuestProfile;& (Join-Path $PSScriptRoot 'Invoke-GuestStartup.ps1') -PrepareOnly;& (Join-Path $PSScriptRoot 'Invoke-GuestPortableSession.ps1') -PrepareOnly;return}
 if($IncludeAdverse -and ($IncludeUnc -or $IncludeLifecycle -or $PortablePhase -or $StartupPhase -ne 'Explorer')){throw 'Adverse cases require a separate console Explorer suite.'}
@@ -62,6 +64,7 @@ $edgeScopeAttempted=$false
 $summary=[ordered]@{GuestProfile=$GuestProfile;LabId=$LabId;RunId=$RunId;StartupPhase=$StartupPhase;CycleId=$CycleId;Passed=$false;Error=$null;GuestReport=$null;TaskRemoved=$false;TaskStopped=$false;EdgePoliciesPrepared=(-not $IncludeRealApplications);EdgePoliciesRestored=(-not $IncludeRealApplications);EdgePolicyPreparation=$null;EdgePolicyRestoration=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;PendingWaitProof=$null;IncludeUnc=[bool]$IncludeUnc;SmbConnection=$null;ServerFilesVerified=$false;ServerFixtureRemoved=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);CleanupErrors=@();StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$summary.Add('CaptureNormalDiagnostics',[bool]$CaptureNormalDiagnostics)
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath (Join-Path $output 'host-report.json')){throw 'Refusing to reuse an existing host run report.'}
 try{
@@ -134,8 +137,8 @@ try{
             $peerCredential | Export-Clixml -LiteralPath (Join-Path $runRoot 'peer-credential.xml')
         }
     }
-    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications),([bool]$IncludeWindowsTerminal),$GuestProfile) -ScriptBlock {
-        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications,$includeWindowsTerminal,$guestProfile='Windows11EnterpriseEvaluation')
+    Invoke-Command -Session $session -ArgumentList @($LabId,$RunId,$ExpectedExecutableSha256,$guestRoot,$taskName,$StartupPhase,$CycleId,([bool]$IncludeUnc),([bool]$IncludeLifecycle),$PortablePhase,([bool]$IncludeAdverse),([bool]$IncludeRealApplications),([bool]$IncludeWindowsTerminal),$GuestProfile,([bool]$CaptureNormalDiagnostics)) -ScriptBlock {
+        param($labId,$runId,$sha,$runRoot,$taskName,$startupPhase,$cycleId,$includeUnc,$includeLifecycle,$portablePhase,$includeAdverse,$includeRealApplications,$includeWindowsTerminal,$guestProfile='Windows11EnterpriseEvaluation',$captureNormalDiagnostics=$false)
         $ErrorActionPreference='Stop'
         if($includeUnc -isnot [bool] -or $includeLifecycle -isnot [bool]){throw 'Guest launch options must be Boolean values.'}
         if($includeAdverse -isnot [bool]){throw 'The adverse option must be Boolean.'}
@@ -154,6 +157,8 @@ exit $LASTEXITCODE
         if($includeRealApplications){$extra+=' -IncludeRealApplications'}
         if($includeWindowsTerminal -isnot [bool] -or ($includeWindowsTerminal -and -not $includeRealApplications)){throw 'Unexpected Terminal launch selection.'}
         if($includeWindowsTerminal){$extra+=' -IncludeWindowsTerminal'}
+        if($captureNormalDiagnostics -isnot [bool] -or ($captureNormalDiagnostics -and (-not $includeAdverse -or $guestProfile -cne 'Windows11EnterpriseEvaluation'))){throw 'Unexpected console diagnostic selection.'}
+        if($captureNormalDiagnostics){$extra+=' -CaptureNormalDiagnostics'}
         if($portablePhase){$driver='Invoke-GuestPortableSession.ps1';$extra="-CycleId '$cycleId' -Phase '$portablePhase'"}
         $launcher=$launcher.Replace('@@DRIVER@@',$driver).Replace('@@EXTRA@@',$extra)
         Set-Content -LiteralPath (Join-Path $runRoot 'Launch.ps1') -Value $launcher -Encoding UTF8
