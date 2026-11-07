@@ -48,11 +48,17 @@ Windows 11 Enterprise evaluation console, including upgrade, real-login startup
 and removal. Separate desktop suites cover Explorer paste, native file/text
 behavior, UNC, RDP clipboard transfer and selected lifecycle failures.
 
-**The full integration matrix remains incomplete.** Windows 10 is planned but
-not yet validated. Rapid context changes, storage failures and broader
-application compatibility have separate coverage limits. See the
-[integration matrix](docs/integration-tests.md) for the exact results;
-these engineering previews are not a claim of 1.0 readiness.
+Recent isolated regression suites passed 37 cases on Windows 11, 12 basic
+cases on Windows 10 Pro 22H2 (native file tabs do not apply), and 16 UNC cases.
+Separate RDP suites passed with an earlier build of the same production logic.
+Hosted CI also checks native clipboard conversion, publication cancellation,
+disk-full and SMB recovery, and directed session-ending notifications.
+
+**The full integration matrix remains incomplete.** Real shutdown with pending
+work, additional context-change stages and the intermittent context rejection
+tracked in [#41](https://github.com/JAAvila-Of/laqay/issues/41) retain explicit
+limits. See the [integration matrix](docs/integration-tests.md) for the tested
+sources and scope; these engineering previews are not a claim of 1.0 readiness.
 
 ## Build and contribute
 
