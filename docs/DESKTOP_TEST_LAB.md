@@ -392,8 +392,16 @@ sequence, and queue delay for correlation with the case input snapshots.
 Logging can affect timing; a successful diagnostic run does not establish that
 an earlier intermittent failure has been fixed.
 
-Outside the harness, diagnostics require the exact environment value `1`
-and redirected stdout/stderr. Other values leave diagnostics disabled. Output
+The console suite's explicit `-CaptureNormalDiagnostics` instead sets the exact
+value `failures` on its owned child. It records rejections and errors without
+verbose UIA observations, request-start records, or successful-save records.
+`NormalDiagnosticMode` identifies the selected mode in the guest report. An
+empty, drained capture is valid when no request is rejected. The complete
+original case list and failure verdict remain unchanged. Failure logging can
+still affect subsequent timing; this mode does not establish a timing-free run.
+
+Outside the harness, diagnostics require the exact environment value `1` or
+`failures` and redirected stdout/stderr. Other values leave diagnostics disabled. Output
 can include destination paths; retain session logs privately. No variable is
 written to the parent process, registry, or persistent application settings.
 
