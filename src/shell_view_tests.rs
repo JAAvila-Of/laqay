@@ -14,7 +14,7 @@ use windows::{
         UI::{
             Shell::{
                 EBO_NOPERSISTVIEWSTATE, EBO_NOTRAVELLOG, ExplorerBrowser, IExplorerBrowser,
-                SHCreateItemFromParsingName,
+                IShellView, SHCreateItemFromParsingName,
             },
             WindowsAndMessaging::*,
         },
@@ -126,6 +126,12 @@ impl Browser {
 
     fn wait_view(&self, path: &Path, count: i32) -> IFolderView {
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut refreshed = false;
+        let mut last_count = None;
+        println!(
+            "Real Shell fixture: refreshing {} for count={count}",
+            path.display()
+        );
         loop {
             // SAFETY: Only this dedicated child's message queue is pumped. The
             // interfaces and allocated PIDL/name remain on the initializing STA.
@@ -148,15 +154,24 @@ impl Browser {
                     CoTaskMemFree(Some(name.0.cast()));
                     if PathBuf::from(current.unwrap()).canonicalize().unwrap()
                         == path.canonicalize().unwrap()
-                        && view.ItemCount(SVGIO_ALLVIEW).unwrap() == count
                     {
-                        return view;
+                        if !refreshed {
+                            // Do not rely on interactive Shell notifications in this
+                            // hidden fixture. Refresh its own view once per assertion;
+                            // the production observer itself remains read-only.
+                            view.cast::<IShellView>().unwrap().Refresh().unwrap();
+                            refreshed = true;
+                        }
+                        last_count = Some(view.ItemCount(SVGIO_ALLVIEW).unwrap());
+                        if last_count == Some(count) {
+                            return view;
+                        }
                     }
                 }
             }
             assert!(
                 Instant::now() < deadline,
-                "The real Shell view never reached the expected directory/count={count}"
+                "The real Shell view never reached the expected directory/count={count}; last_count={last_count:?}, refreshed={refreshed}"
             );
             std::thread::sleep(Duration::from_millis(10));
         }

@@ -71,7 +71,10 @@ reject an unpinned singleton and a same-name/same-bytes copy in another folder,
 and reject a view containing an additional foreign file. Successful publication
 encodes once; rejection removes only the owned staging file and preserves the
 foreign file. Each view must report the expected filesystem path and item count;
-navigation success alone is insufficient. View state and travel history are not
+navigation success alone is insufficient. The fixture explicitly refreshes only
+its own hidden view after filesystem mutations, rather than requiring interactive
+Shell notifications on its private station. This is test preparation, not a
+production refresh or focus repair. View state and travel history are not
 persisted. The CI validation log retains the successful child output.
 
 This exercises real PIDL/path resolution and staging exclusion, without input,
