@@ -10,12 +10,14 @@ param(
     [switch]$IncludeAdverse,
     [switch]$IncludeRealApplications,
     [switch]$IncludeWindowsTerminal,
+    [switch]$CaptureNormalDiagnostics,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'SmokeGuestProfile.ps1')
 Assert-SmokeProfileModes $GuestProfile ([bool]($IncludeUnc -or $IncludeRdp -or $IncludeLifecycle -or $IncludeAdverse -or $IncludeRealApplications -or $IncludeWindowsTerminal))
 if($IncludeWindowsTerminal -and -not $IncludeRealApplications){throw 'Windows Terminal requires the explicit real application extension.'}
+if($CaptureNormalDiagnostics -and (-not $IncludeAdverse -or $IncludeRdp -or $GuestProfile -cne 'Windows11EnterpriseEvaluation')){throw 'Console diagnostics require an explicit Windows 11 adverse console suite.'}
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing,System.Management,System.Web.Extensions,UIAutomationClient,UIAutomationTypes,WindowsBase
 $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assembly.Location,
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
@@ -32,6 +34,7 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
         {[LaqayGuestDesktop]::StartShutdownApplication('C:\LaqayLab\App\laqay.exe')},
+        {[LaqayGuestDesktop]::StartNormalConsoleDiagnosticApplication('C:\LaqayLab\App\laqay.exe')},
         {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
         {[LaqayGuestDesktop]::BeginRenderedDelayedPng()},{[LaqayGuestDesktop]::ReleaseRenderedDelayedPng()},
         {[LaqayGuestDesktop]::ClipboardReadAvailable()},
@@ -89,6 +92,7 @@ $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::Gues
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     VirtualFileProof=@();SustainedLargePng=$null;IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
+$report.Add('CaptureNormalDiagnostics',[bool]$CaptureNormalDiagnostics)
 $shell=$null
 $applicationStarted=$false
 $preferencesTouched=$false
@@ -347,6 +351,7 @@ try{
     $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Laqay')
     try{$key.SetValue('Enabled',1,[Microsoft.Win32.RegistryValueKind]::DWord)}finally{$key.Dispose()}
     if($IncludeRdp){$report.ApplicationPid=[LaqayGuestDesktop]::StartNormalRdpDiagnosticApplication($executable)}
+    elseif($CaptureNormalDiagnostics){$report.ApplicationPid=[LaqayGuestDesktop]::StartNormalConsoleDiagnosticApplication($executable)}
     else{$report.ApplicationPid=[LaqayGuestDesktop]::StartApplication($executable)}
     $applicationStarted=$true
     Save-Report
@@ -739,7 +744,7 @@ try{
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
-        if($IncludeRdp){
+        if($IncludeRdp -or $CaptureNormalDiagnostics){
             try{
                 $report.NormalModeLog=[LaqayGuestDesktop]::CoreTrialLog()
                 if(-not $report.NormalModeLog.Drained){$report.CleanupErrors+=@('The normal-mode diagnostic readers did not drain.');$report.Passed=$false}
