@@ -1,5 +1,46 @@
 # Windows integration validation
 
+## Latest bounded evidence — 2026-11-07 UTC
+
+| Environment or component | Tested source | Result |
+| --- | --- | --- |
+| Windows 11 Enterprise Evaluation console | `3911eba` | 37/37: extended desktop suite, including real OLE virtual-file precedence and twelve 4096×4096 PNGs over 36 seconds |
+| Windows 10 Pro 19045 es-MX console | `3911eba` | 12/12 basic cases; native file-tab selection explicitly not applicable |
+| Authenticated, signed SMB between two guests | `3911eba` | 16/16 UNC cases, with independent peer-side file hashes |
+| RDP, diagnostic logging enabled | `9832f67` | 17/17 and ten tab rounds over 72 seconds |
+| RDP, normal logging-disabled mode | `9832f67` | 17/17; same executable as the logging-enabled run |
+| Hosted native/API and isolated component CI | `6bc6a7a` | 82 passed, 0 failed; five controlled exclusions exercised separately or in child processes |
+
+The three `3911eba` suites restored their baselines and temporary logon and
+ended with all guests off and owned controllers absent. The Windows 10 result
+was checked by a later read-only validator; unlike the other two, its validator
+was not frozen before execution. RDP reports and cleanup were independently
+accepted. RDP used different executable bytes: production logic did not change
+between `9832f67` and `3911eba`, but source continuity is not a rerun of those
+bytes. Earlier failed attempts remain failures.
+
+CI also exercised a real Shell view with writer-owned staging exclusion, real
+disk-full failure, SMB withdrawal and writer-owned recovery cleanup. Four
+private-station clipboard cases connect real sequence changes and WIC/native
+publication to the runtime request predicate: unchanged control with a filename
+collision, replacement before encoding, replacement before publication, and
+generation cancellation before the encoder callback returns. HWND/focus fields
+are fixed synthetic values; these cases do not establish a complete Explorer
+focus or tab race.
+
+Directed session notifications to the normal CI executable accepted shutdown
+and logoff queries and cancellations while preserving its owned window and
+preferences. Confirmation exited with code 0 in 7 ms; the executable hash and
+restoration were independently checked. This is an idle-window notification
+test, not an actual Windows shutdown or a blocked-provider/encoder test.
+
+Remaining limits include real shutdown with pending work, additional
+context-change stages, the non-atomic interval after final context validation,
+and the intermittent semantic-context rejection tracked in
+[#41](https://github.com/JAAvila-Of/laqay/issues/41). Passing RDP runs did not
+exercise the new recovery branch or prove the historical rejection's cause.
+These results do not by themselves declare stable-release readiness.
+
 ## Acceptance policy
 
 Release acceptance prioritizes core risks: correct Explorer destination and
