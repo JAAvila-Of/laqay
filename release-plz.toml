@@ -5,13 +5,12 @@ git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 git_release_enable = true
 git_release_draft = true
-git_release_type = "pre"
-git_release_latest = false
+git_release_type = "prod"
+git_release_latest = true
 git_release_body = """
-Engineering preview for Windows x64. The full integration matrix is incomplete;
-this release is not a production-readiness claim. Desktop evidence covers one
-Windows 11 Enterprise evaluation setup. Windows 10, RDP reconnects, all storage
-failures, and every shutdown/encoding stage remain unvalidated.
+Portable release for Windows x64. Consult the validation matrix for tested
+Windows builds, scenarios and remaining limits. Coverage is bounded; it does
+not establish every application, storage failure or shutdown/encoding stage.
 
 Download the portable ZIP with its notices and guide, and check SHA256SUMS.txt.
 The executable is unsigned; a checksum does not authenticate the publisher.
@@ -24,9 +23,9 @@ and [validation matrix](https://github.com/JAAvila-Of/laqay/blob/v{{ version }}/
 {{ changelog }}
 """
 pr_body = """
-## Proposed engineering preview
+## Proposed release
 
-This PR prepares a pre-release for Windows x64. It does not publish a release.
+This PR prepares a release for Windows x64. It does not publish a release.
 Review the generated changelog, required checks, validation limits, and portable
 delivery before merging. Publication remains a separate workflow operation.
 

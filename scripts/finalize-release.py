@@ -33,10 +33,20 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def check_draft(release, tag):
+def check_channel(tag, channel):
+    require(channel in ("preview", "stable"), "Unknown release channel")
+    require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag), "Invalid release tag")
+    if channel == "stable":
+        require(re.fullmatch(r"v[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag),
+                "Stable delivery requires a final version at or above 1.0.0")
+
+
+def check_draft(release, tag, channel="preview"):
+    check_channel(tag, channel)
     require(release["tag_name"] == tag and release["draft"] and not release.get("immutable", False),
             "Expected an unpublished release-plz draft; do not modify a published release")
-    require(release["prerelease"], "Engineering releases must remain pre-releases")
+    require(release["prerelease"] is (channel == "preview"),
+            "Draft prerelease flag does not match the explicit release channel")
 
 
 def check_assets(release, files):
@@ -83,15 +93,16 @@ def verify_published(*arguments):
 
 
 def finalize(repository, tag, commit, binary, archive, licenses, checksums, immutability_confirmed=False,
-             recovery_builder_commit=None):
+             recovery_builder_commit=None, channel="preview"):
     # The repository setting requires Administration read, unavailable to GITHUB_TOKEN.
     require(immutability_confirmed, "An administrator must confirm release immutability before dispatch")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository), "Invalid repository")
-    require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag), "Invalid release tag")
+    check_channel(tag, channel)
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Expected a full source commit")
     signer = ".github/workflows/release.yml"
     builder = commit
     if recovery_builder_commit is not None:
+        require(channel == "preview", "Historical recovery must remain a preview")
         require(repository == "JAAvila-Of/laqay" and tag == "v0.1.1" and commit == RECOVERY_SOURCE,
                 "Recovery is restricted to the reviewed v0.1.1 source")
         require(re.fullmatch(r"[0-9a-f]{40}", recovery_builder_commit), "Expected a full recovery builder commit")
@@ -105,7 +116,7 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums, immu
     if recovery_builder_commit is not None:
         require(release_id == RECOVERY_RELEASE_ID, "Recovery draft ID changed")
     release = json.loads(gh("api", f"{api}/releases/{release_id}"))
-    check_draft(release, tag)
+    check_draft(release, tag, channel)
     require(not release["assets"], "Draft already has assets; inspect it before an explicit recovery")
     release_api = f"{api}/releases/{release['id']}"
     files = {path.name: path for path in (binary, archive, checksums)}
@@ -127,14 +138,16 @@ def finalize(repository, tag, commit, binary, archive, licenses, checksums, immu
                                          "--predicate-type", SOURCE_PREDICATE, "--format", "json"))
                 check_source_binding(verified, source_binding(repository, tag, commit, builder))
         current = json.loads(gh("api", release_api))
-        check_draft(current, tag)
+        check_draft(current, tag, channel)
         check_assets(current, files)
         check_tag(api, tag, commit)
         # release-plz owns version/tag/notes and created this draft. Only now expose it.
-        gh("api", "--method", "PATCH", release_api, "-F", "draft=false", "-f", "make_latest=false")
+        gh("api", "--method", "PATCH", release_api, "-F", "draft=false", "-f",
+           "make_latest=" + ("true" if channel == "stable" else "false"))
         published = json.loads(gh("api", release_api))
         require(published["tag_name"] == tag and not published["draft"] and published["immutable"]
-                and published["prerelease"], "Publication did not produce the expected immutable pre-release")
+                and published["prerelease"] is (channel == "preview"),
+                "Publication did not produce the expected immutable release channel")
         check_assets(published, files)
         verify_published("release", "verify", tag, "--repo", repository)
         for name in sorted(ASSET_NAMES):
@@ -146,6 +159,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--immutability-confirmed", action="store_true")
     parser.add_argument("--recovery-builder-commit")
+    parser.add_argument("--channel", choices=("preview", "stable"), default="preview")
     for name in ("repository", "tag", "commit"):
         parser.add_argument(f"--{name}", required=True)
     for name in ("binary", "archive", "licenses", "checksums"):

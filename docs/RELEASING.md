@@ -14,6 +14,10 @@ do not change Laqay's version outside a release-plz PR.
    the code and asks release-plz to create or update the release PR.
 4. Review that PR, its generated version/changelog, and the compatibility impact.
    Required checks and normal PR rules apply. Do not merge automatically.
+   For the first stable release, use `release-plz set-version 1.0.0` on the
+   generated release PR branch if its proposed version is still `0.x`. Review
+   the resulting manifest, lockfile and changelog together. This keeps version
+   changes owned by release-plz; do not edit those versions manually.
 5. After merging the release PR, an administrator must check that release
    immutability is enabled, using the command below. Stop on any error or a
    false result; retain the result with the release review. Then run **Release**
@@ -137,16 +141,19 @@ A checksum detects corruption or a mismatch; it is not a code-signing certificat
 or a claim that the complete desktop matrix passed. Current releases must state
 any remaining engineering-validation limits.
 
-The project is in `0.x`; compatibility may change. Describe breaking behavior
-in the PR and generated release notes. Do not promise a stable interface or
-support for older versions before the project adopts such a policy.
+The stable delivery policy configures release-plz to create production drafts.
+The finalizer explicitly selects `--channel stable`, requires a final version
+at or above `1.0.0` and a matching non-prerelease draft, and selects the verified
+publication as latest. A `0.x` or release-candidate tag cannot pass this gate.
+Preparing a PR does not publish or establish readiness; review the matrix and
+resolve release-blocking issues before the separate publication dispatch.
 
-During engineering validation, release-plz marks GitHub releases as pre-releases
-and does not select them as latest. Its configured release body includes the
-validation limits and links to the guide and matrix at that release's tag.
-The release PR uses a plain review template with the generated changelog.
-Revisit these settings explicitly when engineering validation is complete;
-changing the package version alone does not promote a release to production.
+The finalizer's default `preview` channel preserves the historical engineering
+delivery policy: a prerelease draft and `make_latest=false`. The bounded
+`v0.1.1` recovery remains restricted to that channel, source and draft ID.
+Both channels require identical asset, source, provenance and immutability
+checks; a channel mismatch fails. A failed post-publication check can leave an
+immutable release already public, so investigate without rerunning blindly.
 
 ## Licensing and security
 
