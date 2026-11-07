@@ -179,6 +179,21 @@ static-text ancestry. Provider errors include the check and HRESULT. These
 checks keep their original order and stop at the first rejection or error;
 diagnostics do not query additional properties of a stale element.
 
+Before publishing an encoded image, the writer can pin its exact completed
+staging file using its volume/file identity, creation time, length and write
+time. A read-data handle denies write/delete sharing during the observation.
+The empty-view fallback may exclude that one entry from both Shell counts;
+foreign entries, replacements, reparse points and unknown identity are not
+excluded. The handle is released before the final rename.
+
+A read-only folder-text identity transition can trigger one fresh complete
+observation for the same approved directory and native view. The request's
+window, native focus, clipboard sequence and activity generation must still
+match. Other declines or provider errors are terminal. The image is encoded
+once; no input, focus repair or clipboard replacement is performed. Two
+observations are the limit per publication attempt, not a wall-clock timeout
+for external providers. Desktop acceptance of this recovery remains pending.
+
 To isolate input reception from clipboard and folder handling, use
 `scripts/Invoke-PasteProbe.ps1 -InputOnly -Seconds 30
 -OutputDirectory <private-log-directory>`. No destination or screenshot is
