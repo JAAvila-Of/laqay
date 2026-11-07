@@ -44,6 +44,14 @@ and verifies PNG/file priority and snapshot validity after clearing the source.
 It checks that bitmap sources bypass synthesized DIB conversion without changing
 colors, while an earlier DIB source keeps priority over a later bitmap.
 
+Native contention checks hold this private clipboard open on a second thread.
+They require a failed first acquisition, then verify release-and-read recovery,
+cancellation before another acquisition, and sequence replacement while waiting.
+Image reads retry only access-denied opens for up to 200 ms, on the paste worker;
+the runtime also requires the original window, focus, sequence, and activity to
+remain valid. Other errors, cancellation, replacement, and timeout decline.
+File/virtual-file priority and publication checks remain in force.
+
 Creating a uniquely named station requires Windows station-creation permissions.
 An account without them will get a failing capability check before any clipboard
 access; do not elevate a personal session just to run this suite. The mandatory
@@ -139,6 +147,14 @@ and unchanged preferences. A confirmed notification must then close that exact
 process with exit code zero within five seconds. Registry values are restored
 and process cleanup is checked by the existing probe. Reports are retained in
 `laqay-preference-validation`.
+
+On a confirmed end-session notification, the application stops its activity,
+removes its notification icon, and performs the existing bounded observer
+teardown before explicitly ending its own process. It does not rely on a queued
+quit message being dispatched after the notification returns: Windows may end
+the session then. A teardown ownership error exits nonzero. Query and cancelled
+notifications keep the application running. See Microsoft's
+[end-session contract](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-endsession).
 
 This never calls a Windows logoff/shutdown API, broadcasts a message, sends input,
 or activates a window. Six inert tests exercise the actual hosted/explicit-mode
