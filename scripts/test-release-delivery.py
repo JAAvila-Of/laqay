@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -33,6 +34,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
                         "immutable": False, "assets": []}
         self.commands = []
         self.confirmed = True
+        self.channel = "preview"
+        self.published_prerelease = None
         self.published_immutable = True
         self.commit = "a" * 40
         self.repository = "example/project"
@@ -57,6 +60,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
                 raise RuntimeError("By-tag REST lookup does not return draft releases")
             if "PATCH" in args:
                 self.release.update(draft=False, immutable=self.published_immutable)
+                if self.published_prerelease is not None:
+                    self.release["prerelease"] = self.published_prerelease
                 return "{}"
             if "/git/ref/" in args[1]:
                 return json.dumps({"object": {"type": "tag", "sha": "b" * 40}})
@@ -94,7 +99,8 @@ class ReleaseDeliveryTests(unittest.TestCase):
         delivery.finalize(self.repository, self.tag, self.expected_commit,
                           self.files["laqay.exe"], self.files["laqay-windows-x86_64.zip"],
                           Path("unused-notice-fixture"), self.files["SHA256SUMS.txt"],
-                          immutability_confirmed=self.confirmed, recovery_builder_commit=self.recovery_builder)
+                          immutability_confirmed=self.confirmed, recovery_builder_commit=self.recovery_builder,
+                          channel=self.channel)
 
     def use_reviewed_recovery(self):
         self.repository, self.tag = "JAAvila-Of/laqay", "v0.1.1"
@@ -113,6 +119,7 @@ class ReleaseDeliveryTests(unittest.TestCase):
         self.assertEqual(len(attestations), 3)
         self.assertLess(max(attestations), publish)
         self.assertTrue(any(command[:2] == ("release", "verify-asset") for command in self.commands[publish:]))
+        self.assertIn("make_latest=false", self.commands[publish])
         for i in attestations:
             command = self.commands[i]
             self.assertIn("example/project/.github/workflows/release.yml", command)
@@ -146,8 +153,73 @@ class ReleaseDeliveryTests(unittest.TestCase):
 
     def test_mutable_publication_cannot_report_success(self):
         self.published_immutable = False
-        with self.assertRaisesRegex(ValueError, "immutable pre-release"):
+        with self.assertRaisesRegex(ValueError, "immutable release channel"):
             self.finalize()
+
+    def use_stable(self):
+        self.channel, self.tag = "stable", "v1.0.0"
+        self.release.update(tag_name=self.tag, prerelease=False)
+
+    def test_publish_only_after_download_and_all_provenance_checks_stable(self):
+        self.use_stable()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.finalize()
+        publish = next(i for i, command in enumerate(self.commands) if "PATCH" in command)
+        self.assertIn("make_latest=true", self.commands[publish])
+        attestations = [i for i, command in enumerate(self.commands) if command[0] == "attestation"]
+        self.assertEqual(len(attestations), 3)
+        self.assertLess(max(attestations), publish)
+        self.assertEqual(sum(c[:2] == ("release", "verify-asset") for c in self.commands[publish:]), 3)
+
+    def test_stable_refuses_preview_flags_and_nonfinal_or_zero_major_versions(self):
+        for tag, prerelease in (("v1.0.0", True), ("v0.9.9", False), ("v1.0.0-rc.1", False),
+                                ("v01.0.0", False), ("v1.01.0", False)):
+            with self.subTest(tag=tag, prerelease=prerelease):
+                self.channel, self.tag = "stable", tag
+                self.release.update(tag_name=tag, prerelease=prerelease)
+                with self.assertRaises(ValueError):
+                    self.finalize()
+                self.assertFalse(any(c[:2] == ("release", "upload") for c in self.commands))
+                self.assert_unpublished()
+
+    def test_stable_keeps_all_integrity_and_preflight_gates(self):
+        for field in ("corrupt_download", "bad_attestation", "extra_asset", "missing_confirmation"):
+            with self.subTest(field=field):
+                self.use_stable()
+                self.commands.clear()
+                self.release.update(draft=True, immutable=False, assets=[])
+                self.corrupt_download = field == "corrupt_download"
+                self.bad_attestation = field == "bad_attestation"
+                self.extra_asset = field == "extra_asset"
+                self.confirmed = field != "missing_confirmation"
+                with self.assertRaises((ValueError, RuntimeError)):
+                    self.finalize()
+                self.assert_unpublished()
+
+    def test_stable_wrong_published_channel_cannot_report_success(self):
+        self.use_stable()
+        self.published_prerelease = True
+        with self.assertRaisesRegex(ValueError, "immutable release channel"):
+            self.finalize()
+
+    def test_stable_mutable_publication_cannot_report_success(self):
+        self.use_stable()
+        self.published_immutable = False
+        with self.assertRaisesRegex(ValueError, "immutable release channel"):
+            self.finalize()
+
+    def test_unknown_channel_fails_before_network_access(self):
+        self.channel = "automatic"
+        with self.assertRaisesRegex(ValueError, "Unknown release channel"):
+            self.finalize()
+        self.assertEqual(self.commands, [])
+
+    def test_historical_recovery_cannot_be_promoted(self):
+        self.use_reviewed_recovery()
+        self.channel = "stable"
+        with self.assertRaises(ValueError):
+            self.finalize()
+        self.assertEqual(self.commands, [])
 
     def test_published_release_and_existing_assets_are_not_reused(self):
         for mutation in ({"draft": False}, {"assets": [{"name": "existing"}]}, {"prerelease": False}):
@@ -207,6 +279,21 @@ class ReleaseDeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "draft ID changed"):
             self.finalize()
         self.assert_unpublished()
+
+
+class DeliveryPolicyTests(unittest.TestCase):
+    def test_release_plz_draft_policy_matches_explicit_stable_finalization(self):
+        root = Path(__file__).resolve().parents[1]
+        config = tomllib.loads((root / "release-plz.toml").read_text(encoding="utf-8"))["workspace"]
+        self.assertTrue(config["git_release_draft"])
+        self.assertEqual(config["git_release_type"], "prod")
+        self.assertTrue(config["git_release_latest"])
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        finalizers = [line for line in workflow.splitlines() if "python scripts/finalize-release.py" in line]
+        self.assertEqual(len(finalizers), 1)
+        self.assertIn("--channel stable", finalizers[0])
+        recovery_workflow = (root / delivery.RECOVERY_WORKFLOW).read_text(encoding="utf-8")
+        self.assertNotIn("--channel stable", recovery_workflow)
 
 
 class RecoveryBoundaryTests(unittest.TestCase):

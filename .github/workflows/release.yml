@@ -191,5 +191,5 @@ jobs:
           IMMUTABILITY_CONFIRMED: ${{ inputs.immutability_confirmed }}
         run: |
           if ($env:IMMUTABILITY_CONFIRMED -ne 'true') { throw 'Administrative preflight was not confirmed.' }
-          python scripts/finalize-release.py --immutability-confirmed --tag $env:RELEASE_TAG --commit $env:SOURCE_COMMIT --repository $env:GITHUB_REPOSITORY --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
+          python scripts/finalize-release.py --channel stable --immutability-confirmed --tag $env:RELEASE_TAG --commit $env:SOURCE_COMMIT --repository $env:GITHUB_REPOSITORY --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Release delivery failed; inspect the release before recovery.' }
