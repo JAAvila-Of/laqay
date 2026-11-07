@@ -32,6 +32,7 @@ jobs:
         run: |
           ./scripts/lab/Test-LabPreparation.ps1
           ./scripts/Test-SessionProbePreparation.ps1
+          ./scripts/lab/Test-ShutdownPreparation.ps1
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Run automated native and policy tests
         shell: pwsh

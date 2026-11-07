@@ -31,6 +31,7 @@ if($PrepareOnly){
     foreach($operation in @({[LaqayGuestDesktop]::ClipboardSequence()},{[LaqayGuestDesktop]::ClipboardImageIsFixture()},
         {[LaqayGuestDesktop]::SessionProtocol()},{[LaqayGuestDesktop]::ClipboardIsRedirectedFixture()},{[LaqayGuestDesktop]::ClipboardDiagnostic()},
         {[LaqayGuestDesktop]::RestartGuestExplorer()},{[LaqayGuestDesktop]::BeginDelayedPng()},{[LaqayGuestDesktop]::TrayIconRegistered()},
+        {[LaqayGuestDesktop]::StartShutdownApplication('C:\LaqayLab\App\laqay.exe')},
         {[LaqayGuestDesktop]::FolderInputState([IntPtr]::Zero)},
         {[LaqayGuestDesktop]::BeginRenderedDelayedPng()},{[LaqayGuestDesktop]::ReleaseRenderedDelayedPng()},
         {[LaqayGuestDesktop]::ClipboardReadAvailable()},
