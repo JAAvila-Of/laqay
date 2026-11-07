@@ -39,4 +39,23 @@ public static class LaqayPreferencesWindow {
         return SendMessageTimeoutW(window, 0x0111,
             new IntPtr(command), IntPtr.Zero, 0x0023, 5000, out result) != IntPtr.Zero;
     }
+    public static long SessionNotification(uint process, bool query, bool ending, bool logoff) {
+        IntPtr window = Find(process);
+        if (window == IntPtr.Zero) throw new InvalidOperationException("The owned session-test window is missing.");
+        if (!query && ending) {
+            // A confirmed notification can destroy the target immediately.
+            // Post it and let the caller verify the exact owned process exit.
+            if (!PostMessageW(window, 0x0016, new IntPtr(1), new IntPtr(logoff ? 0x80000000L : 0)))
+                throw new InvalidOperationException("The owned session notification could not be posted.");
+            return 0;
+        }
+        UIntPtr result;
+        // Notify only the owned application window. This does not ask Windows
+        // to log off, shut down, broadcast a message, or activate any window.
+        if (SendMessageTimeoutW(window, query ? 0x0011u : 0x0016u,
+            new IntPtr(!query && ending ? 1 : 0), new IntPtr(logoff ? 0x80000000L : 0),
+            0x0023, 5000, out result) == IntPtr.Zero)
+            throw new InvalidOperationException("The owned session notification timed out.");
+        return (long)result.ToUInt64();
+    }
 }

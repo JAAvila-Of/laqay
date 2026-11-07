@@ -120,6 +120,26 @@ This tests the application/controller path and real account settings inside the
 CI VM. It does not inspect the menu's visual rendering or execute the program
 through Windows login. The working computer's settings remain separate.
 
+The same CI-only runner also checks `SessionEnd` against the normal executable.
+It sends `WM_QUERYENDSESSION` and cancelled `WM_ENDSESSION` notifications for
+both shutdown and logoff flags only to its owned Laqay tray window. Each query
+must allow termination, while cancellation must retain the same process/window
+and unchanged preferences. A confirmed notification must then close that exact
+process with exit code zero within five seconds. Registry values are restored
+and process cleanup is checked by the existing probe. Reports are retained in
+`laqay-preference-validation`.
+
+This never calls a Windows logoff/shutdown API, broadcasts a message, sends input,
+or activates a window. Six inert tests exercise the actual hosted/explicit-mode
+guards; local or self-hosted automated execution is refused. It tests application
+notification handling while idle, not an actual OS shutdown, a blocked provider,
+or every encoding/publication stage. The separate guest lifecycle test covers
+Exit while a clipboard read is independently proven blocked.
+The notification sequence follows the Windows
+[query](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-queryendsession)
+and [completion](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-endsession)
+contracts.
+
 | Area | Automated evidence |
 | --- | --- |
 | Preferences | Defaults without creating keys, DWORD persistence across processes, Unicode/path quoting, startup add/remove, preserving other entries, malformed/empty/oversized values, error propagation; application-level round trips in the CI VM |

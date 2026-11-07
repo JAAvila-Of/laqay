@@ -29,7 +29,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release delivery tests failed.' }
       - name: Check disposable desktop lab preparation without creating VMs
         shell: powershell
-        run: ./scripts/lab/Test-LabPreparation.ps1
+        run: |
+          ./scripts/lab/Test-LabPreparation.ps1
+          ./scripts/Test-SessionProbePreparation.ps1
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Run automated native and policy tests
         shell: pwsh
@@ -80,7 +82,7 @@ jobs:
           }
           powershell -NoProfile -File scripts/Invoke-PreferencesProbe.ps1 -PrepareOnly
           if ($LASTEXITCODE -ne 0) { throw 'Preference helper preparation failed.' }
-          foreach ($scenario in @('Enabled', 'Startup')) {
+          foreach ($scenario in @('Enabled', 'Startup', 'SessionEnd')) {
             powershell -NoProfile -File scripts/Invoke-PreferencesProbe.ps1 -Scenario $scenario -Automated -Seconds 30 -OutputDirectory target/preference-validation
             if ($LASTEXITCODE -ne 0) { throw "Application preference check failed: $scenario" }
           }
