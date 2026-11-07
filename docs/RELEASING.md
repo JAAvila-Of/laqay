@@ -60,6 +60,15 @@ notices when redistributing builds. The delivery contract is:
 - `SHA256SUMS.txt`: SHA-256 entries for the executable and ZIP.
 
 Both CI and Release run the same packaging and validation commands. Validation
+also reads the compiled Windows `VERSIONINFO` resource without launching the
+application: product name, description, original filename, numeric file/product
+versions and the complete SemVer product string must match Cargo metadata.
+The prerelease flag follows Cargo's SemVer prerelease suffix. These fields are
+generated from Cargo at build time, so release-plz remains the version authority.
+This resource check applies to current builds; historical recovery keeps its
+reviewed source and delivery checks.
+
+Archive validation
 rejects missing, extra, duplicate, or changed ZIP entries, empty notice files,
 an unexpected executable architecture/subsystem, and mismatched checksums.
 It reads files without starting the application. Regression tests include the

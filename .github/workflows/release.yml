@@ -57,6 +57,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
           python scripts/test-release-delivery.py
           if ($LASTEXITCODE -ne 0) { throw 'Release delivery regression tests failed.' }
+          ./scripts/Test-VersionResource.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -MetadataPath target/metadata.json
           ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt
           python scripts/check-distribution.py --binary target/x86_64-pc-windows-msvc/release/laqay.exe --archive target/laqay-windows-x86_64.zip --licenses target/THIRD_PARTY_LICENSES.txt --checksums target/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Distribution validation failed.' }
@@ -159,6 +160,7 @@ jobs:
       - name: Package executable and licenses
         shell: pwsh
         run: |
+          ./scripts/Test-VersionResource.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -MetadataPath target/metadata.json
           python scripts/test-distribution.py
           if ($LASTEXITCODE -ne 0) { throw 'Distribution regression tests failed.' }
           ./scripts/New-Distribution.ps1 -BinaryPath target/x86_64-pc-windows-msvc/release/laqay.exe -LicenseTextPath target/THIRD_PARTY_LICENSES.txt

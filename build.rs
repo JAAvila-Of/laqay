@@ -85,9 +85,19 @@ fn rc_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "\\\\")
 }
 
+fn rc_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=assets/app.manifest");
     println!("cargo:rerun-if-changed=assets/laqay.svg");
+    println!("cargo:rerun-if-changed=assets/version.rc.in");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -96,9 +106,40 @@ fn main() {
     let disabled = out.join("laqay-disabled.ico");
     write_icon(&enabled, true);
     write_icon(&disabled, false);
-    let major = env::var("CARGO_PKG_VERSION_MAJOR").unwrap();
-    let minor = env::var("CARGO_PKG_VERSION_MINOR").unwrap();
-    let patch = env::var("CARGO_PKG_VERSION_PATCH").unwrap();
+    let [major, minor, patch] = [
+        "CARGO_PKG_VERSION_MAJOR",
+        "CARGO_PKG_VERSION_MINOR",
+        "CARGO_PKG_VERSION_PATCH",
+    ]
+    .map(|name| {
+        env::var(name)
+            .unwrap()
+            .parse::<u16>()
+            .expect("Windows version components must fit in 16 bits")
+    });
+    let version_resource = include_str!("assets/version.rc.in")
+        .replace("@VERSION_NUMBERS@", &format!("{major},{minor},{patch},0"))
+        .replace("@FILE_VERSION@", &format!("{major}.{minor}.{patch}.0"))
+        .replace(
+            "@FILE_FLAGS@",
+            if env::var("CARGO_PKG_VERSION_PRE").unwrap().is_empty() {
+                "0x0"
+            } else {
+                "0x2"
+            },
+        )
+        .replace(
+            "@PRODUCT_VERSION@",
+            &rc_string(&env::var("CARGO_PKG_VERSION").unwrap()),
+        )
+        .replace(
+            "@PACKAGE_NAME@",
+            &rc_string(&env::var("CARGO_PKG_NAME").unwrap()),
+        )
+        .replace(
+            "@DESCRIPTION@",
+            &rc_string(&env::var("CARGO_PKG_DESCRIPTION").unwrap()),
+        );
     let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
@@ -113,10 +154,11 @@ fn main() {
     fs::write(
         &resource,
         format!(
-            "#pragma code_page(65001)\n1 ICON \"{}\"\n2 ICON \"{}\"\n1 24 \"{}\"\n",
+            "#pragma code_page(65001)\n1 ICON \"{}\"\n2 ICON \"{}\"\n1 24 \"{}\"\n{}\n",
             rc_path(&enabled),
             rc_path(&disabled),
-            rc_path(&manifest_path)
+            rc_path(&manifest_path),
+            version_resource
         ),
     )
     .expect("write resource script");
