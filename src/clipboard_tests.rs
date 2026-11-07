@@ -110,6 +110,9 @@ fn native_clipboard_matrix_runs_without_the_interactive_clipboard() {
     for stage in ["control", "before-encode", "before-publish", "generation"] {
         assert!(stdout.contains(&format!("Native publication guard: {stage} checked")));
     }
+    for stage in ["released", "cancelled", "replaced"] {
+        assert!(stdout.contains(&format!("Native clipboard open retry: {stage} checked")));
+    }
     print!("{stdout}");
 }
 
@@ -253,10 +256,11 @@ fn child_exercises_private_clipboard() {
     let bitmap = dib();
     // SAFETY: All format registration and clipboard APIs below run only after
     // private-station validation, before restoring the previous association.
+    let png_format = unsafe { RegisterClipboardFormatW(w!("PNG")) };
+    assert_ne!(png_format, 0);
+    // SAFETY: Clipboard operations remain confined to the private station.
     unsafe {
-        let png_format = RegisterClipboardFormatW(w!("PNG"));
         let virtual_format = RegisterClipboardFormatW(w!("FileGroupDescriptorW"));
-        assert_ne!(png_format, 0);
         assert_ne!(virtual_format, 0);
 
         let sequence = window.replace(&[]);
@@ -363,6 +367,65 @@ fn child_exercises_private_clipboard() {
         });
         assert_eq!(read_image(sequence).unwrap().unwrap().bytes, png);
         window.replace(&[]);
+    }
+    for scenario in 0..3 {
+        let sequence = window.replace(&[(png_format, &png)]);
+        let desktop = station.desktop().0 as usize;
+        std::thread::scope(|scope| {
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let (changed_tx, changed_rx) = mpsc::channel();
+            let owner = scope.spawn(move || {
+                // SAFETY: Only the child's private desktop is shared; its owner
+                // outlives this scoped worker. No interactive clipboard is used.
+                unsafe {
+                    SetThreadDesktop(HDESK(desktop as *mut _)).unwrap();
+                    let other = Window::new();
+                    OpenClipboard(Some(other.0)).unwrap();
+                    let open = Open;
+                    ready_tx.send(()).unwrap();
+                    if release_rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                        EmptyClipboard().unwrap();
+                    }
+                    drop(open);
+                    let _ = changed_tx.send(());
+                }
+            });
+            ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let mut attempts = 0;
+            let started = std::time::Instant::now();
+            let opened = open_image_clipboard(sequence, || {
+                attempts += 1;
+                if attempts == 2 {
+                    release_tx.send(scenario == 2).unwrap();
+                    if scenario == 2 {
+                        changed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    }
+                }
+                scenario != 1 || attempts < 2
+            })
+            .unwrap();
+            assert!(
+                attempts >= 2,
+                "The real clipboard lock must reject the first open"
+            );
+            assert!(started.elapsed() < Duration::from_secs(2));
+            if scenario == 0 {
+                let open = opened.expect("The original image must become readable after release");
+                assert_eq!(copy_open_image(&open, png_format, true).unwrap().bytes, png);
+                drop(open);
+            } else {
+                assert!(
+                    opened.is_none(),
+                    "Cancelled or replaced requests must not read an image"
+                );
+            }
+            owner.join().unwrap();
+        });
+        println!(
+            "Native clipboard open retry: {} checked",
+            ["released", "cancelled", "replaced"][scenario]
+        );
     }
     publication_checks(&window);
     window.replace(&[]);

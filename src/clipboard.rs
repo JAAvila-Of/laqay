@@ -2,9 +2,12 @@
 
 use crate::image::MAX_IMAGE_BYTES;
 use crate::{ClipboardFormats, ImageFormat};
+use std::time::{Duration, Instant};
 use windows::{
     Win32::{
-        Foundation::{E_INVALIDARG, ERROR_SUCCESS, GetLastError, HGLOBAL, SetLastError},
+        Foundation::{
+            E_INVALIDARG, ERROR_ACCESS_DENIED, ERROR_SUCCESS, GetLastError, HGLOBAL, SetLastError,
+        },
         Graphics::Gdi::HBITMAP,
         System::{
             DataExchange::{
@@ -27,6 +30,7 @@ pub struct ClipboardImage {
 mod tests;
 
 struct Open;
+const MAX_OPEN_WAIT: Duration = Duration::from_millis(200);
 impl Drop for Open {
     fn drop(&mut self) {
         // SAFETY: This guard is created only after this thread opens the clipboard.
@@ -45,10 +49,61 @@ impl Drop for Locked {
 /// Return supported image bytes only if the clipboard still matches the request.
 /// File transfers, virtual files, unsupported bitmaps, and uncertain data decline.
 pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
+    read_image_while(expected_sequence, || true)
+}
+
+fn open_image_clipboard(
+    expected_sequence: u32,
+    mut permitted: impl FnMut() -> bool,
+) -> Result<Option<Open>> {
+    let started = Instant::now();
+    loop {
+        // SAFETY: Sequence reads do not inspect contents. A successful open is
+        // immediately owned by the same-thread guard, including on cancellation.
+        unsafe {
+            if !permitted()
+                || expected_sequence == 0
+                || GetClipboardSequenceNumber() != expected_sequence
+            {
+                return Ok(None);
+            }
+            if started.elapsed() >= MAX_OPEN_WAIT {
+                return Err(Error::from_hresult(windows::core::HRESULT::from_win32(
+                    ERROR_ACCESS_DENIED.0,
+                )));
+            }
+            match OpenClipboard(None) {
+                Ok(()) => {
+                    let open = Open;
+                    return Ok(
+                        (permitted() && GetClipboardSequenceNumber() == expected_sequence)
+                            .then_some(open),
+                    );
+                }
+                Err(error)
+                    if error.code()
+                        == windows::core::HRESULT::from_win32(ERROR_ACCESS_DENIED.0)
+                        && started.elapsed() < MAX_OPEN_WAIT => {}
+                Err(error) => return Err(error),
+            }
+        }
+        std::thread::sleep(
+            Duration::from_millis(10).min(MAX_OPEN_WAIT.saturating_sub(started.elapsed())),
+        );
+    }
+}
+
+pub(crate) fn read_image_while(
+    expected_sequence: u32,
+    mut permitted: impl FnMut() -> bool,
+) -> Result<Option<ClipboardImage>> {
     // SAFETY: Clipboard access and HGLOBAL locks are scoped by guards. Availability
     // queries read no contents; only the chosen image representation is copied.
     unsafe {
-        if expected_sequence == 0 || GetClipboardSequenceNumber() != expected_sequence {
+        if !permitted()
+            || expected_sequence == 0
+            || GetClipboardSequenceNumber() != expected_sequence
+        {
             return Ok(None);
         }
         let mut shell_formats = Vec::new();
@@ -100,9 +155,11 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
         if GetClipboardSequenceNumber() != expected_sequence {
             return Ok(None);
         }
-        OpenClipboard(None)?;
-        let _open = Open;
-        if GetClipboardSequenceNumber() != expected_sequence
+        let Some(_open) = open_image_clipboard(expected_sequence, &mut permitted)? else {
+            return Ok(None);
+        };
+        if !permitted()
+            || GetClipboardSequenceNumber() != expected_sequence
             || IsClipboardFormatAvailable(15).is_ok()
             || shell_formats
                 .iter()
@@ -114,7 +171,7 @@ pub fn read_image(expected_sequence: u32) -> Result<Option<ClipboardImage>> {
             format = 2;
         }
         let image = copy_open_image(&_open, format, is_png)?;
-        if GetClipboardSequenceNumber() != expected_sequence {
+        if !permitted() || GetClipboardSequenceNumber() != expected_sequence {
             return Ok(None);
         }
         Ok(Some(image))
