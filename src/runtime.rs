@@ -491,7 +491,18 @@ fn save(
     if !active() {
         return Ok(None);
     }
-    let Some(source) = clipboard::read_image(request.sequence)? else {
+    let Some(source) = clipboard::read_image_while(request.sequence, || {
+        active() && request_matches(request, current_request())
+    })
+    .inspect_err(|error| {
+        if report_failures {
+            eprintln!(
+                "Clipboard image read failed: hresult={:#010x}",
+                error.code().0 as u32
+            );
+        }
+    })?
+    else {
         if report_failures {
             println!("Request declined: clipboard changed or has no eligible image format");
         }
