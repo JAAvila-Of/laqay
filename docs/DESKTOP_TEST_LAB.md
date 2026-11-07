@@ -547,16 +547,16 @@ desktop integration matrix.
 ## Additional console adverse checks
 
 The optional `-IncludeRealApplications` switch, used with `-AdverseOnly`, extends
-the suite from 29 to 33 cases with installed Notepad and Edge. Those four cases
+the suite from 31 to 35 cases with installed Notepad and Edge. Those four cases
 passed on 2026-11-04 UTC. They use an owned
 text file, local HTML page and temporary Edge profile inside Primary; Notepad
 uses the disposable guest user's settings. No installation, account sign-in,
 host profile or host desktop control is involved. Missing apps, conflicting
 profile policy, unmatched runtime identity or forced cleanup fail the extension.
-Without this switch, the existing 29-case suite and its prerequisites remain.
+Without this switch, the 31-case suite and its prerequisites remain.
 
 Adding `-IncludeWindowsTerminal` together with `-IncludeRealApplications`
-extends the opt-in suite to 35 cases. It requires an installed Windows Terminal
+extends the opt-in suite to 37 cases. It requires an installed Windows Terminal
 package and uses an isolated guest LocalState with an explicit native `paste`
 binding for Ctrl+V. A controlled PowerShell receiver records two exact text
 inputs without executing clipboard content. The additional cases check native
@@ -568,7 +568,7 @@ The receiver enters its dedicated controller-created Job before readiness;
 the frontend keeps its pre-resume containment. This does not establish coverage
 of default shell bindings, PSReadLine or arbitrary Terminal profiles.
 
-`Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 29-case suite:
+`Invoke-PortablePackageCycle.ps1 -AdverseOnly` selects a separate 31-case suite:
 the thirteen Explorer regressions plus empty clipboard, externally locked
 clipboard and recovery, exact PNG alpha, a 2048x2048 PNG with bounded tray-window
 responsiveness checks, held-key repeat, rapid paste preservation, a real second
@@ -584,6 +584,33 @@ cancellation, same-clipboard completion fence and fresh recovery paste. Native
 thread-context samples confirmed the wait; wait-chain traversal did not. All
 four editor off/on references passed with materialized Unicode source evidence.
 Normal two-boot restoration and owned-process/guest shutdown checks also passed.
+
+The current suite adds two prepared cases to that historical 29-case baseline.
+They require a new runtime acceptance; preparation or earlier results do not
+mark them passed:
+
+- `VirtualFileImageNativePaste` uses a live `IDataObject` with
+  `FileGroupDescriptorW`, indexed `FileContents` (IStream/HGLOBAL), and PNG
+  advertised first. Native Ctrl+V must create the exact same single text file
+  with Laqay disabled and enabled, without a PNG or staging residue. The proof
+  requires a current owned provider, image/file formats together, no CF_HDROP,
+  content reads during each paste, independent file hashes and provider closure.
+  Clipboard sequence is recorded; native OLE rendering is not equated with an
+  application mutation. The copy-only provider never publishes a host path.
+- `SustainedLargePngResponsive` pastes twelve 4096x4096 synthetic PNGs over
+  at least 30 seconds, with a 120-second overall budget and per-image timeout.
+  It validates each output's dimensions/corner alpha, native folder focus, tray
+  responsiveness and absence of staging residue, and samples CPU, memory,
+  handles and threads. This is a bounded workload sample, not a long-term leak
+  benchmark or a test of every image size up to the allocation limit.
+
+Preparation checks virtual descriptor/stream bytes, stream length, format
+enumeration and invalid requests entirely in owned heap allocations, without
+publishing to any clipboard. Separate pure report tests reject incomplete,
+altered or unowned evidence. The live provider fails before clipboard access
+outside the armed owned guest console and has a 60-second lifetime.
+See [Shell clipboard formats](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard)
+and [Shell data objects](https://learn.microsoft.com/en-us/windows/win32/shell/dataobject).
 
 The lock fixture retires old input requests, opens the clipboard with its
 own message-only window, and records exact window/process/thread ownership plus

@@ -587,6 +587,12 @@ checks and actual login behavior remain separate desktop validations.
 | T35 | Screenshot captured inside an RDP session | PNG created in the remote folder |
 | T36 | Client screenshot shared through RDP clipboard | PNG when image data is available; safe rejection otherwise |
 
+The current adverse harness prepares a live OLE virtual-file/PNG off/on
+reference for T31 and a bounded twelve-image 4096x4096 workload for T24.
+Their [scope and proof requirements](DESKTOP_TEST_LAB.md#additional-console-adverse-checks)
+are separate from prior 29/33/35-case acceptance. CI preparation does not execute
+these new desktop cases or mark them passed.
+
 For the initial diagnostic, compare reported paths and focus against the real UI
 with multiple tabs, address/search fields, rename controls, and virtual folders.
 Never use a cached diagnostic snapshot to suppress a later key event.

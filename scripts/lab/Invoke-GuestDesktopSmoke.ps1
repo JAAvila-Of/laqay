@@ -21,7 +21,7 @@ $references=@([Windows.Forms.Clipboard].Assembly.Location,[Drawing.Bitmap].Assem
     [Management.ManagementObjectSearcher].Assembly.Location,[Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
     [Windows.Automation.AutomationElement].Assembly.Location,[Windows.Automation.ControlType].Assembly.Location,
     [Windows.Rect].Assembly.Location,[System.Diagnostics.Process].Assembly.Location,'System.Core.dll') | Select-Object -Unique
-Add-Type -Path @((Join-Path $PSScriptRoot 'GuestDesktopControls.cs'),(Join-Path $PSScriptRoot 'GuestLifecycleControls.cs'),(Join-Path $PSScriptRoot 'GuestAdverseControls.cs'),(Join-Path $PSScriptRoot 'GuestRealApplicationControls.cs')) -ReferencedAssemblies $references
+Add-Type -Path @((Join-Path $PSScriptRoot 'GuestDesktopControls.cs'),(Join-Path $PSScriptRoot 'GuestLifecycleControls.cs'),(Join-Path $PSScriptRoot 'GuestAdverseControls.cs'),(Join-Path $PSScriptRoot 'GuestVirtualFileControls.cs'),(Join-Path $PSScriptRoot 'GuestRealApplicationControls.cs')) -ReferencedAssemblies $references
 if($PrepareOnly){
     $typeNodes=$MyInvocation.MyCommand.ScriptBlock.Ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TypeExpressionAst] -or $node -is [System.Management.Automation.Language.TypeConstraintAst]},$true)
     foreach($node in $typeNodes){if($node.TypeName.FullName -ne 'ordered' -and -not $node.TypeName.GetReflectionType()){throw ('Unresolved PowerShell type: '+$node.TypeName.FullName)}}
@@ -57,10 +57,12 @@ if($PrepareOnly){
         {[LaqayGuestDesktop]::BeginRealApplication('invalid','invalid','invalid','invalid')},{[LaqayGuestDesktop]::FocusRealApplication()},
         {[LaqayGuestDesktop]::RealApplicationState()},{[LaqayGuestDesktop]::RealApplicationDiagnostics()},{[LaqayGuestDesktop]::RealApplicationText()},
         {[LaqayGuestDesktop]::RealApplicationTextClipboard('synthetic')},{[LaqayGuestDesktop]::RealApplicationChord([UInt16[]]@(17,86))},
-        {[LaqayGuestDesktop]::RealNotepadSaved('synthetic')})){
+        {[LaqayGuestDesktop]::RealNotepadSaved('synthetic')},{[LaqayGuestDesktop]::BeginVirtualFileClipboard()},{[LaqayGuestDesktop]::VirtualFileClipboardState()})){
         $rejected=$false;try{& $operation | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Unarmed adverse controls were accepted.'}
     }
-    Write-Output 'Guest desktop helper compiled; unarmed input and invalid identity were rejected.'
+    $virtualProtocol=[LaqayGuestDesktop]::TestVirtualFileProtocol()
+    if(-not $virtualProtocol.Passed){throw 'The heap-only virtual-file protocol check failed.'}
+    Write-Output 'Guest desktop helper compiled; unarmed input and invalid identity were rejected; virtual-file protocol passed without clipboard access.'
     return
 }
 if(-not $LabId -or -not $RunId -or -not $ExpectedExecutableSha256){throw 'A lab identity, run identity, and executable SHA-256 are required.'}
@@ -84,7 +86,7 @@ $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::Gues
     Cases=@();ImagePastes=@();EditableFields=@();NormalModeLog=$null;CoreTrial=$null;RdpTabTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
-    IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
+    VirtualFileProof=@();SustainedLargePng=$null;IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $shell=$null
 $applicationStarted=$false
@@ -707,7 +709,7 @@ try{
     $report.Passed=$true
 }catch{$report.Error=$_.Exception.Message;$report.ErrorDetail=[pscustomobject]@{Id=$_.FullyQualifiedErrorId;Position=$_.InvocationInfo.PositionMessage;Stack=$_.ScriptStackTrace}}finally{
     try{[LaqayGuestDesktop]::EndRealApplication() | Out-Null}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
-    try{[LaqayGuestDesktop]::EndClipboardLease();[LaqayGuestDesktop]::EndMatrixReferenceHook() | Out-Null;[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+    try{[LaqayGuestDesktop]::EndVirtualFileClipboard();[LaqayGuestDesktop]::EndClipboardLease();[LaqayGuestDesktop]::EndMatrixReferenceHook() | Out-Null;[LaqayGuestDesktop]::EndMatrixEditor();$report.AdverseFixturesClosed=$true}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}

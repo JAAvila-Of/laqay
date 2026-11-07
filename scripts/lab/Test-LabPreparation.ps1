@@ -14,6 +14,7 @@ try {
     & (Join-Path $PSScriptRoot 'Test-GuestLaunchArguments.ps1')
     & (Join-Path $PSScriptRoot 'Test-LabReportSnapshots.ps1')
     & (Join-Path $PSScriptRoot 'Test-TerminalReceiptReads.ps1')
+    & (Join-Path $PSScriptRoot 'Test-VirtualFileProof.ps1')
     & (Join-Path $PSScriptRoot '../Test-StorageHarnessPreparation.ps1')
     & (Join-Path $PSScriptRoot '../Test-ShareHarnessPreparation.ps1')
     & (Join-Path $PSScriptRoot 'Test-GuestApplicationInventory.ps1')
@@ -88,7 +89,7 @@ try {
     }
     $html=[LaqayGuestDesktop]::RealBrowserFixture($labId)
     Assert-True ($html.Contains('Laqay real app '+$labId) -and [regex]::Matches($html,'<textarea\b').Count -eq 1 -and $html.Contains('aria-label="Laqay real application input"') -and -not $html.Contains('<script')) 'The local browser fixture lost its unique title or plain editable target.'
-    foreach($size in @(2,2048)){
+    foreach($size in @(2,2048,4096)){
         $bytes=[LaqayGuestDesktop]::MatrixPng($size)
         $stream=[IO.MemoryStream]::new($bytes,$false);$bitmap=[Drawing.Bitmap]::new($stream)
         try{
