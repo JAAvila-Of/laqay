@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "laqay"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "embed-resource",
  "windows",

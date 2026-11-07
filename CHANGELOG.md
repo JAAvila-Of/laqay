@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/JAAvila-Of/laqay/compare/v0.1.1...v0.1.2) - 2026-11-07
+
+### Added
+
+- *(branding)* add corner logo and visual readme ([#22](https://github.com/JAAvila-Of/laqay/pull/22))
+
+### Fixed
+
+- embed Cargo-derived Windows version metadata ([#52](https://github.com/JAAvila-Of/laqay/pull/52))
+- enable verified stable release delivery ([#49](https://github.com/JAAvila-Of/laqay/pull/49))
+- preserve empty-folder evidence during staged publication ([#42](https://github.com/JAAvila-Of/laqay/pull/42))
+- include the shared profile in RDP guest resources
+- tolerate transient Terminal receipt replacement
+- compile the complete wait-chain inspection helper
+- retry cleanup of verified staging files after recovery
+- support confirmed empty Explorer folders without global focus
+- discover draft releases by ID and bound delivery recovery ([#19](https://github.com/JAAvila-Of/laqay/pull/19))
+
+### Other
+
+- prepare isolated shutdown with a pending image read
+- *(deps)* bump actions/download-artifact from 4.3.0 to 8.0.2 ([#46](https://github.com/JAAvila-Of/laqay/pull/46))
+- *(deps)* bump release-plz/action from 0.5.147 to 0.5.148 ([#47](https://github.com/JAAvila-Of/laqay/pull/47))
+- reconcile current validation evidence and limits ([#50](https://github.com/JAAvila-Of/laqay/pull/50))
+- reject stale clipboard snapshots before publication ([#48](https://github.com/JAAvila-Of/laqay/pull/48))
+- verify session ending and cancellation notifications ([#45](https://github.com/JAAvila-Of/laqay/pull/45))
+- cover virtual-file precedence and sustained PNGs ([#44](https://github.com/JAAvila-Of/laqay/pull/44))
+- validate staging exclusion with a real Shell view ([#43](https://github.com/JAAvila-Of/laqay/pull/43))
+- wait for complete RDP task session reports ([#40](https://github.com/JAAvila-Of/laqay/pull/40))
+- identify semantic focus rejection stages ([#39](https://github.com/JAAvila-Of/laqay/pull/39))
+- capture normal-mode engine logs in the RDP lab
+- capture bounded diagnostics after RDP tab failure
+- prepare explicit Windows 10 Pro lab provisioning ([#31](https://github.com/JAAvila-Of/laqay/pull/31))
+- verify SMB withdrawal before publication and fresh-image recovery ([#30](https://github.com/JAAvila-Of/laqay/pull/30))
+- validate disk-full failure and recovery in isolated CI ([#29](https://github.com/JAAvila-Of/laqay/pull/29))
+- prioritize core risks and verify cancelled collision retries ([#28](https://github.com/JAAvila-Of/laqay/pull/28))
+- add opt-in Windows Terminal reference paste checks ([#27](https://github.com/JAAvila-Of/laqay/pull/27))
+- add opt-in real Notepad and Edge paste checks ([#26](https://github.com/JAAvila-Of/laqay/pull/26))
+- validate held clipboard reads across Explorer tabs ([#25](https://github.com/JAAvila-Of/laqay/pull/25))
+- record Explorer image paste input evidence ([#24](https://github.com/JAAvila-Of/laqay/pull/24))
+- add read-only guest application inventory ([#23](https://github.com/JAAvila-Of/laqay/pull/23))
+- validate adverse desktop paste conditions ([#21](https://github.com/JAAvila-Of/laqay/pull/21))
+- validate published portable package lifecycle ([#20](https://github.com/JAAvila-Of/laqay/pull/20))
+- *(deps)* bump actions/upload-artifact from 4.6.2 to 7.0.2 ([#3](https://github.com/JAAvila-Of/laqay/pull/3))
+- *(deps)* bump actions/checkout from 6.1.0 to 7.0.1 ([#2](https://github.com/JAAvila-Of/laqay/pull/2))
+
 ## [0.1.1](https://github.com/JAAvila-Of/laqay/compare/v0.1.0...v0.1.1) - 2026-11-02
 
 ### Other
