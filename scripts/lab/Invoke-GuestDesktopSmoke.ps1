@@ -93,6 +93,7 @@ $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::Gues
     VirtualFileProof=@();SustainedLargePng=$null;IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
 $credentialPath=Join-Path $root 'peer-credential.xml'
 $report.Add('CaptureNormalDiagnostics',[bool]$CaptureNormalDiagnostics)
+$report.Add('NormalDiagnosticMode',$(if($CaptureNormalDiagnostics){'failures'}elseif($IncludeRdp){'verbose'}else{'off'}))
 $shell=$null
 $applicationStarted=$false
 $preferencesTouched=$false

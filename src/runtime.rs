@@ -352,12 +352,14 @@ pub(crate) fn clipboard_sequences_match_for_test(expected: u32, observed: u32) -
 fn target(
     request: Request,
     diagnostics: bool,
+    failure_diagnostics: bool,
     phase: &str,
     staging: Option<&file_writer::StagingLease>,
 ) -> Result<TargetRead> {
+    let report_failures = diagnostics || failure_diagnostics;
     let current = current_request();
     if !request_matches(request, current) {
-        if diagnostics {
+        if report_failures {
             println!(
                 "Context declined: phase={phase}, window, focus, or clipboard sequence changed"
             );
@@ -365,14 +367,14 @@ fn target(
         return Ok(TargetRead::Declined);
     }
     if !explorer_process(request.window)? {
-        if diagnostics {
+        if report_failures {
             println!("Context declined: phase={phase}, foreground process is not Explorer");
         }
         return Ok(TargetRead::Declined);
     }
     let snapshot =
         explorer::observe_for_publication(diagnostics, staging).inspect_err(|error| {
-            if diagnostics {
+            if report_failures {
                 eprintln!(
                     "Context check failed: phase={phase}, hresult={:#010x}",
                     error.code().0 as u32
@@ -383,14 +385,14 @@ fn target(
         || snapshot.focus_window != request.focus
         || !request_matches(request, current_request())
     {
-        if diagnostics {
+        if report_failures {
             println!(
                 "Context declined: phase={phase}, Explorer snapshot no longer matches request"
             );
         }
         return Ok(TargetRead::Declined);
     }
-    if diagnostics && snapshot.diagnostic_directory().is_none() {
+    if report_failures && snapshot.diagnostic_directory().is_none() {
         println!(
             "Context declined: phase={phase}, foreground_stable={}, native_focus_stable={}, unresolved_views={}, focused_views={}, semantic_focus={:?}",
             snapshot.foreground_unchanged,
@@ -463,22 +465,25 @@ fn save(
     deadline: Option<Instant>,
     approved_directory: Option<&Path>,
     diagnostics: bool,
+    failure_diagnostics: bool,
 ) -> std::result::Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    let report_failures = diagnostics || failure_diagnostics;
     let active =
         || activity.valid(request.ticket) && deadline.is_none_or(|limit| Instant::now() < limit);
     if !active() {
-        if diagnostics {
+        if report_failures {
             println!("Request declined: observer paused, stopped, or expired");
         }
         return Ok(None);
     }
-    let TargetRead::Confirmed(approved_target) = target(request, diagnostics, "Initial", None)?
+    let TargetRead::Confirmed(approved_target) =
+        target(request, diagnostics, failure_diagnostics, "Initial", None)?
     else {
         return Ok(None);
     };
     let directory = &approved_target.directory;
     if approved_directory.is_some_and(|approved| directory != approved) {
-        if diagnostics {
+        if report_failures {
             println!("Request declined: folder differs from approved destination");
         }
         return Ok(None);
@@ -487,7 +492,7 @@ fn save(
         return Ok(None);
     }
     let Some(source) = clipboard::read_image(request.sequence)? else {
-        if diagnostics {
+        if report_failures {
             println!("Request declined: clipboard changed or has no eligible image format");
         }
         return Ok(None);
@@ -521,9 +526,15 @@ fn save(
             let mut observations = 0;
             let result = revalidate_target(&approved_target, active, || {
                 observations += 1;
-                target(request, diagnostics, "BeforePublish", lease.as_ref())
+                target(
+                    request,
+                    diagnostics,
+                    failure_diagnostics,
+                    "BeforePublish",
+                    lease.as_ref(),
+                )
             });
-            if diagnostics && observations > 1 {
+            if report_failures && observations > 1 && (diagnostics || result.is_err()) {
                 println!(
                     "Publication context refresh: observations={observations}, accepted={}",
                     result.is_ok()
@@ -660,6 +671,7 @@ pub(crate) fn run(seconds: u32, approved_directory: &Path, use_hook: bool) -> Re
         input_only: false,
         use_hook,
         diagnostics: true,
+        failure_diagnostics: false,
         raw_input: true,
     })
 }
@@ -671,6 +683,7 @@ pub(crate) fn run_input(seconds: u32) -> Result<()> {
         input_only: true,
         use_hook: true,
         diagnostics: true,
+        failure_diagnostics: false,
         raw_input: true,
     })
 }
@@ -721,6 +734,7 @@ struct Options {
     input_only: bool,
     use_hook: bool,
     diagnostics: bool,
+    failure_diagnostics: bool,
     raw_input: bool,
 }
 
@@ -732,6 +746,9 @@ fn run_probe(options: Options) -> Result<()> {
 
 fn diagnostics_requested(value: Option<&OsStr>) -> bool {
     value == Some(OsStr::new("1"))
+}
+fn failure_diagnostics_requested(value: Option<&OsStr>) -> bool {
+    value == Some(OsStr::new("failures"))
 }
 
 /// Owns only this application's observer thread. UI and registry operations
@@ -748,8 +765,10 @@ impl Observer {
         notify: HWND,
         trial: Option<(u32, PathBuf)>,
     ) -> Result<Self> {
-        let diagnostics = trial.is_some()
-            || diagnostics_requested(std::env::var_os("LAQAY_DIAGNOSTICS").as_deref());
+        let requested = std::env::var_os("LAQAY_DIAGNOSTICS");
+        let diagnostics = trial.is_some() || diagnostics_requested(requested.as_deref());
+        let failure_diagnostics =
+            !diagnostics && failure_diagnostics_requested(requested.as_deref());
         let (seconds, approved) = match trial {
             Some((seconds, path)) => (Some(seconds), Some(path)),
             None => (None, None),
@@ -760,6 +779,7 @@ impl Observer {
             input_only: false,
             use_hook: true,
             diagnostics,
+            failure_diagnostics,
             raw_input: false,
         };
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -883,6 +903,7 @@ fn run_inner(
         let gate = Arc::clone(&activity);
         let approved = options.approved;
         let diagnostics = options.diagnostics;
+        let failure_diagnostics = options.failure_diagnostics;
         let worker = std::thread::spawn(move || {
             while let Ok(request) = receiver.recv() {
                 if diagnostics {
@@ -894,16 +915,24 @@ fn run_inner(
                         request.received.elapsed().as_millis()
                     );
                 }
-                let result = save(request, &gate, deadline, approved.as_deref(), diagnostics);
-                if diagnostics {
+                let result = save(
+                    request,
+                    &gate,
+                    deadline,
+                    approved.as_deref(),
+                    diagnostics,
+                    failure_diagnostics,
+                );
+                if diagnostics || failure_diagnostics {
                     match result {
-                        Ok(Some(path)) => println!(
+                        Ok(Some(path)) if diagnostics => println!(
                             "Saved: {} ({} ms after request receipt)",
                             path.display(),
                             request.received.elapsed().as_millis()
                         ),
                         Ok(None) => println!("Declined: no stable supported image-paste context"),
                         Err(error) => eprintln!("Paste declined: {error}"),
+                        Ok(Some(_)) => {}
                     }
                 }
             }
@@ -1289,8 +1318,18 @@ mod tests {
     fn normal_diagnostics_requires_exact_opt_in() {
         assert!(!diagnostics_requested(None));
         assert!(diagnostics_requested(Some(OsStr::new("1"))));
-        for value in ["", "0", "true", "yes", " 1", "1 ", "2"] {
+        for value in ["", "0", "true", "yes", " 1", "1 ", "2", "failures"] {
             assert!(!diagnostics_requested(Some(OsStr::new(value))));
+        }
+    }
+
+    #[test]
+    fn normal_failure_diagnostics_never_enable_verbose_observation() {
+        assert!(failure_diagnostics_requested(Some(OsStr::new("failures"))));
+        assert!(!diagnostics_requested(Some(OsStr::new("failures"))));
+        assert!(!failure_diagnostics_requested(None));
+        for value in ["", "0", "1", "true", "Failures", " failures", "failures "] {
+            assert!(!failure_diagnostics_requested(Some(OsStr::new(value))));
         }
     }
 

@@ -926,7 +926,13 @@ public static partial class LaqayGuestDesktop {
         Guard();RequireRole("Primary");
         if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows11EnterpriseEvaluation" || SessionProtocol()!=0)
             throw new InvalidOperationException("Normal console diagnostics require the owned Windows 11 Primary console.");
-        return StartApplicationCore(path,"",true,true);
+        return StartApplicationCore(path,"",true,true,failureDiagnostics:true);
+    }
+    static ProcessStartInfo FailureAwareStartInfo(string path,string arguments,bool capture,bool normalDiagnostics,bool failureDiagnostics) {
+        if(failureDiagnostics && !normalDiagnostics) throw new ArgumentException("Failure diagnostics require explicit diagnostic capture.");
+        var start=ApplicationStartInfo(path,arguments,capture,normalDiagnostics);
+        if(failureDiagnostics) start.EnvironmentVariables["LAQAY_DIAGNOSTICS"]="failures";
+        return start;
     }
     static ProcessStartInfo ApplicationStartInfo(string path,string arguments,bool capture,bool normalDiagnostics) {
         var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
@@ -937,7 +943,7 @@ public static partial class LaqayGuestDesktop {
     }
     static bool shutdownLifetime;
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr handle,uint exitCode);
-    static int StartApplicationCore(string path,string arguments,bool capture,bool normalDiagnostics=false,bool shutdown=false) {
+    static int StartApplicationCore(string path,string arguments,bool capture,bool normalDiagnostics=false,bool shutdown=false,bool failureDiagnostics=false) {
         Guard();
         if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected application path or instance.");
         job=CreateJobObjectW(IntPtr.Zero,null);
@@ -948,7 +954,7 @@ public static partial class LaqayGuestDesktop {
         var limits=new JobLimits(); limits.basic.flags=shutdown?0u:0x2000u;
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) { CloseHandle(job); job=IntPtr.Zero; throw new InvalidOperationException("Cannot configure the guest process job."); }
         try {
-            var start=ApplicationStartInfo(path,arguments,capture,normalDiagnostics);
+            var start=FailureAwareStartInfo(path,arguments,capture,normalDiagnostics,failureDiagnostics);
             application=Process.Start(start);
             if(!AssignProcessToJobObject(job,application.Handle)) { application.Kill(); application.WaitForExit(); throw new InvalidOperationException("Cannot contain the owned guest application."); }
             if(capture) {
