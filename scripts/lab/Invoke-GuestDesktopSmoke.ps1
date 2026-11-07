@@ -81,7 +81,7 @@ $reportPath=Join-Path $root 'report.json'
 if(Test-Path -LiteralPath $reportPath){throw 'Refusing to reuse an existing guest run report.'}
 $report=[ordered]@{GuestProfile=$GuestProfile;Platform=[LaqayGuestDesktop]::GuestProfileEvidence();NotApplicableCases=@();TabExclusionEvidence=$null;LabId=$LabId;RunId=$RunId;Passed=$false;Error=$null;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;
     ExecutableSha256=$ExpectedExecutableSha256;ApplicationPid=$null;ApplicationClosed=$false;ApplicationExitCode=$null;ForcedTermination=$false;
-    Cases=@();ImagePastes=@();EditableFields=@();CoreTrial=$null;RdpTabTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
+    Cases=@();ImagePastes=@();EditableFields=@();NormalModeLog=$null;CoreTrial=$null;RdpTabTrial=$null;TabNavigations=@();IncludeRealApplications=[bool]$IncludeRealApplications;IncludeWindowsTerminal=[bool]$IncludeWindowsTerminal;RealApplications=@();TabClipboardRace=$null;CleanupErrors=@();PreferencesRestored=$false;PermissionsRestored=$true;IncludeUnc=[bool]$IncludeUnc;
     UncFiles=@();UncConnectionReady=$false;SmbSigned=$false;PeerDisconnected=(-not $IncludeUnc);CredentialRemoved=(-not $IncludeUnc);ErrorDetail=$null;
     IncludeLifecycle=[bool]$IncludeLifecycle;IncludeAdverse=[bool]$IncludeAdverse;AdverseFixturesClosed=$true;ClipboardLeaseProof=@();EditorProof=@();EditorSenderComparison=@();ReferenceHookProof=@();SerialPastes=@();ResourceSamples=@();SecondInstance=$null;ExplorerRestart=$null;PendingClipboard=$null;PendingWaitVerified=$false;ProviderStopped=$false;
     IncludeRdp=[bool]$IncludeRdp;SessionProtocol=$null;RdpClientAddress=$null;ClientRequest=$null;ClientCommands=0;StartedUtc=[DateTime]::UtcNow.ToString('o');FinishedUtc=$null}
@@ -181,6 +181,7 @@ function Invoke-CoreTrial {
     return [pscustomobject]$diagnostic
 }
 function Get-RdpTabTrialTarget($state,[string]$runRoot){
+    if($state.NormalModeLog -and -not $state.NormalModeLog.Drained){return $null}
     if(-not $state.IncludeRdp -or $state.GuestProfile -cne 'Windows11EnterpriseEvaluation' -or $state.SessionProtocol -ne 2 -or $state.Passed -or -not $state.ApplicationClosed -or $state.ApplicationExitCode -ne 0 -or $state.ForcedTermination){return $null}
     if($state.Error -cne 'The expected image was not published in the active guest folder.' -or $state.Cases.Count -ne 9 -or $state.Cases[8].Name -cne 'ActiveTabSelection' -or $state.Cases[8].Passed -or @($state.Cases[0..7] | Where-Object {-not $_.Passed}).Count){return $null}
     if($state.TabNavigations.Count -ne 1 -or -not $state.TabNavigations[0].Passed -or $state.TabNavigations[0].SelectedTab -cne 'tab-b' -or $state.ImagePastes.Count -eq 0){return $null}
@@ -342,7 +343,8 @@ try{
     }
     $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Laqay')
     try{$key.SetValue('Enabled',1,[Microsoft.Win32.RegistryValueKind]::DWord)}finally{$key.Dispose()}
-    $report.ApplicationPid=[LaqayGuestDesktop]::StartApplication($executable)
+    if($IncludeRdp){$report.ApplicationPid=[LaqayGuestDesktop]::StartNormalRdpDiagnosticApplication($executable)}
+    else{$report.ApplicationPid=[LaqayGuestDesktop]::StartApplication($executable)}
     $applicationStarted=$true
     Save-Report
     Wait-For { [LaqayGuestDesktop]::ApplicationReady() } 'The actual Laqay tray application did not initialize.'
@@ -709,6 +711,12 @@ try{
     try{[LaqayGuestDesktop]::EndDelayedPng()}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
     if($applicationStarted){
         try{$report.ApplicationClosed=[LaqayGuestDesktop]::CloseApplication();$report.ForcedTermination=[LaqayGuestDesktop]::WasApplicationForced;$report.ApplicationExitCode=[LaqayGuestDesktop]::ApplicationExitCode;if(-not $report.ApplicationClosed){$report.Passed=$false}}catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+        if($IncludeRdp){
+            try{
+                $report.NormalModeLog=[LaqayGuestDesktop]::CoreTrialLog()
+                if(-not $report.NormalModeLog.Drained){$report.CleanupErrors+=@('The normal-mode diagnostic readers did not drain.');$report.Passed=$false}
+            }catch{$report.CleanupErrors+=@($_.Exception.Message);$report.Passed=$false}
+        }
     }
     if($GuestProfile -ceq 'Windows10ProEsMx' -and -not $report.Passed -and $report.ApplicationClosed -and $report.ApplicationExitCode -eq 0 -and -not $report.ForcedTermination -and $report.Cases.Count -eq 1 -and $report.Cases[0].Name -ceq 'ImagePaste' -and $report.Error -ceq 'The expected image was not published in the active guest folder.'){
         $report.CoreTrial=Invoke-CoreTrial

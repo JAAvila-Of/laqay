@@ -22,6 +22,7 @@ public static partial class LaqayGuestDesktop {
     static readonly object trialLogLock=new object();
     static StringBuilder trialLog;
     static bool trialLogTruncated,trialLogDrained;
+    static int trialLogMaximum=65536;
     static ManualResetEvent trialOutputDone,trialErrorDone;
     static IntPtr job;
     static bool peerConnected;
@@ -906,16 +907,29 @@ public static partial class LaqayGuestDesktop {
         if(line==null) {completed.Set();return;}
         lock(trialLogLock) {
             string text=channel+": "+line+Environment.NewLine;
-            int remaining=65536-trialLog.Length;
+            int remaining=trialLogMaximum-trialLog.Length;
             if(text.Length>remaining) trialLogTruncated=true;
             if(remaining>0) trialLog.Append(text,0,Math.Min(text.Length,remaining));
         }
     }
     public static object CoreTrialLog() {
-        lock(trialLogLock) return new {Output=trialLog==null?"":trialLog.ToString(),Truncated=trialLogTruncated,Drained=trialLogDrained,MaximumCharacters=65536};
+        lock(trialLogLock) return new {Output=trialLog==null?"":trialLog.ToString(),Truncated=trialLogTruncated,Drained=trialLogDrained,MaximumCharacters=trialLogMaximum};
+    }
+    public static int StartNormalRdpDiagnosticApplication(string path) {
+        Guard();RequireRole("Peer");
+        if(observedDesktopProfile==null || Convert.ToString(observedDesktopProfile["Profile"])!="Windows11EnterpriseEvaluation" || SessionProtocol()!=2)
+            throw new InvalidOperationException("Normal-mode diagnostics require the owned Windows 11 RDP session.");
+        return StartApplicationCore(path,"",true,true);
     }
     public static int StartApplication(string path) {return StartApplicationCore(path,"",false);}
-    static int StartApplicationCore(string path,string arguments,bool capture) {
+    static ProcessStartInfo ApplicationStartInfo(string path,string arguments,bool capture,bool normalDiagnostics) {
+        var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
+        start.EnvironmentVariables.Remove("LAQAY_DIAGNOSTICS");
+        if(normalDiagnostics) start.EnvironmentVariables["LAQAY_DIAGNOSTICS"]="1";
+        if(capture) {start.StandardOutputEncoding=Encoding.UTF8;start.StandardErrorEncoding=Encoding.UTF8;}
+        return start;
+    }
+    static int StartApplicationCore(string path,string arguments,bool capture,bool normalDiagnostics=false) {
         Guard();
         if(application!=null || !Path.GetFullPath(path).StartsWith(@"C:\LaqayLab\App\",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected application path or instance.");
         job=CreateJobObjectW(IntPtr.Zero,null);
@@ -923,12 +937,11 @@ public static partial class LaqayGuestDesktop {
         var limits=new JobLimits(); limits.basic.flags=0x2000;
         if(!SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(JobLimits)))) { CloseHandle(job); job=IntPtr.Zero; throw new InvalidOperationException("Cannot configure the guest process job."); }
         try {
-            var start=new ProcessStartInfo(path,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(path),RedirectStandardOutput=capture,RedirectStandardError=capture};
-            if(capture) {start.StandardOutputEncoding=Encoding.UTF8;start.StandardErrorEncoding=Encoding.UTF8;}
+            var start=ApplicationStartInfo(path,arguments,capture,normalDiagnostics);
             application=Process.Start(start);
             if(!AssignProcessToJobObject(job,application.Handle)) { application.Kill(); application.WaitForExit(); throw new InvalidOperationException("Cannot contain the owned guest application."); }
             if(capture) {
-                trialLog=new StringBuilder();trialLogTruncated=false;trialLogDrained=false;
+                trialLog=new StringBuilder();trialLogTruncated=false;trialLogDrained=false;trialLogMaximum=normalDiagnostics?262144:65536;
                 trialOutputDone=new ManualResetEvent(false);trialErrorDone=new ManualResetEvent(false);
                 application.OutputDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stdout",eventArgs.Data,trialOutputDone);
                 application.ErrorDataReceived+=(sender,eventArgs)=>CaptureTrialLine("stderr",eventArgs.Data,trialErrorDone);

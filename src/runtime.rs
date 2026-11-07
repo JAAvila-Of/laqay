@@ -9,6 +9,7 @@ use crate::{
 };
 use std::{
     cell::{Cell, RefCell},
+    ffi::OsStr,
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
@@ -620,6 +621,10 @@ fn run_probe(options: Options) -> Result<()> {
     run_inner(options, Arc::new(Activity::new(true)), 0, None)
 }
 
+fn diagnostics_requested(value: Option<&OsStr>) -> bool {
+    value == Some(OsStr::new("1"))
+}
+
 /// Owns only this application's observer thread. UI and registry operations
 /// never run on the hook thread; pausing removes its hook asynchronously.
 pub(crate) struct Observer {
@@ -634,7 +639,8 @@ impl Observer {
         notify: HWND,
         trial: Option<(u32, PathBuf)>,
     ) -> Result<Self> {
-        let diagnostics = trial.is_some();
+        let diagnostics = trial.is_some()
+            || diagnostics_requested(std::env::var_os("LAQAY_DIAGNOSTICS").as_deref());
         let (seconds, approved) = match trial {
             Some((seconds, path)) => (Some(seconds), Some(path)),
             None => (None, None),
@@ -764,12 +770,21 @@ fn run_inner(
     let (sender, worker) = if options.input_only {
         (None, None)
     } else {
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel::<Request>(1);
         let gate = Arc::clone(&activity);
         let approved = options.approved;
         let diagnostics = options.diagnostics;
         let worker = std::thread::spawn(move || {
             while let Ok(request) = receiver.recv() {
+                if diagnostics {
+                    println!(
+                        "Paste request: window={}, focus={}, clipboard_sequence={}, queued_ms={}",
+                        request.window,
+                        request.focus,
+                        request.sequence,
+                        request.received.elapsed().as_millis()
+                    );
+                }
                 let result = save(request, &gate, deadline, approved.as_deref(), diagnostics);
                 if diagnostics {
                     match result {
@@ -916,6 +931,15 @@ fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normal_diagnostics_requires_exact_opt_in() {
+        assert!(!diagnostics_requested(None));
+        assert!(diagnostics_requested(Some(OsStr::new("1"))));
+        for value in ["", "0", "true", "yes", " 1", "1 ", "2"] {
+            assert!(!diagnostics_requested(Some(OsStr::new(value))));
+        }
+    }
 
     #[test]
     fn generic_modifier_scancodes_preserve_chord_semantics() {

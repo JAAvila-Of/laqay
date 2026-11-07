@@ -372,6 +372,24 @@ clipboard policy restrictions, Windows 10, or arbitrary RDP client versions.
 
 ### Supplementary diagnosis after an RDP tab failure
 
+The RDP guest suite starts its original application in normal mode with
+`LAQAY_DIAGNOSTICS=1` set only in that child's environment. The application
+keeps normal preferences, pause/resume behavior, destinations, and lifetime;
+the opt-in enables the existing input and context logs without `--trial`.
+Stdout and stderr are drained asynchronously into a bounded 262,144-character
+capture. After normal application exit, `NormalModeLog` retains that capture
+before any supplementary trial can reset the shared capture buffer. Undrained
+readers fail cleanup. Truncation is reported explicitly.
+Worker-side request records include the window, native focus, clipboard
+sequence, and queue delay for correlation with the case input snapshots.
+Logging can affect timing; a successful diagnostic run does not establish that
+an earlier intermittent failure has been fixed.
+
+Outside the harness, diagnostics require the exact environment value `1`
+and redirected stdout/stderr. Other values leave diagnostics disabled. Output
+can include destination paths; retain session logs privately. No variable is
+written to the parent process, registry, or persistent application settings.
+
 If the first eight cases pass but the first paste into `tab-b` fails, the guest
 may run a separate bounded trial after the normal application has closed.
 It requires the owned Windows 11 Peer RDP session, the recorded selected tab,

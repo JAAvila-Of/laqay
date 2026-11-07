@@ -13,8 +13,8 @@ try{
     [IO.Directory]::CreateDirectory($path)|Out-Null
     $cases=@(0..7|ForEach-Object {[pscustomobject]@{Name='EarlierCase';Passed=$true}})+@([pscustomobject]@{Name='ActiveTabSelection';Passed=$false})
     $message='The expected image was not published in the active guest folder.'
-    $template=@{GuestProfile='Windows11EnterpriseEvaluation';IncludeRdp=$true;SessionProtocol=2;Passed=$false;ApplicationClosed=$true;ApplicationExitCode=0;ForcedTermination=$false;Error=$message;Cases=$cases;TabNavigations=@(@{Passed=$true;SelectedTab='tab-b';Window=123;Path=$path});ImagePastes=@(@{CaseIndex=9;ExpectedCount=1;Published=$false;ObservedPngCount=0;Error=$message});CleanupErrors=@();RdpTabTrial=$null}
-    foreach($variant in @('normal','console','profile','protocol','passed','alive','forced','exit','other-case','earlier-failure','navigation','sibling','output','occupied')){
+    $template=@{GuestProfile='Windows11EnterpriseEvaluation';IncludeRdp=$true;SessionProtocol=2;Passed=$false;ApplicationClosed=$true;ApplicationExitCode=0;ForcedTermination=$false;Error=$message;Cases=$cases;TabNavigations=@(@{Passed=$true;SelectedTab='tab-b';Window=123;Path=$path});ImagePastes=@(@{CaseIndex=9;ExpectedCount=1;Published=$false;ObservedPngCount=0;Error=$message});CleanupErrors=@();RdpTabTrial=$null;NormalModeLog=@{Drained=$true}}
+    foreach($variant in @('normal','console','profile','protocol','passed','alive','forced','exit','other-case','earlier-failure','navigation','sibling','output','reader','occupied')){
         $report=$template|ConvertTo-Json -Depth 8|ConvertFrom-Json
         switch($variant){
             console {$report.IncludeRdp=$false}
@@ -29,6 +29,7 @@ try{
             navigation {$report.TabNavigations[0].Passed=$false}
             sibling {$report.TabNavigations[0].Path=Join-Path $root 'data-sibling/tab-b'}
             output {$report.ImagePastes[0].ObservedPngCount=1}
+            reader {$report.NormalModeLog.Drained=$false}
             occupied {[IO.File]::WriteAllText((Join-Path $path 'keep.txt'),'Keep')}
         }
         $before=$report|ConvertTo-Json -Depth 8;$script:called=0
@@ -38,7 +39,7 @@ try{
         }elseif($script:called -ne 0 -or ($report|ConvertTo-Json -Depth 8) -cne $before){throw ('Rejected diagnostic changed report or reached controls: '+$variant)}
     }
     if([IO.File]::ReadAllText((Join-Path $path 'keep.txt')) -cne 'Keep'){throw 'The scope guard changed existing data.'}
-    Write-Output '14 actual tab diagnostic routes passed; supplementary output cannot approve the failed suite.'
+    Write-Output '15 actual tab diagnostic routes passed; supplementary output cannot approve the failed suite.'
 }finally{
     $resolved=[IO.Path]::GetFullPath($fixture)
     if((Split-Path $resolved -Parent) -ne [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') -or (Split-Path $resolved -Leaf) -notlike 'Laqay.Rdp.Tab.*'){throw 'Refusing cleanup outside the owned fixture.'}
