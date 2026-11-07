@@ -34,7 +34,7 @@ jobs:
       - name: Run automated native and policy tests
         shell: pwsh
         run: |
-          cargo test --locked --all-features 2>&1 | Tee-Object -FilePath target/test-results.log
+          cargo test --locked --all-features -- --show-output 2>&1 | Tee-Object -FilePath target/test-results.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation log
         if: always()

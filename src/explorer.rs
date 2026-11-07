@@ -40,6 +40,10 @@ use windows::{
     core::{Interface, Result},
 };
 
+#[cfg(all(test, feature = "isolated-shell-tests"))]
+#[path = "shell_view_tests.rs"]
+mod shell_view_tests;
+
 struct Apartment;
 
 impl Apartment {
