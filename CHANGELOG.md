@@ -11,10 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add failure-only paste diagnostics
 - *(branding)* add corner logo and visual readme ([#22](https://github.com/JAAvila-Of/laqay/pull/22))
 
 ### Fixed
 
+- retry transient clipboard contention within the original request
+- complete teardown before ending the Windows session
 - embed Cargo-derived Windows version metadata ([#52](https://github.com/JAAvila-Of/laqay/pull/52))
 - enable verified stable release delivery ([#49](https://github.com/JAAvila-Of/laqay/pull/49))
 - preserve empty-folder evidence during staged publication ([#42](https://github.com/JAAvila-Of/laqay/pull/42))
@@ -27,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- handle null trigger collections in shutdown cleanup
+- capture optional console paste diagnostics
+- scope shutdown script policy to guest processes
+- verify rename editor readiness before paste
 - prepare isolated shutdown with a pending image read
 - *(deps)* bump actions/download-artifact from 4.3.0 to 8.0.2 ([#46](https://github.com/JAAvila-Of/laqay/pull/46))
 - *(deps)* bump release-plz/action from 0.5.147 to 0.5.148 ([#47](https://github.com/JAAvila-Of/laqay/pull/47))
