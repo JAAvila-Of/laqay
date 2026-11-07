@@ -410,7 +410,7 @@ fn target(
         if let (Ok(directory), Some(view)) = (path.canonicalize(), snapshot.directory_view(path)) {
             return Ok(TargetRead::Confirmed(PasteTarget { directory, view }));
         }
-    } else if phase == "BeforePublish" {
+    } else {
         if let Some((path, view)) = snapshot.identity_refresh_directory() {
             if let Ok(directory) = path.canonicalize() {
                 return Ok(TargetRead::IdentityTransition(PasteTarget {
@@ -421,6 +421,34 @@ fn target(
         }
     }
     Ok(TargetRead::Declined)
+}
+
+fn select_initial_target(
+    mut active: impl FnMut() -> bool,
+    mut observe: impl FnMut() -> Result<TargetRead>,
+) -> Result<Option<PasteTarget>> {
+    // A recognized transition supplies only a candidate. Before clipboard reads,
+    // one fresh complete observation must confirm its canonical folder and view.
+    let mut candidate = None;
+    for attempt in 0..2 {
+        if !active() {
+            return Ok(None);
+        }
+        let observation = observe()?;
+        if !active() {
+            return Ok(None);
+        }
+        match observation {
+            TargetRead::Confirmed(target)
+                if candidate.as_ref().is_none_or(|initial| *initial == target) =>
+            {
+                return Ok(Some(target));
+            }
+            TargetRead::IdentityTransition(target) if attempt == 0 => candidate = Some(target),
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
 }
 
 fn revalidate_target(
@@ -476,8 +504,16 @@ fn save(
         }
         return Ok(None);
     }
-    let TargetRead::Confirmed(approved_target) =
-        target(request, diagnostics, failure_diagnostics, "Initial", None)?
+    let mut initial_observations = 0;
+    let Some(approved_target) = select_initial_target(active, || {
+        initial_observations += 1;
+        let phase = if initial_observations == 1 {
+            "Initial"
+        } else {
+            "InitialRefresh"
+        };
+        target(request, diagnostics, failure_diagnostics, phase, None)
+    })?
     else {
         return Ok(None);
     };
@@ -1114,6 +1150,112 @@ mod tests {
         PasteTarget {
             directory: PathBuf::from(directory),
             view,
+        }
+    }
+
+    #[test]
+    fn initial_identity_refresh_requires_a_complete_matching_confirmation() {
+        for transition in [false, true] {
+            let mut reads = 0;
+            let selected = select_initial_target(
+                || true,
+                || {
+                    reads += 1;
+                    Ok(if transition && reads == 1 {
+                        TargetRead::IdentityTransition(synthetic_target(r"C:\approved", 7))
+                    } else {
+                        TargetRead::Confirmed(synthetic_target(r"C:\approved", 7))
+                    })
+                },
+            )
+            .unwrap();
+            assert_eq!(selected, Some(synthetic_target(r"C:\approved", 7)));
+            assert_eq!(reads, if transition { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn initial_refresh_rejects_uncertainty_changed_directory_view_and_provider_errors() {
+        for variant in 0..6 {
+            let mut reads = 0;
+            let selected = select_initial_target(
+                || true,
+                || {
+                    reads += 1;
+                    if reads == 1 {
+                        return Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\approved",
+                            7,
+                        )));
+                    }
+                    assert_eq!(
+                        reads, 2,
+                        "An initial transition must never cause a third read"
+                    );
+                    match variant {
+                        0 => Ok(TargetRead::Declined),
+                        1 => Ok(TargetRead::Confirmed(synthetic_target(r"C:\other", 7))),
+                        2 => Ok(TargetRead::Confirmed(synthetic_target(r"C:\approved", 8))),
+                        3 => Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\approved",
+                            7,
+                        ))),
+                        4 => Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\other",
+                            8,
+                        ))),
+                        _ => Err(Error::from_hresult(windows::Win32::Foundation::E_FAIL)),
+                    }
+                },
+            );
+            assert!(matches!(selected, Ok(None) | Err(_)));
+            assert_eq!(reads, 2);
+        }
+    }
+
+    #[test]
+    fn initial_refresh_never_retries_an_ordinary_decline_or_error() {
+        for error in [false, true] {
+            let mut reads = 0;
+            let selected = select_initial_target(
+                || true,
+                || {
+                    reads += 1;
+                    assert_eq!(reads, 1);
+                    if error {
+                        Err(Error::from_hresult(windows::Win32::Foundation::E_FAIL))
+                    } else {
+                        Ok(TargetRead::Declined)
+                    }
+                },
+            );
+            assert!(matches!(selected, Ok(None) | Err(_)));
+        }
+    }
+
+    #[test]
+    fn initial_refresh_checks_cancellation_before_and_after_each_read() {
+        for allowed_checks in 0..4 {
+            let checks = std::cell::Cell::new(0);
+            let reads = std::cell::Cell::new(0);
+            let selected = select_initial_target(
+                || {
+                    let check = checks.get();
+                    checks.set(check + 1);
+                    check < allowed_checks
+                },
+                || {
+                    reads.set(reads.get() + 1);
+                    Ok(if reads.get() == 1 {
+                        TargetRead::IdentityTransition(synthetic_target(r"C:\approved", 7))
+                    } else {
+                        TargetRead::Confirmed(synthetic_target(r"C:\approved", 7))
+                    })
+                },
+            )
+            .unwrap();
+            assert!(selected.is_none());
+            assert_eq!(reads.get(), [0, 1, 1, 2][allowed_checks]);
         }
     }
 
