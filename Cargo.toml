@@ -1,6 +1,6 @@
 [package]
 name = "laqay"
-version = "0.1.2"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Paste clipboard images as files in Windows Explorer"
