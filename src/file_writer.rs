@@ -20,9 +20,9 @@ use windows::{
         Foundation::HANDLE,
         Storage::FileSystem::{
             DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
-            FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx, MOVEFILE_WRITE_THROUGH,
-            MoveFileExW, SetFileInformationByHandle,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
+            FILE_SHARE_READ, FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx,
+            MOVEFILE_WRITE_THROUGH, MoveFileExW, SetFileInformationByHandle,
         },
     },
     core::PCWSTR,
@@ -50,6 +50,56 @@ struct StagingSnapshot {
 struct OwnedStaging {
     path: PathBuf,
     snapshot: StagingSnapshot,
+}
+
+/// Only the writer can construct this proof for its completed staging file.
+pub(crate) struct StagingContext<'a> {
+    path: &'a Path,
+    snapshot: Option<StagingSnapshot>,
+}
+
+pub(crate) struct StagingLease {
+    _file: File,
+    path: PathBuf,
+    snapshot: StagingSnapshot,
+}
+
+impl StagingContext<'_> {
+    pub(crate) fn pin(&self) -> io::Result<StagingLease> {
+        let expected = self
+            .snapshot
+            .ok_or_else(|| io::Error::other("Unknown staging identity"))?;
+        // READ_DATA makes the handle participate in share-access accounting;
+        // an attributes-only handle cannot enforce the write/delete exclusion.
+        let file = open_staging(self.path, FILE_READ_DATA.0)?;
+        if staging_snapshot(&file)? != expected {
+            return Err(io::Error::other("Staging identity or metadata changed"));
+        }
+        // The live handle denies write/delete sharing until the observation
+        // finishes. Publication only runs after this lease has been dropped.
+        Ok(StagingLease {
+            _file: file,
+            path: self.path.canonicalize()?,
+            snapshot: expected,
+        })
+    }
+}
+
+impl StagingLease {
+    pub(crate) fn matches_view_item(&self, item: &Path) -> bool {
+        // Resolve only the parent: following an unrelated leaf reparse point
+        // could incorrectly treat a link to our file as the owned entry.
+        let Some(parent) = item.parent().and_then(|parent| parent.canonicalize().ok()) else {
+            return false;
+        };
+        self.path.parent() == Some(parent.as_path())
+            && item.file_name().is_some()
+            && item.file_name() == self.path.file_name()
+            && open_staging(item, 0)
+                .and_then(|file| staging_snapshot(&file))
+                .ok()
+                == Some(self.snapshot)
+    }
 }
 
 fn windows_io(error: windows::core::Error) -> io::Error {
@@ -361,6 +411,15 @@ pub fn create_screenshot_checked(
     encode: impl FnOnce(&mut File) -> io::Result<()>,
     mut before_publish: impl FnMut() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
+    create_screenshot_with_staging_checked(directory, time, encode, |_| before_publish())
+}
+
+pub(crate) fn create_screenshot_with_staging_checked(
+    directory: &Path,
+    time: ScreenshotTime,
+    encode: impl FnOnce(&mut File) -> io::Result<()>,
+    mut before_publish: impl FnMut(StagingContext<'_>) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     if !directory.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -386,7 +445,13 @@ pub fn create_screenshot_checked(
     )?;
     let mut collision = 0;
     loop {
-        before_publish()?;
+        before_publish(StagingContext {
+            path: pending
+                .path
+                .as_deref()
+                .ok_or_else(|| io::Error::other("Missing staging path"))?,
+            snapshot: pending.snapshot,
+        })?;
         let destination = directory.join(time.filename(collision));
         let target = wide_path(&destination)?;
         // SAFETY: Both strings are NUL-terminated and live through the call.
@@ -443,6 +508,142 @@ mod tests {
             }
             fs::remove_dir(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn staging_lease_pins_only_the_completed_owned_entry_until_publication() {
+        let directory = TestDirectory::new();
+        let other = TestDirectory::new();
+        let mut encodes = 0;
+        let output = create_screenshot_with_staging_checked(
+            &directory.0,
+            time(),
+            |file| {
+                encodes += 1;
+                file.write_all(b"complete image")
+            },
+            |context| {
+                let lease = context.pin()?;
+                assert!(lease.matches_view_item(context.path));
+                assert!(!lease.matches_view_item(&directory.0.join(".laqay-foreign.tmp")));
+                assert!(!lease.matches_view_item(&other.0.join(context.path.file_name().unwrap())));
+                assert!(OpenOptions::new().write(true).open(context.path).is_err());
+                assert!(fs::remove_file(context.path).is_err());
+                assert_eq!(fs::read(context.path)?, b"complete image");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(encodes, 1);
+        assert_eq!(fs::read(output).unwrap(), b"complete image");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn staging_lease_rejects_changed_metadata_and_replacement_files() {
+        for replace in [false, true] {
+            let directory = TestDirectory::new();
+            let mut retained = None;
+            let result = create_screenshot_with_staging_checked(
+                &directory.0,
+                time(),
+                |file| file.write_all(b"original encoded image"),
+                |context| {
+                    retained = Some(context.path.to_owned());
+                    if replace {
+                        fs::rename(context.path, context.path.with_extension("retained"))?;
+                    }
+                    fs::write(context.path, b"changed")?;
+                    assert!(context.pin().is_err());
+                    Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Changed staging",
+                    ))
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(fs::read(retained.unwrap()).unwrap(), b"changed");
+            assert!(!directory.0.join(time().filename(0)).exists());
+        }
+    }
+
+    #[test]
+    fn staging_lease_rejects_unknown_identity() {
+        let directory = TestDirectory::new();
+        let result = create_screenshot_with_staging_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"complete image"),
+            |context| {
+                assert!(
+                    StagingContext {
+                        path: context.path,
+                        snapshot: None
+                    }
+                    .pin()
+                    .is_err()
+                );
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Unknown staging",
+                ))
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn empty_view_excludes_only_one_verified_owned_entry() {
+        use crate::explorer::view_is_logically_empty;
+        let directory = TestDirectory::new();
+        let output = create_screenshot_with_staging_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"image"),
+            |context| {
+                let lease = context.pin()?;
+                assert!(
+                    view_is_logically_empty(0, None, || panic!(
+                        "An empty view requested an item path"
+                    ))
+                    .unwrap()
+                );
+                assert!(
+                    !view_is_logically_empty(1, None, || panic!(
+                        "An unverified view requested an item path"
+                    ))
+                    .unwrap()
+                );
+                for count in [-1, 2, 3] {
+                    assert!(
+                        !view_is_logically_empty(count, Some(&lease), || panic!(
+                            "A foreign or unknown item count requested an exclusion"
+                        ))
+                        .unwrap()
+                    );
+                }
+                assert!(
+                    view_is_logically_empty(1, Some(&lease), || Ok(context.path.to_owned()))
+                        .unwrap()
+                );
+                assert!(
+                    !view_is_logically_empty(1, Some(&lease), || Ok(directory
+                        .0
+                        .join(".laqay-foreign.tmp")))
+                    .unwrap()
+                );
+                assert!(
+                    view_is_logically_empty(1, Some(&lease), || Err(
+                        windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL)
+                    ))
+                    .is_err()
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"image");
     }
     fn time() -> ScreenshotTime {
         ScreenshotTime::new(2026, 10, 29, 9, 5, 7).unwrap()

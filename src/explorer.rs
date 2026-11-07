@@ -4,6 +4,7 @@ use crate::context::{
     ContextEvidence, EmptyListEvidence, FocusNode, FocusRole, ValueAccess, ViewEvidence,
     native_empty_list, select_focused_view, static_text_in_folder_list,
 };
+use crate::file_writer::StagingLease;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use windows::{
@@ -26,9 +27,9 @@ use windows::{
                 UIA_ValuePatternId,
             },
             Shell::{
-                IFolderView, IPersistFolder2, IShellBrowser, IShellItem, IShellWindows,
-                IWebBrowserApp, SHCreateItemFromIDList, SID_STopLevelBrowser, SIGDN_FILESYSPATH,
-                SVGIO_ALLVIEW, ShellWindows,
+                IFolderView, IPersistFolder2, IShellBrowser, IShellFolder, IShellItem,
+                IShellWindows, IWebBrowserApp, SHCreateItemFromIDList, SHCreateItemWithParent,
+                SID_STopLevelBrowser, SIGDN_FILESYSPATH, SVGIO_ALLVIEW, ShellWindows,
             },
             WindowsAndMessaging::{
                 GUITHREADINFO, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
@@ -85,6 +86,8 @@ pub struct FocusObservation {
     pub folder_items_focused: bool,
     pub empty_list_candidate: bool,
     pub unchanged: bool,
+    pub identity_changed: bool,
+    pub static_text_path: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -229,6 +232,39 @@ pub fn inspect_native_control(window: usize) -> Result<NativeControlObservation>
 }
 
 impl ExplorerSnapshot {
+    pub(crate) fn identity_refresh_directory(&self) -> Option<(&std::path::Path, usize)> {
+        let semantic = self.semantic_focus.as_ref()?;
+        let native = semantic.native_control.as_ref()?;
+        if !semantic.identity_changed
+            || semantic.unchanged
+            || !semantic.static_text_path
+            || semantic.control_type != UIA_TextControlTypeId.0
+            || native.window != self.focus_window
+            || native.provider_window != self.focus_window
+            || native.win32_class != "DirectUIHWND"
+            || native.control_type != UIA_ListControlTypeId.0
+            || native.focused_descendant_type != Some(UIA_TextControlTypeId.0)
+            || !self.foreground_unchanged
+            || !self.native_focus_unchanged
+            || self.unresolved_entries != 0
+        {
+            return None;
+        }
+        let mut views = self.observations.iter().filter(|view| view.contains_focus);
+        let view = views.next()?;
+        if views.next().is_some() || !view.visible {
+            return None;
+        }
+        Some((view.directory.as_deref()?, view.view_window))
+    }
+
+    pub(crate) fn directory_view(&self, directory: &std::path::Path) -> Option<usize> {
+        let mut views = self.observations.iter().filter(|view| view.contains_focus);
+        let view = views.next()?;
+        (views.next().is_none() && view.visible && view.directory.as_deref() == Some(directory))
+            .then_some(view.view_window)
+    }
+
     /// Return an observed directory only; this is not permission to swallow input.
     pub fn diagnostic_directory(&self) -> Option<&std::path::Path> {
         let semantic = self.semantic_focus.as_ref()?;
@@ -277,10 +313,10 @@ impl SemanticFocusCheck {
     ];
 }
 
-fn semantic_focus_unchanged(
+fn semantic_focus_change(
     diagnostics: bool,
     mut check: impl FnMut(SemanticFocusCheck) -> Result<bool>,
-) -> Result<bool> {
+) -> Result<Option<SemanticFocusCheck>> {
     // Preserve short-circuit order: a rejected or unavailable element must not
     // receive later property queries just to produce a more detailed log.
     for step in SemanticFocusCheck::ORDER {
@@ -296,10 +332,10 @@ fn semantic_focus_unchanged(
             }
         }
         if !result? {
-            return Ok(false);
+            return Ok(Some(step));
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 fn observe_semantic_focus(
@@ -331,6 +367,8 @@ fn observe_semantic_focus(
         )
         .ok()
         .and_then(|_| inspect_control(&automation, info.hwndFocus).ok());
+        let static_text_path = kind == UIA_TextControlTypeId
+            && folder_text_path(&automation, &focused, info.hwndFocus, diagnostics)?;
         let folder_items_focused = ([
             UIA_ListControlTypeId,
             UIA_ListItemControlTypeId,
@@ -338,8 +376,7 @@ fn observe_semantic_focus(
             UIA_DataItemControlTypeId,
         ]
         .contains(&kind)
-            || (kind == UIA_TextControlTypeId
-                && folder_text_path(&automation, &focused, info.hwndFocus, diagnostics)?))
+            || static_text_path)
             && focused.CurrentHasKeyboardFocus()?.as_bool()
             && focused.CurrentIsEnabled()?.as_bool();
         // Closing either channel cancels the handshake without retaining a worker.
@@ -356,7 +393,7 @@ fn observe_semantic_focus(
                 );
             }
         })?;
-        let unchanged = semantic_focus_unchanged(diagnostics, |step| match step {
+        let change = semantic_focus_change(diagnostics, |step| match step {
             SemanticFocusCheck::ElementIdentity => {
                 Ok(automation.CompareElements(&focused, &after)?.as_bool())
             }
@@ -372,7 +409,9 @@ fn observe_semantic_focus(
             native_control,
             folder_items_focused,
             empty_list_candidate: false,
-            unchanged,
+            unchanged: change.is_none(),
+            identity_changed: change == Some(SemanticFocusCheck::ElementIdentity),
+            static_text_path,
         })
     }
 }
@@ -416,6 +455,8 @@ fn observe_unavailable_empty_focus(
             folder_items_focused: false,
             empty_list_candidate: true,
             unchanged,
+            identity_changed: false,
+            static_text_path: false,
         })
     }
 }
@@ -510,13 +551,20 @@ pub fn observe_foreground() -> Result<ExplorerSnapshot> {
 }
 
 pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnapshot> {
+    observe_for_publication(diagnostics, None)
+}
+
+pub(crate) fn observe_for_publication(
+    diagnostics: bool,
+    staging: Option<&StagingLease>,
+) -> Result<ExplorerSnapshot> {
     std::thread::scope(|scope| {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (finish_tx, finish_rx) = mpsc::channel();
         let worker = scope.spawn(move || observe_semantic_focus(ready_tx, finish_rx, diagnostics));
         let readiness = ready_rx.recv();
         let ready = readiness.is_ok();
-        let result = observe_shell(readiness.unwrap_or(false), diagnostics);
+        let result = observe_shell(readiness.unwrap_or(false), diagnostics, staging);
         let _ = finish_tx.send(());
         let semantic = match worker.join() {
             Ok(Ok(observation)) => Some(observation),
@@ -554,7 +602,54 @@ pub(crate) fn observe_with_diagnostics(diagnostics: bool) -> Result<ExplorerSnap
     })
 }
 
-fn observe_shell(check_empty: bool, diagnostics: bool) -> Result<ExplorerSnapshot> {
+pub(crate) fn view_is_logically_empty(
+    count: i32,
+    staging: Option<&StagingLease>,
+    item_path: impl FnOnce() -> Result<PathBuf>,
+) -> Result<bool> {
+    match count {
+        0 => Ok(true),
+        1 => match staging {
+            Some(lease) => Ok(lease.matches_view_item(&item_path()?)),
+            None => Ok(false),
+        },
+        _ => Ok(false),
+    }
+}
+
+fn view_has_no_foreign_items(
+    view: &IFolderView,
+    staging: Option<&StagingLease>,
+    diagnostics: bool,
+) -> Result<bool> {
+    // SAFETY: These interfaces and PIDLs remain on the Shell STA. The relative
+    // child PIDL is freed after creating an independently owned Shell item.
+    unsafe {
+        let count = view.ItemCount(SVGIO_ALLVIEW)?;
+        let empty = view_is_logically_empty(count, staging, || {
+            let child = view.Item(0)?;
+            let item_result: Result<IShellItem> = view
+                .GetFolder::<IShellFolder>()
+                .and_then(|parent| SHCreateItemWithParent(None, &parent, child));
+            CoTaskMemFree(Some(child.cast()));
+            let name = item_result?.GetDisplayName(SIGDN_FILESYSPATH)?;
+            let path = name.to_string();
+            CoTaskMemFree(Some(name.0.cast()));
+            let path = path?;
+            Ok(PathBuf::from(path))
+        })?;
+        if diagnostics && count == 1 && empty {
+            println!("Empty Shell view: verified owned staging entry excluded");
+        }
+        Ok(empty)
+    }
+}
+
+fn observe_shell(
+    check_empty: bool,
+    diagnostics: bool,
+    staging: Option<&StagingLease>,
+) -> Result<ExplorerSnapshot> {
     let _apartment = Apartment::new(COINIT_APARTMENTTHREADED)?;
     // SAFETY: All out-parameters point to initialized local storage. COM interfaces
     // stay on this STA thread and are dropped before the apartment guard. Allocated
@@ -583,7 +678,7 @@ fn observe_shell(check_empty: bool, diagnostics: bool) -> Result<ExplorerSnapsho
                 let view_window = view.GetWindow()?;
                 let folder_view: IFolderView = view.cast()?;
                 let initially_empty =
-                    check_empty && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0);
+                    check_empty && view_has_no_foreign_items(&folder_view, staging, diagnostics)?;
                 let folder: IPersistFolder2 = folder_view.GetFolder()?;
                 let pidl = folder.GetCurFolder()?;
                 let item_result: Result<IShellItem> = SHCreateItemFromIDList(pidl);
@@ -597,8 +692,8 @@ fn observe_shell(check_empty: bool, diagnostics: bool) -> Result<ExplorerSnapsho
                     }
                     Err(_) => None,
                 };
-                let confirmed_empty =
-                    initially_empty && folder_view.ItemCount(SVGIO_ALLVIEW).ok() == Some(0);
+                let confirmed_empty = initially_empty
+                    && view_has_no_foreign_items(&folder_view, staging, diagnostics)?;
                 if diagnostics && check_empty {
                     println!(
                         "Empty Shell view: initially_empty={initially_empty}, confirmed_empty={confirmed_empty}, filesystem={}, contains_focus={}",
@@ -650,12 +745,12 @@ mod tests {
         for diagnostics in [false, true] {
             for (index, changed) in SemanticFocusCheck::ORDER.into_iter().enumerate() {
                 let mut observed = Vec::new();
-                let stable = semantic_focus_unchanged(diagnostics, |step| {
+                let change = semantic_focus_change(diagnostics, |step| {
                     observed.push(step);
                     Ok(step != changed)
                 })
                 .unwrap();
-                assert!(!stable);
+                assert_eq!(change, Some(changed));
                 assert_eq!(observed, SemanticFocusCheck::ORDER[..=index]);
             }
         }
@@ -666,7 +761,7 @@ mod tests {
         for diagnostics in [false, true] {
             for (index, unavailable) in SemanticFocusCheck::ORDER.into_iter().enumerate() {
                 let mut observed = Vec::new();
-                let result = semantic_focus_unchanged(diagnostics, |step| {
+                let result = semantic_focus_change(diagnostics, |step| {
                     observed.push(step);
                     if step == unavailable {
                         Err(windows::core::Error::from_hresult(windows::core::HRESULT(
@@ -690,11 +785,12 @@ mod tests {
         for diagnostics in [false, true] {
             let mut observed = Vec::new();
             assert!(
-                semantic_focus_unchanged(diagnostics, |step| {
+                semantic_focus_change(diagnostics, |step| {
                     observed.push(step);
                     Ok(true)
                 })
                 .unwrap()
+                .is_none()
             );
             assert_eq!(
                 observed,
@@ -722,6 +818,8 @@ mod tests {
                 folder_items_focused: false,
                 empty_list_candidate: true,
                 unchanged: true,
+                identity_changed: false,
+                static_text_path: false,
             }),
             observations: vec![ShellObservation {
                 browser_window: 1,
@@ -732,6 +830,96 @@ mod tests {
                 confirmed_empty: true,
             }],
             unresolved_entries: 0,
+        }
+    }
+
+    fn changing_text_snapshot() -> ExplorerSnapshot {
+        let mut snapshot = empty_snapshot();
+        let semantic = snapshot.semantic_focus.as_mut().unwrap();
+        semantic.control_type = UIA_TextControlTypeId.0;
+        semantic.unchanged = false;
+        semantic.identity_changed = true;
+        semantic.static_text_path = true;
+        semantic.empty_list_candidate = false;
+        semantic.native_control = Some(NativeControlObservation {
+            window: 3,
+            provider_window: 3,
+            win32_class: "DirectUIHWND".into(),
+            control_type: UIA_ListControlTypeId.0,
+            has_keyboard_focus: false,
+            focused_descendant_type: Some(UIA_TextControlTypeId.0),
+        });
+        snapshot
+    }
+
+    #[test]
+    fn changing_read_only_text_needs_a_new_observation_not_permission_to_publish() {
+        let snapshot = changing_text_snapshot();
+        assert_eq!(snapshot.diagnostic_directory(), None);
+        assert_eq!(
+            snapshot.identity_refresh_directory(),
+            Some((std::path::Path::new(r"C:\case"), 2))
+        );
+    }
+
+    #[test]
+    fn identity_refresh_rejects_missing_or_changed_native_and_semantic_evidence() {
+        let changes: [fn(&mut ExplorerSnapshot); 15] = [
+            |s| s.semantic_focus.as_mut().unwrap().identity_changed = false,
+            |s| s.semantic_focus.as_mut().unwrap().static_text_path = false,
+            |s| s.semantic_focus.as_mut().unwrap().unchanged = true,
+            |s| s.semantic_focus.as_mut().unwrap().control_type = 50004,
+            |s| s.semantic_focus.as_mut().unwrap().native_control = None,
+            |s| {
+                s.semantic_focus
+                    .as_mut()
+                    .unwrap()
+                    .native_control
+                    .as_mut()
+                    .unwrap()
+                    .window = 9
+            },
+            |s| {
+                s.semantic_focus
+                    .as_mut()
+                    .unwrap()
+                    .native_control
+                    .as_mut()
+                    .unwrap()
+                    .provider_window = 9
+            },
+            |s| {
+                s.semantic_focus
+                    .as_mut()
+                    .unwrap()
+                    .native_control
+                    .as_mut()
+                    .unwrap()
+                    .win32_class = "Edit".into()
+            },
+            |s| {
+                s.semantic_focus
+                    .as_mut()
+                    .unwrap()
+                    .native_control
+                    .as_mut()
+                    .unwrap()
+                    .focused_descendant_type = Some(50004)
+            },
+            |s| s.foreground_unchanged = false,
+            |s| s.native_focus_unchanged = false,
+            |s| s.unresolved_entries = 1,
+            |s| s.observations[0].visible = false,
+            |s| s.observations[0].directory = None,
+            |s| {
+                s.observations
+                    .push(empty_snapshot().observations.pop().unwrap())
+            },
+        ];
+        for change in changes {
+            let mut snapshot = changing_text_snapshot();
+            change(&mut snapshot);
+            assert!(snapshot.identity_refresh_directory().is_none());
         }
     }
 

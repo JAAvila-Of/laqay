@@ -313,38 +313,62 @@ fn explorer_process(window: usize) -> Result<bool> {
     }
 }
 
-fn target(request: Request, diagnostics: bool, phase: &str) -> Result<Option<PathBuf>> {
+#[derive(Debug, PartialEq, Eq)]
+struct PasteTarget {
+    directory: PathBuf,
+    view: usize,
+}
+
+enum TargetRead {
+    Confirmed(PasteTarget),
+    IdentityTransition(PasteTarget),
+    Declined,
+}
+
+fn request_matches(request: Request, current: Option<Request>) -> bool {
+    matches!(current, Some(now) if now.window == request.window && now.focus == request.focus && now.sequence == request.sequence)
+}
+
+fn target(
+    request: Request,
+    diagnostics: bool,
+    phase: &str,
+    staging: Option<&file_writer::StagingLease>,
+) -> Result<TargetRead> {
     let current = current_request();
-    if !matches!(current, Some(now) if now.window == request.window && now.focus == request.focus && now.sequence == request.sequence)
-    {
+    if !request_matches(request, current) {
         if diagnostics {
             println!(
                 "Context declined: phase={phase}, window, focus, or clipboard sequence changed"
             );
         }
-        return Ok(None);
+        return Ok(TargetRead::Declined);
     }
     if !explorer_process(request.window)? {
         if diagnostics {
             println!("Context declined: phase={phase}, foreground process is not Explorer");
         }
-        return Ok(None);
+        return Ok(TargetRead::Declined);
     }
-    let snapshot = explorer::observe_with_diagnostics(diagnostics).inspect_err(|error| {
-        if diagnostics {
-            eprintln!(
-                "Context check failed: phase={phase}, hresult={:#010x}",
-                error.code().0 as u32
-            );
-        }
-    })?;
-    if snapshot.foreground_window != request.window || snapshot.focus_window != request.focus {
+    let snapshot =
+        explorer::observe_for_publication(diagnostics, staging).inspect_err(|error| {
+            if diagnostics {
+                eprintln!(
+                    "Context check failed: phase={phase}, hresult={:#010x}",
+                    error.code().0 as u32
+                );
+            }
+        })?;
+    if snapshot.foreground_window != request.window
+        || snapshot.focus_window != request.focus
+        || !request_matches(request, current_request())
+    {
         if diagnostics {
             println!(
                 "Context declined: phase={phase}, Explorer snapshot no longer matches request"
             );
         }
-        return Ok(None);
+        return Ok(TargetRead::Declined);
     }
     if diagnostics && snapshot.diagnostic_directory().is_none() {
         println!(
@@ -360,9 +384,57 @@ fn target(request: Request, diagnostics: bool, phase: &str) -> Result<Option<Pat
             snapshot.semantic_focus
         );
     }
-    Ok(snapshot
-        .diagnostic_directory()
-        .and_then(|path| path.canonicalize().ok()))
+    if let Some(path) = snapshot.diagnostic_directory() {
+        if let (Ok(directory), Some(view)) = (path.canonicalize(), snapshot.directory_view(path)) {
+            return Ok(TargetRead::Confirmed(PasteTarget { directory, view }));
+        }
+    } else if phase == "BeforePublish" {
+        if let Some((path, view)) = snapshot.identity_refresh_directory() {
+            if let Ok(directory) = path.canonicalize() {
+                return Ok(TargetRead::IdentityTransition(PasteTarget {
+                    directory,
+                    view,
+                }));
+            }
+        }
+    }
+    Ok(TargetRead::Declined)
+}
+
+fn revalidate_target(
+    approved: &PasteTarget,
+    mut active: impl FnMut() -> bool,
+    mut observe: impl FnMut() -> Result<TargetRead>,
+) -> io::Result<()> {
+    for attempt in 0..2 {
+        if !active() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Observer paused or stopped",
+            ));
+        }
+        let observation = observe().map_err(|error| io::Error::other(error.to_string()))?;
+        if !active() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Observer paused or stopped",
+            ));
+        }
+        match observation {
+            TargetRead::Confirmed(target) if target == *approved => return Ok(()),
+            TargetRead::IdentityTransition(target) if target == *approved && attempt == 0 => {}
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Paste context changed",
+                ));
+            }
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::Interrupted,
+        "Paste context changed",
+    ))
 }
 
 fn save(
@@ -380,9 +452,11 @@ fn save(
         }
         return Ok(None);
     }
-    let Some(directory) = target(request, diagnostics, "Initial")? else {
+    let TargetRead::Confirmed(approved_target) = target(request, diagnostics, "Initial", None)?
+    else {
         return Ok(None);
     };
+    let directory = &approved_target.directory;
     if approved_directory.is_some_and(|approved| directory != approved) {
         if diagnostics {
             println!("Request declined: folder differs from approved destination");
@@ -412,26 +486,30 @@ fn save(
         clock.wMinute as u8,
         clock.wSecond as u8,
     )?;
-    let output = file_writer::create_screenshot_checked(
-        &directory,
+    let output = file_writer::create_screenshot_with_staging_checked(
+        directory,
         time,
         |file| file.write_all(&png),
-        || {
+        |staging| {
             if !active() {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
                     "Observer paused or stopped",
                 ));
             }
-            let again = target(request, diagnostics, "BeforePublish")
-                .map_err(|error| io::Error::other(error.to_string()))?;
-            if !active() || again.as_deref() != Some(directory.as_path()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "Paste context changed",
-                ));
+            let lease = staging.pin().ok();
+            let mut observations = 0;
+            let result = revalidate_target(&approved_target, active, || {
+                observations += 1;
+                target(request, diagnostics, "BeforePublish", lease.as_ref())
+            });
+            if diagnostics && observations > 1 {
+                println!(
+                    "Publication context refresh: observations={observations}, accepted={}",
+                    result.is_ok()
+                );
             }
-            Ok(())
+            result
         },
     )?;
     let mut name: Vec<u16> =
@@ -942,6 +1020,250 @@ fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_context_rejects_each_native_change_and_missing_observation() {
+        let request = Request {
+            window: 1,
+            focus: 2,
+            sequence: 3,
+            ticket: 4,
+            received: Instant::now(),
+        };
+        assert!(request_matches(request, Some(request)));
+        assert!(!request_matches(request, None));
+        for changed in [
+            Request {
+                window: 9,
+                ..request
+            },
+            Request {
+                focus: 9,
+                ..request
+            },
+            Request {
+                sequence: 9,
+                ..request
+            },
+        ] {
+            assert!(!request_matches(request, Some(changed)));
+        }
+    }
+
+    fn synthetic_target(directory: &str, view: usize) -> PasteTarget {
+        PasteTarget {
+            directory: PathBuf::from(directory),
+            view,
+        }
+    }
+
+    #[test]
+    fn publication_accepts_only_a_fresh_confirmation_of_the_original_target() {
+        let approved = synthetic_target(r"C:\approved", 7);
+        let mut reads = 0;
+        revalidate_target(
+            &approved,
+            || true,
+            || {
+                reads += 1;
+                Ok(if reads == 1 {
+                    TargetRead::IdentityTransition(synthetic_target(r"C:\approved", 7))
+                } else {
+                    TargetRead::Confirmed(synthetic_target(r"C:\approved", 7))
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(reads, 2);
+        reads = 0;
+        revalidate_target(
+            &approved,
+            || true,
+            || {
+                reads += 1;
+                Ok(TargetRead::Confirmed(synthetic_target(r"C:\approved", 7)))
+            },
+        )
+        .unwrap();
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn publication_does_not_retry_a_decline_changed_folder_changed_view_or_provider_error() {
+        let approved = synthetic_target(r"C:\approved", 7);
+        for (variant, after_transition) in
+            (0..6).flat_map(|variant| [false, true].map(|after| (variant, after)))
+        {
+            let mut reads = 0;
+            let result = revalidate_target(
+                &approved,
+                || true,
+                || {
+                    reads += 1;
+                    if after_transition && reads == 1 {
+                        return Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\approved",
+                            7,
+                        )));
+                    }
+                    assert_eq!(
+                        reads,
+                        if after_transition { 2 } else { 1 },
+                        "A terminal change was retried"
+                    );
+                    match variant {
+                        0 => Ok(TargetRead::Declined),
+                        1 => Ok(TargetRead::Confirmed(synthetic_target(r"C:\other", 7))),
+                        2 => Ok(TargetRead::Confirmed(synthetic_target(r"C:\approved", 8))),
+                        3 => Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\other",
+                            7,
+                        ))),
+                        4 => Ok(TargetRead::IdentityTransition(synthetic_target(
+                            r"C:\approved",
+                            8,
+                        ))),
+                        _ => Err(Error::from_hresult(windows::Win32::Foundation::E_FAIL)),
+                    }
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(reads, if after_transition { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn publication_never_uses_a_third_observation() {
+        let approved = synthetic_target(r"C:\approved", 7);
+        let mut reads = 0;
+        let result = revalidate_target(
+            &approved,
+            || true,
+            || {
+                reads += 1;
+                Ok(if reads < 3 {
+                    TargetRead::IdentityTransition(synthetic_target(r"C:\approved", 7))
+                } else {
+                    TargetRead::Confirmed(synthetic_target(r"C:\approved", 7))
+                })
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(reads, 2);
+    }
+
+    #[test]
+    fn publication_checks_cancellation_before_and_after_each_observation() {
+        let approved = synthetic_target(r"C:\approved", 7);
+        for cancelled_at in 1..=4 {
+            let mut checks = 0;
+            let mut reads = 0;
+            let result = revalidate_target(
+                &approved,
+                || {
+                    checks += 1;
+                    checks != cancelled_at
+                },
+                || {
+                    reads += 1;
+                    Ok(if reads == 1 {
+                        TargetRead::IdentityTransition(synthetic_target(r"C:\approved", 7))
+                    } else {
+                        TargetRead::Confirmed(synthetic_target(r"C:\approved", 7))
+                    })
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(checks, cancelled_at);
+            assert_eq!(reads, cancelled_at / 2);
+        }
+    }
+
+    #[test]
+    fn fresh_observation_encodes_once_and_publishes_once_or_cleans_staging() {
+        use std::fs;
+        static NEXT_CASE: AtomicU64 = AtomicU64::new(0);
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let root = std::env::temp_dir();
+                assert_eq!(self.0.parent(), Some(root.as_path()));
+                assert!(
+                    self.0
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("laqay-context-publication-")
+                );
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        for decline in [false, true] {
+            let directory = std::env::temp_dir().join(format!(
+                "laqay-context-publication-{}-{}",
+                std::process::id(),
+                NEXT_CASE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&directory).unwrap();
+            let fixture = Fixture(directory);
+            let approved = PasteTarget {
+                directory: fixture.0.canonicalize().unwrap(),
+                view: 7,
+            };
+            let time = ScreenshotTime::new(2026, 1, 2, 3, 4, 5).unwrap();
+            let mut encodes = 0;
+            let mut reads = 0;
+            let result = file_writer::create_screenshot_with_staging_checked(
+                &approved.directory,
+                time,
+                |file| {
+                    encodes += 1;
+                    file.write_all(b"complete encoded image")
+                },
+                |staging| {
+                    let lease = staging.pin()?;
+                    revalidate_target(
+                        &approved,
+                        || true,
+                        || {
+                            reads += 1;
+                            let entries: Vec<_> = fs::read_dir(&fixture.0)
+                                .unwrap()
+                                .map(|entry| entry.unwrap().path())
+                                .collect();
+                            assert_eq!(entries.len(), 1);
+                            assert!(lease.matches_view_item(&entries[0]));
+                            Ok(if reads == 1 {
+                                TargetRead::IdentityTransition(PasteTarget {
+                                    directory: approved.directory.clone(),
+                                    view: 7,
+                                })
+                            } else if decline {
+                                TargetRead::Declined
+                            } else {
+                                TargetRead::Confirmed(PasteTarget {
+                                    directory: approved.directory.clone(),
+                                    view: 7,
+                                })
+                            })
+                        },
+                    )
+                },
+            );
+            assert_eq!(encodes, 1);
+            assert_eq!(reads, 2);
+            if decline {
+                assert!(result.is_err());
+                assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+            } else {
+                assert_eq!(
+                    fs::read(result.unwrap()).unwrap(),
+                    b"complete encoded image"
+                );
+                assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
+            }
+        }
+    }
 
     #[test]
     fn normal_diagnostics_requires_exact_opt_in() {
