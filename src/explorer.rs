@@ -248,7 +248,10 @@ impl ExplorerSnapshot {
             || native.provider_window != self.focus_window
             || native.win32_class != "DirectUIHWND"
             || native.control_type != UIA_ListControlTypeId.0
-            || native.focused_descendant_type != Some(UIA_TextControlTypeId.0)
+            || !matches!(
+                native.focused_descendant_type,
+                Some(kind) if kind == UIA_TextControlTypeId.0 || kind == UIA_ListItemControlTypeId.0
+            )
             || !self.foreground_unchanged
             || !self.native_focus_unchanged
             || self.unresolved_entries != 0
@@ -905,6 +908,40 @@ mod tests {
             snapshot.identity_refresh_directory(),
             Some((std::path::Path::new(r"C:\case"), 2))
         );
+    }
+
+    #[test]
+    fn read_only_text_transition_can_already_have_a_native_list_item() {
+        let mut snapshot = changing_text_snapshot();
+        snapshot
+            .semantic_focus
+            .as_mut()
+            .unwrap()
+            .native_control
+            .as_mut()
+            .unwrap()
+            .focused_descendant_type = Some(UIA_ListItemControlTypeId.0);
+        assert_eq!(snapshot.diagnostic_directory(), None);
+        assert_eq!(
+            snapshot.identity_refresh_directory(),
+            Some((std::path::Path::new(r"C:\case"), 2))
+        );
+    }
+
+    #[test]
+    fn text_transition_refresh_rejects_other_native_descendant_roles() {
+        for role in [None, Some(50004), Some(50008), Some(50028), Some(50029)] {
+            let mut snapshot = changing_text_snapshot();
+            snapshot
+                .semantic_focus
+                .as_mut()
+                .unwrap()
+                .native_control
+                .as_mut()
+                .unwrap()
+                .focused_descendant_type = role;
+            assert!(snapshot.identity_refresh_directory().is_none());
+        }
     }
 
     #[test]
