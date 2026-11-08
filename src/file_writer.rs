@@ -15,14 +15,20 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use windows::Win32::{
-    Foundation::HANDLE,
-    Storage::FileSystem::{
-        DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
-        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ,
-        FileDispositionInfo, FileIdInfo, FileRenameInfo, GetFileInformationByHandleEx,
-        SetFileInformationByHandle,
+use windows::{
+    Wdk::Storage::FileSystem::{
+        FILE_RENAME_INFORMATION, FileRenameInformation, NtSetInformationFile,
+    },
+    Win32::{
+        Foundation::{HANDLE, RtlNtStatusToDosError},
+        Storage::FileSystem::{
+            DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
+            FILE_SHARE_READ, FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx,
+            SetFileInformationByHandle,
+        },
+        System::IO::IO_STATUS_BLOCK,
     },
 };
 
@@ -458,26 +464,29 @@ fn wide_path(path: &Path) -> io::Result<Vec<u16>> {
     Ok(encoded)
 }
 
-fn rename_staging(file: &File, destination: &Path) -> io::Result<()> {
-    let name = wide_path(destination)?;
+fn rename_staging(file: &File, filename: &str) -> io::Result<()> {
+    let name = wide_path(Path::new(filename))?;
     let name_bytes = (name.len() - 1)
         .checked_mul(size_of::<u16>())
         .and_then(|bytes| u32::try_from(bytes).ok())
         .ok_or_else(|| io::Error::other("Destination name is too long"))?;
-    let size = std::mem::offset_of!(FILE_RENAME_INFO, FileName)
+    let size = std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName)
         .checked_add(size_of_val(name.as_slice()))
         .ok_or_else(|| io::Error::other("Rename information is too large"))?
-        .max(size_of::<FILE_RENAME_INFO>());
+        .max(size_of::<FILE_RENAME_INFORMATION>());
     let bytes = u32::try_from(size).map_err(|_| io::Error::other("Rename buffer is too large"))?;
-    // usize storage provides at least FILE_RENAME_INFO alignment on Windows.
+    // usize storage provides at least FILE_RENAME_INFORMATION alignment.
     let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
-    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    let mut io_status = IO_STATUS_BLOCK::default();
     // SAFETY: The aligned allocation contains the complete header and trailing
     // UTF-16 name including NUL. FileNameLength excludes NUL. Zeroed flags mean
-    // ReplaceIfExists=false. The source is the original live file handle; the
-    // absolute destination's directory chain is pinned by DirectoryLease.
-    unsafe {
-        info.write(FILE_RENAME_INFO {
+    // ReplaceIfExists=false. This is a synchronous handle opened by our writer.
+    // Native FileRenameInformation with a simple name and NULL RootDirectory
+    // renames inside the source's own parent. It does not resolve a Win32 path
+    // against the process CWD or reopen a writable directory through the chain.
+    let status = unsafe {
+        info.write(FILE_RENAME_INFORMATION {
             FileNameLength: name_bytes,
             ..Default::default()
         });
@@ -486,18 +495,26 @@ fn rename_staging(file: &File, destination: &Path) -> io::Result<()> {
             storage
                 .as_mut_ptr()
                 .cast::<u8>()
-                .add(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+                .add(std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName))
                 .cast::<u16>(),
             name.len(),
         );
-        SetFileInformationByHandle(
+        NtSetInformationFile(
             HANDLE(file.as_raw_handle()),
-            FileRenameInfo,
+            &raw mut io_status,
             info.cast(),
             bytes,
+            FileRenameInformation,
         )
+    };
+    if status.0 >= 0 {
+        Ok(())
+    } else {
+        // SAFETY: Pure conversion of the returned NTSTATUS to its Win32 code.
+        Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(status) } as i32,
+        ))
     }
-    .map_err(windows_io)
 }
 
 /// Encode a complete PNG into a staging file and rename it to an unused final name.
@@ -570,13 +587,14 @@ pub(crate) fn create_screenshot_with_staging_checked(
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing staging handle"))?,
         })?;
-        let destination = directory.join(time.filename(collision));
+        let filename = time.filename(collision);
+        let destination = directory.join(&filename);
         let result = rename_staging(
             pending
                 .file
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing staging handle"))?,
-            &destination,
+            &filename,
         );
         match result {
             Ok(()) => {
