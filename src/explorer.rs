@@ -1,8 +1,9 @@
 //! Read-only Shell diagnostics. These observations do not authorize input suppression.
 
 use crate::context::{
-    ContextEvidence, EmptyListEvidence, FocusNode, FocusRole, ValueAccess, ViewEvidence,
-    native_empty_list, select_focused_view, static_text_in_folder_list,
+    AvailableEmptyFocus, ContextEvidence, EmptyListEvidence, FocusNode, FocusRole, ValueAccess,
+    ViewEvidence, available_empty_focus, native_empty_list, select_focused_view,
+    static_text_in_folder_list,
 };
 use crate::file_writer::StagingLease;
 use std::path::PathBuf;
@@ -355,11 +356,14 @@ fn observe_semantic_focus(
         let focused = match automation.GetFocusedElement() {
             Ok(focused) => focused,
             Err(error) if error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE => {
-                return observe_unavailable_empty_focus(&automation, ready, finish, diagnostics);
+                return observe_empty_focus(&automation, None, ready, finish, diagnostics);
             }
             Err(error) => return Err(error),
         };
         let kind = focused.CurrentControlType()?;
+        if kind == UIA_ListControlTypeId && !focused.CurrentHasKeyboardFocus()?.as_bool() {
+            return observe_empty_focus(&automation, Some(&focused), ready, finish, diagnostics);
+        }
         let global_control_window = focused.CurrentNativeWindowHandle()?.0 as usize;
         let mut info = GUITHREADINFO {
             cbSize: size_of::<GUITHREADINFO>() as u32,
@@ -420,8 +424,33 @@ fn observe_semantic_focus(
     }
 }
 
-fn observe_unavailable_empty_focus(
+fn matches_available_empty_focus(
     automation: &IUIAutomation,
+    focused: &IUIAutomationElement,
+    native: HWND,
+) -> Result<bool> {
+    // SAFETY: All elements remain on the same MTA. These read-only queries
+    // compare the global element with the exact native keyboard-focus provider.
+    unsafe {
+        let root = automation.ElementFromHandle(native)?;
+        Ok(available_empty_focus(AvailableEmptyFocus {
+            native_window: native.0 as usize,
+            focused_window: focused.CurrentNativeWindowHandle()?.0 as usize,
+            same_element: automation.CompareElements(focused, &root)?.as_bool(),
+            role: if focused.CurrentControlType()? == UIA_ListControlTypeId {
+                FocusRole::List
+            } else {
+                FocusRole::Other
+            },
+            enabled: focused.CurrentIsEnabled()?.as_bool(),
+            has_keyboard_focus: focused.CurrentHasKeyboardFocus()?.as_bool(),
+        }))
+    }
+}
+
+fn observe_empty_focus(
+    automation: &IUIAutomation,
+    available: Option<&IUIAutomationElement>,
     ready: mpsc::Sender<bool>,
     finish: mpsc::Receiver<()>,
     diagnostics: bool,
@@ -438,6 +467,11 @@ fn observe_unavailable_empty_focus(
             ..Default::default()
         };
         GetGUIThreadInfo(thread, &mut before)?;
+        if let Some(focused) = available {
+            if !matches_available_empty_focus(automation, focused, before.hwndFocus)? {
+                return Err(declined());
+            }
+        }
         let initial = inspect_empty_list(automation, &before, diagnostics)?.ok_or_else(declined)?;
         if ready.send(true).is_err() || finish.recv().is_err() {
             return Err(declined());
@@ -447,14 +481,21 @@ fn observe_unavailable_empty_focus(
             ..Default::default()
         };
         GetGUIThreadInfo(thread, &mut after)?;
-        let unavailable = matches!(automation.GetFocusedElement(), Err(error) if error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE);
-        let unchanged = unavailable
+        let global_unchanged = match (available, automation.GetFocusedElement()) {
+            (None, Err(error)) => error.code().0 as u32 == UIA_E_ELEMENTNOTAVAILABLE,
+            (Some(initial), Ok(current)) => {
+                automation.CompareElements(initial, &current)?.as_bool()
+                    && matches_available_empty_focus(automation, &current, after.hwndFocus)?
+            }
+            _ => false,
+        };
+        let unchanged = global_unchanged
             && GetForegroundWindow() == foreground
             && before.hwndFocus == after.hwndFocus
             && inspect_empty_list(automation, &after, diagnostics)?.as_ref() == Some(&initial);
         Ok(FocusObservation {
             control_type: initial.control.control_type,
-            global_control_window: 0,
+            global_control_window: available.map_or(0, |_| initial.control.window),
             native_control: Some(initial.control),
             folder_items_focused: false,
             empty_list_candidate: true,
