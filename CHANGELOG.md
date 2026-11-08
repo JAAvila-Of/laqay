@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1](https://github.com/JAAvila-Of/laqay/compare/v1.0.0...v1.0.1) - 2026-11-08
+
+### Fixed
+
+- harden screenshot publication and document privacy ([#68](https://github.com/JAAvila-Of/laqay/pull/68))
+
+### Other
+
+- present the stable release and current validation scope
+
 ## [1.0.0](https://github.com/JAAvila-Of/laqay/compare/v0.1.1...v1.0.0) - 2026-11-07
 
 ### Added
