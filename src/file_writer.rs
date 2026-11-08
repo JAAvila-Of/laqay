@@ -31,14 +31,14 @@ const MAX_PENDING_CLEANUPS: usize = 32;
 const MAX_CLEANUPS_PER_PASTE: usize = 4;
 static PENDING_CLEANUPS: Mutex<VecDeque<OwnedStaging>> = Mutex::new(VecDeque::new());
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
     volume: u64,
     id: [u8; 16],
     created: u64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StagingSnapshot {
     identity: FileIdentity,
     length: u64,
@@ -198,7 +198,13 @@ fn cleanup_staging(staging: &OwnedStaging) -> io::Result<()> {
     };
     // Denying write/delete sharing keeps this exact object stable between the
     // identity check and disposition update. Never delete a replacement path.
-    if staging_snapshot(&file)? != staging.snapshot {
+    let actual = staging_snapshot(&file)?;
+    if actual != staging.snapshot {
+        #[cfg(test)]
+        eprintln!(
+            "Staging cleanup proof changed: expected={:?}, actual={actual:?}",
+            staging.snapshot
+        );
         return Ok(());
     }
     let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
@@ -216,6 +222,8 @@ fn cleanup_staging(staging: &OwnedStaging) -> io::Result<()> {
 }
 
 fn remember_cleanup(staging: OwnedStaging) {
+    #[cfg(test)]
+    eprintln!("Retaining staging cleanup proof: {:?}", staging.snapshot);
     if let Ok(mut pending) = PENDING_CLEANUPS.lock() {
         retain_cleanup(&mut pending, staging);
     }
@@ -250,6 +258,8 @@ fn retry_staging_cleanup(directory: &Path) {
         .ok()
         .map(|mut pending| cleanup_batch(&mut pending, directory))
         .unwrap_or_default();
+    #[cfg(test)]
+    eprintln!("Deferred staging cleanup batch: {}", selected.len());
     // No filesystem operations run while the process-wide queue is locked.
     // Unavailable destinations wait for another paste, never a polling loop.
     for entry in selected {
@@ -539,6 +549,10 @@ pub(crate) fn create_screenshot_with_staging_checked(
         .ok_or_else(|| io::Error::other("Missing staging handle"))?;
     let encoded = encode(file).and_then(|()| file.sync_all());
     encoded?;
+    // Commit an explicit completion time before collecting evidence. In
+    // particular, a server-forced SMB close must not apply a deferred write
+    // timestamp that differs from the completed snapshot retained for cleanup.
+    file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))?;
     let completed = staging_snapshot(file)?;
     pending.identity = Some(completed.identity);
     pending.snapshot = Some(completed);
