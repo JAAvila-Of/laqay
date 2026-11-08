@@ -188,15 +188,19 @@ that an empty list remains accessible after Explorer refreshes. The original
 ImagePaste case remains failed and no additional paste was sent.
 
 The core now prepares a narrow alternative observation for that initial empty
-list. Only the specific global UIA_E_ELEMENTNOTAVAILABLE result enters it.
+list. It accepts either the specific global UIA_E_ELEMENTNOTAVAILABLE result
+or a returned, enabled UIA List whose HasKeyboardFocus is false and whose
+element identity and native handle match the exact native focus provider.
 Native and provider handles must agree on DirectUIHWND/UIItemsView, list type,
 enabled state, an absent or confirmed read-only value pattern and no focused
 subtree element; menus, mouse
-capture and move/size mode are rejected. These observations and unavailable
-global focus must remain stable across the existing Shell handshake. The single
+capture and move/size mode are rejected. These observations and the global-focus
+source must remain stable across the existing Shell handshake. An available
+element must retain its identity, native handle, type, enabled state and false
+HasKeyboardFocus; switching between available and unavailable declines. The single
 focused visible filesystem view must independently report zero items before
 and after its path is resolved. Missing or ambiguous evidence declines. The
-normal semantic-focus route remains intact. Native policy and snapshot tests
+normal keyboard-focused semantic route remains intact. Native policy and snapshot tests
 cover rejected editor/value/focus/view conditions, but the corrected executable
 has not yet passed a guest runtime suite.
 
