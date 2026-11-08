@@ -1,6 +1,49 @@
 # Windows integration validation
 
-## Latest bounded evidence — 2026-11-07 UTC
+## 1.0 release evidence — 2026-11-08 UTC
+
+The [1.0 release PR](https://github.com/JAAvila-Of/laqay/pull/55) records a
+consolidated guest batch against candidate `5b168a3`. The release tag points to
+`af2241e`, whose Git tree is identical to that candidate.
+
+| Environment | Result |
+| --- | --- |
+| Windows 11 Enterprise evaluation, build 26300 | 37 cases and 20 double-paste rounds passed |
+| Windows 10 Pro, build 19045, es-MX | 12 basic cases passed; native file tabs not applicable |
+| RDP between two Windows 11 guests | 17 cases passed |
+| Isolated authenticated, signed UNC share | 16 cases passed |
+| Actual Windows 11 shutdown with a pending image read | Exact process identity and exit code 0 verified by ETW; pending output absent and reference preserved |
+
+All four frozen independent readers passed. Baselines and temporary configuration
+were restored, all guests ended off, and the twelve stage helpers plus the batch
+helper ended, verified by process creation identity. The batch took 19.86 minutes
+with one administrative prompt and no retries. The Windows 11 console profile
+used failure-only diagnostics; RDP used verbose diagnostics. This is not a new
+paired comparison of instrumented and uninstrumented timing.
+
+CI passed 90 tests with zero failures and five controlled exclusions exercised
+separately or in child processes. Native/policy checks cover clipboard contention,
+replacement and cancellation, real Shell staging, storage recovery and bounded
+fresh context confirmation. Actual pending-read shutdown is now covered; an
+encoder blocked at every possible stage is not.
+
+The runtime-tested candidate executable SHA-256 was
+`23f76257db670f66766cf93df6ed67758485a1d185893d76f6ebe6a7da616626`.
+The release workflow rebuilt the identical source tree; the published executable
+SHA-256 is `7829857cb1e561d467c5a8b496a0c326f94af6e1baeb21e5553302fe82821523`.
+These are different bytes. The downloaded delivery was independently checked for
+tag/source identity, package contents, checksums, Windows 1.0.0 metadata, build
+provenance and immutable-release attestations. The downloaded executable was not
+started on the development host; source continuity does not transfer exact-byte
+runtime acceptance. No post-publication guest lifecycle cycle is claimed here.
+
+Coverage remains limited to the recorded platforms, applications and stages. The
+interval after final context validation is non-atomic. Earlier failed attempts
+remain failed, and a passing bounded batch does not establish every historical
+cause or universal compatibility. The dated sections below retain earlier
+results and limits as history; this section describes the current 1.0 evidence.
+
+## Historical bounded evidence — 2026-11-07 UTC
 
 | Environment or component | Tested source | Result |
 | --- | --- | --- |
