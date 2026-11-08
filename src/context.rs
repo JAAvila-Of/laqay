@@ -58,7 +58,7 @@ pub(crate) struct EmptyListEvidence<'a> {
 }
 
 /// Recognize only the exact non-editable native folder list. The caller must
-/// also prove a stable unavailable global focus and an empty filesystem view.
+/// also prove a stable global-focus source and an empty filesystem view.
 #[cfg(any(windows, test))]
 pub(crate) fn native_empty_list(evidence: EmptyListEvidence<'_>) -> bool {
     evidence.native_class == "DirectUIHWND"
@@ -72,6 +72,28 @@ pub(crate) fn native_empty_list(evidence: EmptyListEvidence<'_>) -> bool {
         )
         && !evidence.focused_descendant
         && !evidence.menu_or_capture
+}
+
+#[cfg(any(windows, test))]
+pub(crate) struct AvailableEmptyFocus {
+    pub native_window: usize,
+    pub focused_window: usize,
+    pub same_element: bool,
+    pub role: FocusRole,
+    pub enabled: bool,
+    pub has_keyboard_focus: bool,
+}
+
+/// A returned but unfocused list is only eligible for the separate native-list
+/// and Shell-emptiness proof. This alone never confirms a paste destination.
+#[cfg(any(windows, test))]
+pub(crate) fn available_empty_focus(evidence: AvailableEmptyFocus) -> bool {
+    evidence.native_window != 0
+        && evidence.focused_window == evidence.native_window
+        && evidence.same_element
+        && evidence.role == FocusRole::List
+        && evidence.enabled
+        && !evidence.has_keyboard_focus
 }
 
 /// Allow static text only along a bounded, non-editable path to the exact
@@ -117,6 +139,44 @@ pub fn select_focused_view(views: &[ViewEvidence], context: ContextEvidence) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn available_empty_focus_requires_the_exact_enabled_native_list() {
+        let evidence = || AvailableEmptyFocus {
+            native_window: 3,
+            focused_window: 3,
+            same_element: true,
+            role: FocusRole::List,
+            enabled: true,
+            has_keyboard_focus: false,
+        };
+        assert!(available_empty_focus(evidence()));
+        for change in [
+            |e: &mut AvailableEmptyFocus| e.native_window = 0,
+            |e: &mut AvailableEmptyFocus| e.focused_window = 9,
+            |e: &mut AvailableEmptyFocus| e.same_element = false,
+            |e: &mut AvailableEmptyFocus| e.enabled = false,
+            |e: &mut AvailableEmptyFocus| e.has_keyboard_focus = true,
+        ] {
+            let mut changed = evidence();
+            change(&mut changed);
+            assert!(!available_empty_focus(changed));
+        }
+        for role in [
+            FocusRole::Text,
+            FocusRole::ListItem,
+            FocusRole::DataGrid,
+            FocusRole::DataItem,
+            FocusRole::Pane,
+            FocusRole::Group,
+            FocusRole::Other,
+        ] {
+            assert!(!available_empty_focus(AvailableEmptyFocus {
+                role,
+                ..evidence()
+            }));
+        }
+    }
 
     fn empty_list() -> EmptyListEvidence<'static> {
         EmptyListEvidence {
