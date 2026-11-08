@@ -1,0 +1,14 @@
+title = "Laqay secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Fixed resource-name fixture in two pure harness preparation tests"
+condition = "AND"
+paths = ['''(^|/)scripts/Test-(Share|Storage)HarnessPreparation\.ps1$''']
+regexTarget = "secret"
+regexes = ['''^0123456789abcdef0123456789abcdef$''']

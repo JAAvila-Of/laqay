@@ -1,7 +1,22 @@
 # Contributing to Laqay
 
-Bug reports, questions, and proposals are welcome. Laqay is still in engineering
-validation; discuss substantial changes in an issue before writing a patch.
+Never commit credentials, private clipboard contents, or unsanitized diagnostic
+logs. CI scans available Git history with a pinned Gitleaks binary and redacts
+findings. To run the same scan locally with Gitleaks 8.30.1:
+
+```sh
+gitleaks git . --log-opts=--all --config .gitleaks.toml --redact=100 --ignore-gitleaks-allow --no-banner
+python scripts/test-secret-policy.py /path/to/gitleaks
+```
+
+The only project exception is a fixed synthetic resource-name value in two
+specific harness preparation files. Do not add broad directory exclusions,
+baselines, or inline suppression comments to silence an unexplained finding.
+If a real credential is exposed, revoke or rotate it and report privately using
+[the security policy](SECURITY.md); deleting it in a later commit is insufficient.
+
+Bug reports, questions, and proposals are welcome. Discuss substantial changes
+in an issue before writing a patch.
 Small, focused pull requests are welcome. Acceptance depends on the public
 requirements and evidence, not on the amount of work already spent.
 

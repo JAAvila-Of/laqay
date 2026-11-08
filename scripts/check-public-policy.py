@@ -17,7 +17,8 @@ SUBJECT = re.compile(
 REQUIRED = (
     "LICENSE", "README.md", "CONTRIBUTING.md", "TRADEMARKS.md", "SECURITY.md",
     "CODE_OF_CONDUCT.md", "GOVERNANCE.md", "SUPPORT.md", "docs/RELEASING.md",
-    "THIRD_PARTY_NOTICES.md", "deny.toml",
+    "THIRD_PARTY_NOTICES.md", "deny.toml", "docs/PRIVACY.md", ".gitleaks.toml",
+    ".github/workflows/secrets.yml", "scripts/test-secret-policy.py",
     ".github/CODEOWNERS", ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/bug.yml", ".github/ISSUE_TEMPLATE/proposal.yml",
     ".github/ISSUE_TEMPLATE/question.yml", ".github/ISSUE_TEMPLATE/config.yml",

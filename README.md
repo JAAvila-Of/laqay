@@ -86,6 +86,9 @@ authorize a live clipboard or desktop test.
 
 ## Project information
 
+[Privacy and keyboard observation](docs/PRIVACY.md) explains how Ctrl+V is
+recognized, when clipboard images are read, and what optional diagnostics expose.
+
 [Report an issue](https://github.com/JAAvila-Of/laqay/issues/new/choose) ·
 [Support](SUPPORT.md) · [Security](SECURITY.md) ·
 [Governance](GOVERNANCE.md) · [Code of conduct](CODE_OF_CONDUCT.md)
