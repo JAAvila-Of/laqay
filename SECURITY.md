@@ -17,11 +17,10 @@ An ordinary feature defect belongs in the public bug form after sanitization.
 
 ## Supported code
 
-Laqay has not published a stable release and remains in engineering validation.
-During this stage, fixes target current `main` and the next release. Once releases
-are published, security fixes target the latest release; older releases and
-unofficial builds have no backport commitment. A development build or passing CI
-is not evidence that the full desktop validation matrix has passed.
+Security fixes target the latest stable release, currently 1.0.0, and current
+`main` for the next release. Older releases and unofficial builds have no
+backport commitment. A development build or passing CI is not evidence that
+the full desktop validation matrix has passed.
 
 ## Handling and disclosure
 
@@ -37,3 +36,8 @@ handles untrusted image data and filesystem destinations; run supported Windows
 updates, keep Laqay current, and avoid using development builds with irreplaceable
 data. Download official releases from this repository, verify published checksums,
 and review the stated validation limits. See [release handling](docs/RELEASING.md).
+
+See [privacy and keyboard observation](docs/PRIVACY.md) for the input hook,
+clipboard access, optional diagnostics, and image metadata. Run Laqay without
+administrator privileges. Release checksums and GitHub attestations do not
+constitute Windows Authenticode signing or a guarantee of antivirus acceptance.

@@ -8,6 +8,22 @@ ephemeral Windows VM and controls only its owned windows through native commands
 
 ## Regular suite
 
+The current development writer keeps the original staging handle open through
+rename and pins the resolved destination's directory chain. Directed filesystem
+regressions attempt to edit, delete, or rename staging before/during/after its
+context lease, and to rename the destination or an ancestor during encoding and
+publication. They also verify lock release, collision preservation, concurrent
+writers, cancellation, and failed-encoding cleanup using synthetic files only.
+They do not start Laqay, install an input hook, or access the live clipboard:
+
+```sh
+cargo test --locked --lib file_writer::tests::
+```
+
+Deferred cleanup tests separately create verified closed staging fixtures held
+by readers that deny deletion. The continuous writer lock prevents those
+incompatible readers from opening during the successful publication path.
+
 ```sh
 cargo test --locked
 ```

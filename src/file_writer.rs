@@ -15,17 +15,15 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use windows::{
-    Win32::{
-        Foundation::HANDLE,
-        Storage::FileSystem::{
-            DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-            FILE_SHARE_READ, FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx,
-            MOVEFILE_WRITE_THROUGH, MoveFileExW, SetFileInformationByHandle,
-        },
+use windows::Win32::{
+    Foundation::HANDLE,
+    Storage::FileSystem::{
+        DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
+        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FileDispositionInfo, FileIdInfo, FileRenameInfo, GetFileInformationByHandleEx,
+        SetFileInformationByHandle,
     },
-    core::PCWSTR,
 };
 
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
@@ -56,6 +54,7 @@ struct OwnedStaging {
 pub(crate) struct StagingContext<'a> {
     path: &'a Path,
     snapshot: Option<StagingSnapshot>,
+    file: &'a File,
 }
 
 pub(crate) struct StagingLease {
@@ -69,18 +68,58 @@ impl StagingContext<'_> {
         let expected = self
             .snapshot
             .ok_or_else(|| io::Error::other("Unknown staging identity"))?;
-        // READ_DATA makes the handle participate in share-access accounting;
-        // an attributes-only handle cannot enforce the write/delete exclusion.
-        let file = open_staging(self.path, FILE_READ_DATA.0)?;
+        // Duplicate the original exclusive writer instead of reopening a name.
+        // The writer remains open through publication, with no write/delete
+        // sharing, so there is no unlocked hand-off between the two handles.
+        let file = self.file.try_clone()?;
         if staging_snapshot(&file)? != expected {
             return Err(io::Error::other("Staging identity or metadata changed"));
         }
-        // The live handle denies write/delete sharing until the observation
-        // finishes. Publication only runs after this lease has been dropped.
+        // This duplicate keeps the same file object alive during observation.
         Ok(StagingLease {
             _file: file,
             path: self.path.canonicalize()?,
             snapshot: expected,
+        })
+    }
+}
+
+/// Keep every component of the resolved destination stable until cleanup or
+/// publication finishes. Reject reparse components rather than following a
+/// concurrently replaced junction while acquiring the chain from root to leaf.
+struct DirectoryLease {
+    path: PathBuf,
+    _components: Vec<File>,
+}
+
+impl DirectoryLease {
+    fn pin(directory: &Path) -> io::Result<Self> {
+        let path = directory.canonicalize()?;
+        let mut components = Vec::new();
+        for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+            let file = OpenOptions::new()
+                .access_mode(FILE_READ_DATA.0 | FILE_READ_ATTRIBUTES.0)
+                .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
+                .open(component)?;
+            let metadata = file.metadata()?;
+            if !metadata.is_dir()
+                || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+            {
+                return Err(io::Error::other(
+                    "Destination component is not an ordinary directory",
+                ));
+            }
+            components.push(file);
+        }
+        if directory.canonicalize()? != path {
+            return Err(io::Error::other(
+                "Destination changed while acquiring directory handles",
+            ));
+        }
+        Ok(Self {
+            path,
+            _components: components,
         })
     }
 }
@@ -350,7 +389,9 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
         }
         let path = directory.join(format!(".laqay-{}-{id}.tmp", std::process::id()));
         match OpenOptions::new()
+            .read(true)
             .write(true)
+            .access_mode(FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | DELETE.0)
             .create_new(true)
             .share_mode(FILE_SHARE_READ.0)
             .open(&path)
@@ -386,6 +427,48 @@ fn wide_path(path: &Path) -> io::Result<Vec<u16>> {
     }
     encoded.push(0);
     Ok(encoded)
+}
+
+fn rename_staging(file: &File, destination: &Path) -> io::Result<()> {
+    let name = wide_path(destination)?;
+    let name_bytes = (name.len() - 1)
+        .checked_mul(size_of::<u16>())
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .ok_or_else(|| io::Error::other("Destination name is too long"))?;
+    let size = std::mem::offset_of!(FILE_RENAME_INFO, FileName)
+        .checked_add(size_of_val(name.as_slice()))
+        .ok_or_else(|| io::Error::other("Rename information is too large"))?
+        .max(size_of::<FILE_RENAME_INFO>());
+    let bytes = u32::try_from(size).map_err(|_| io::Error::other("Rename buffer is too large"))?;
+    // usize storage provides at least FILE_RENAME_INFO alignment on Windows.
+    let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: The aligned allocation contains the complete header and trailing
+    // UTF-16 name including NUL. FileNameLength excludes NUL. Zeroed flags mean
+    // ReplaceIfExists=false. The source is the original live file handle; the
+    // absolute destination's directory chain is pinned by DirectoryLease.
+    unsafe {
+        info.write(FILE_RENAME_INFO {
+            FileNameLength: name_bytes,
+            ..Default::default()
+        });
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            storage
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+                .cast::<u16>(),
+            name.len(),
+        );
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileRenameInfo,
+            info.cast(),
+            bytes,
+        )
+    }
+    .map_err(windows_io)
 }
 
 /// Encode a complete PNG into a staging file and rename it to an unused final name.
@@ -428,6 +511,8 @@ pub(crate) fn create_screenshot_with_staging_checked(
     }
     // Validate the path before creating any output.
     wide_path(directory)?;
+    let directory_lease = DirectoryLease::pin(directory)?;
+    let directory = directory_lease.path.as_path();
     retry_staging_cleanup(directory);
     let mut pending = reserve_staging_file(directory)?;
     let file = pending
@@ -435,14 +520,8 @@ pub(crate) fn create_screenshot_with_staging_checked(
         .as_mut()
         .ok_or_else(|| io::Error::other("Missing staging handle"))?;
     let encoded = encode(file).and_then(|()| file.sync_all());
-    pending.close_staging();
     encoded?;
-    let source = wide_path(
-        pending
-            .path
-            .as_deref()
-            .ok_or_else(|| io::Error::other("Missing staging path"))?,
-    )?;
+    pending.snapshot = Some(staging_snapshot(file)?);
     let mut collision = 0;
     loop {
         before_publish(StagingContext {
@@ -451,27 +530,25 @@ pub(crate) fn create_screenshot_with_staging_checked(
                 .as_deref()
                 .ok_or_else(|| io::Error::other("Missing staging path"))?,
             snapshot: pending.snapshot,
+            file: pending
+                .file
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Missing staging handle"))?,
         })?;
         let destination = directory.join(time.filename(collision));
-        let target = wide_path(&destination)?;
-        // SAFETY: Both strings are NUL-terminated and live through the call.
-        // Both paths are in the same supplied directory. REPLACE_EXISTING and
-        // COPY_ALLOWED are deliberately absent: existing files cannot be replaced
-        // and no cross-volume copy fallback is requested.
-        let result = unsafe {
-            MoveFileExW(
-                PCWSTR(source.as_ptr()),
-                PCWSTR(target.as_ptr()),
-                MOVEFILE_WRITE_THROUGH,
-            )
-        };
+        let result = rename_staging(
+            pending
+                .file
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Missing staging handle"))?,
+            &destination,
+        );
         match result {
             Ok(()) => {
                 pending.path.take();
                 return Ok(destination);
             }
             Err(error) => {
-                let error = windows_io(error);
                 if error.kind() != io::ErrorKind::AlreadyExists
                     && fs::symlink_metadata(&destination).is_err()
                 {
@@ -489,7 +566,6 @@ pub(crate) fn create_screenshot_with_staging_checked(
 mod tests {
     use super::*;
     use std::io::Write;
-    use windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -540,31 +616,64 @@ mod tests {
     }
 
     #[test]
-    fn staging_lease_rejects_changed_metadata_and_replacement_files() {
-        for replace in [false, true] {
-            let directory = TestDirectory::new();
-            let mut retained = None;
-            let result = create_screenshot_with_staging_checked(
-                &directory.0,
-                time(),
-                |file| file.write_all(b"original encoded image"),
-                |context| {
-                    retained = Some(context.path.to_owned());
-                    if replace {
-                        fs::rename(context.path, context.path.with_extension("retained"))?;
-                    }
-                    fs::write(context.path, b"changed")?;
-                    assert!(context.pin().is_err());
-                    Err(io::Error::new(
-                        io::ErrorKind::Interrupted,
-                        "Changed staging",
-                    ))
-                },
-            );
-            assert!(result.is_err());
-            assert_eq!(fs::read(retained.unwrap()).unwrap(), b"changed");
-            assert!(!directory.0.join(time().filename(0)).exists());
-        }
+    fn staging_remains_exclusive_before_during_and_after_context_observation() {
+        let directory = TestDirectory::new();
+        let output = create_screenshot_with_staging_checked(
+            &directory.0,
+            time(),
+            |file| file.write_all(b"original encoded image"),
+            |context| {
+                let tamper = || {
+                    assert!(fs::write(context.path, b"changed").is_err());
+                    assert!(fs::remove_file(context.path).is_err());
+                    assert!(
+                        fs::rename(context.path, context.path.with_extension("retained")).is_err()
+                    );
+                };
+                tamper();
+                let lease = context.pin()?;
+                assert!(lease.matches_view_item(context.path));
+                tamper();
+                drop(lease);
+                // Publication must not reopen an unlocked source pathname.
+                tamper();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"original encoded image");
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn destination_and_ancestor_cannot_be_renamed_during_encoding_or_publication() {
+        let ancestor = TestDirectory::new();
+        let directory = ancestor.0.join("destination");
+        fs::create_dir(&directory).unwrap();
+        let moved = ancestor.0.with_extension("moved");
+        let tamper = || {
+            assert!(fs::rename(&directory, ancestor.0.join("replacement")).is_err());
+            assert!(fs::rename(&ancestor.0, &moved).is_err());
+        };
+        let output = create_screenshot_checked(
+            &directory,
+            time(),
+            |file| {
+                tamper();
+                file.write_all(b"original image")
+            },
+            || {
+                tamper();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(&output).unwrap(), b"original image");
+        // All directory handles are released when the operation returns.
+        fs::rename(&ancestor.0, &moved).unwrap();
+        fs::rename(&moved, &ancestor.0).unwrap();
+        fs::remove_file(output).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 
     #[test]
@@ -578,7 +687,8 @@ mod tests {
                 assert!(
                     StagingContext {
                         path: context.path,
-                        snapshot: None
+                        snapshot: None,
+                        file: context.file,
                     }
                     .pin()
                     .is_err()
@@ -714,19 +824,19 @@ mod tests {
     }
 
     #[test]
-    fn an_encoding_failure_can_record_identity_while_a_reader_denies_delete() {
+    fn encoding_failure_keeps_staging_exclusive_until_cleanup() {
         let directory = TestDirectory::new();
-        let mut held = None;
         let mut path = None;
         let result = create_screenshot(&directory.0, time(), |file| {
             file.write_all(b"failed encoded data")?;
             let entry = fs::read_dir(&directory.0)?.next().unwrap()?;
             path = Some(entry.path());
-            held = Some(
+            assert!(
                 OpenOptions::new()
                     .read(true)
                     .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
-                    .open(entry.path())?,
+                    .open(entry.path())
+                    .is_err()
             );
             Err(io::Error::other("Synthetic encoding failure"))
         });
@@ -735,41 +845,34 @@ mod tests {
             "Synthetic encoding failure"
         );
         let staging = path.unwrap();
-        assert_eq!(fs::read(&staging).unwrap(), b"failed encoded data");
-        drop(held);
+        assert!(!staging.exists());
         create_screenshot(&directory.0, time(), |file| file.write_all(b"fresh image")).unwrap();
         assert!(!staging.exists());
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
     fn hold_failed_staging(directory: &Path) -> (PathBuf, File) {
-        let mut held = None;
-        let mut path = None;
-        let result = create_screenshot_checked(
-            directory,
-            time(),
-            |file| file.write_all(b"staged image"),
-            || {
-                let entry = fs::read_dir(directory)?.next().unwrap()?;
-                path = Some(entry.path());
-                // Deny DELETE access until the simulated unavailable destination
-                // recovers. The writer must retain its own record, not force cleanup.
-                held = Some(
-                    OpenOptions::new()
-                        .read(true)
-                        .share_mode(FILE_SHARE_READ.0)
-                        .open(entry.path())?,
-                );
-                Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "Simulated publication failure",
-                ))
-            },
-        );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
-        let path = path.unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"staged image");
-        (path, held.unwrap())
+        // Exercise deferred cleanup of a closed file independently of the new
+        // continuous writer lock, which now prevents this reader from opening
+        // during successful encoding/publication.
+        let path = directory.canonicalize().unwrap().join(format!(
+            ".laqay-{}-{}.tmp",
+            std::process::id(),
+            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, b"staged image").unwrap();
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ.0)
+            .open(&path)
+            .unwrap();
+        let staging = OwnedStaging {
+            path: path.clone(),
+            snapshot: staging_snapshot(&held).unwrap(),
+        };
+        assert!(cleanup_staging(&staging).is_err());
+        remember_cleanup(staging);
+        (path, held)
     }
 
     #[test]

@@ -23,7 +23,8 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          {"context": "windows"}, {"context": "policy"}, {"context": "dependencies"}
+          {"context": "windows"}, {"context": "policy"}, {"context": "dependencies"},
+          {"context": "secrets"}
         ]
       }
     }
