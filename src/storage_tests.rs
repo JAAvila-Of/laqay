@@ -7,7 +7,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use windows::{
-    Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetVolumeInformationW},
+    Win32::{
+        Foundation::ERROR_UNEXP_NET_ERR,
+        Storage::FileSystem::{GetDiskFreeSpaceExW, GetVolumeInformationW},
+    },
     core::PCWSTR,
 };
 
@@ -154,8 +157,11 @@ fn share_withdrawal_before_publication_recovers() {
     );
     let error = result.unwrap_err();
     let code = error.raw_os_error().unwrap();
+    // An existing SMB handle invalidated by share withdrawal can report
+    // ERROR_UNEXP_NET_ERR instead of a new pathname lookup's network error.
     assert!(
-        matches!(code, 53 | 64 | 67 | 1203 | 1231 | 1232 | 2250),
+        code as u32 == ERROR_UNEXP_NET_ERR.0
+            || matches!(code, 53 | 64 | 67 | 1203 | 1231 | 1232 | 2250),
         "{error}"
     );
     share_control(
