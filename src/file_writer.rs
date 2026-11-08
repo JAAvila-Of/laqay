@@ -16,13 +16,13 @@ use std::{
     },
 };
 use windows::Win32::{
-    Foundation::HANDLE,
+    Foundation::{FILETIME, HANDLE},
     Storage::FileSystem::{
         DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
         FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE,
         FileDispositionInfo, FileIdInfo, FileRenameInfo, GetFileInformationByHandleEx,
-        SetFileInformationByHandle,
+        SetFileInformationByHandle, SetFileTime,
     },
 };
 
@@ -343,13 +343,17 @@ impl PendingFile {
         }
         self.closed = true;
         self.file.take();
-        // Capture final size/time after the writer has closed. If identity is
-        // unavailable or changed, there is no authority for deferred deletion.
+        // Refresh after closing when possible. A disconnected destination must
+        // not discard a completed snapshot captured from our exclusive handle.
+        // Its write time was frozen before encoding, so closing our handle
+        // cannot invalidate that proof. A successful mismatch revokes it.
         if let (Some(path), Some(identity)) = (self.path.as_deref(), self.identity) {
-            self.snapshot = open_staging(path, 0)
-                .and_then(|file| staging_snapshot(&file))
-                .ok()
-                .filter(|snapshot| snapshot.identity == identity);
+            self.snapshot = match open_staging(path, 0).and_then(|file| staging_snapshot(&file)) {
+                Ok(snapshot) => (snapshot.identity == identity).then_some(snapshot),
+                Err(_) => self
+                    .snapshot
+                    .filter(|snapshot| snapshot.identity == identity),
+            };
         }
     }
 }
@@ -395,7 +399,7 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
             .open(&path)
         {
             Ok(file) => {
-                return Ok(PendingFile {
+                let pending = PendingFile {
                     path: Some(path),
                     identity: staging_snapshot(&file)
                         .ok()
@@ -403,7 +407,23 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
                     file: Some(file),
                     snapshot: None,
                     closed: false,
-                });
+                };
+                let file = pending
+                    .file
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("Missing staging handle"))?;
+                let preserve = FILETIME {
+                    dwLowDateTime: u32::MAX,
+                    dwHighDateTime: u32::MAX,
+                };
+                // SAFETY: This newly created, owned handle has WRITE_ATTRIBUTES.
+                // Windows' documented sentinel preserves its initial write time
+                // for this handle's lifetime; it does not backdate the file.
+                // Deferred cleanup can then verify an offline snapshot after
+                // close without accepting arbitrary size/time changes.
+                unsafe { SetFileTime(HANDLE(file.as_raw_handle()), None, None, Some(&preserve)) }
+                    .map_err(windows_io)?;
+                return Ok(pending);
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -519,7 +539,9 @@ pub(crate) fn create_screenshot_with_staging_checked(
         .ok_or_else(|| io::Error::other("Missing staging handle"))?;
     let encoded = encode(file).and_then(|()| file.sync_all());
     encoded?;
-    pending.snapshot = Some(staging_snapshot(file)?);
+    let completed = staging_snapshot(file)?;
+    pending.identity = Some(completed.identity);
+    pending.snapshot = Some(completed);
     let mut collision = 0;
     loop {
         before_publish(StagingContext {
@@ -616,11 +638,13 @@ mod tests {
     #[test]
     fn staging_remains_exclusive_before_during_and_after_context_observation() {
         let directory = TestDirectory::new();
+        let mut completed = None;
         let output = create_screenshot_with_staging_checked(
             &directory.0,
             time(),
             |file| file.write_all(b"original encoded image"),
             |context| {
+                completed = context.snapshot;
                 let tamper = || {
                     assert!(fs::write(context.path, b"changed").is_err());
                     assert!(fs::remove_file(context.path).is_err());
@@ -639,7 +663,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(fs::read(output).unwrap(), b"original encoded image");
+        assert_eq!(fs::read(&output).unwrap(), b"original encoded image");
+        // The cleanup evidence survives rename and close, including write time.
+        assert!(Some(staging_snapshot(&File::open(&output).unwrap()).unwrap()) == completed);
         assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
     }
 
