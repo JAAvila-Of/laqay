@@ -94,7 +94,10 @@ struct DirectoryLease {
 
 impl DirectoryLease {
     fn pin(directory: &Path) -> io::Result<Self> {
-        let path = directory.canonicalize()?;
+        // Normalize lexically first, without following a junction that may
+        // have replaced the already-approved path. Resolve only after every
+        // original component is open and verified as a non-reparse directory.
+        let path = std::path::absolute(directory)?;
         let mut components = Vec::new();
         for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
             let file = OpenOptions::new()
@@ -112,13 +115,8 @@ impl DirectoryLease {
             }
             components.push(file);
         }
-        if directory.canonicalize()? != path {
-            return Err(io::Error::other(
-                "Destination changed while acquiring directory handles",
-            ));
-        }
         Ok(Self {
-            path,
+            path: path.canonicalize()?,
             _components: components,
         })
     }
@@ -674,6 +672,58 @@ mod tests {
         fs::rename(&moved, &ancestor.0).unwrap();
         fs::remove_file(output).unwrap();
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn a_junction_at_the_supplied_destination_is_rejected_before_encoding() {
+        use std::{
+            os::windows::process::CommandExt,
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        let parent = TestDirectory::new();
+        let other = TestDirectory::new();
+        let link = parent.0.join("redirected");
+        // Junction creation needs no administrator or Developer Mode. Paths
+        // travel as environment values, never interpolated command text.
+        let mut child = Command::new("powershell.exe")
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:LAQAY_JUNCTION_LINK -Target $env:LAQAY_JUNCTION_TARGET | Out-Null"])
+            .env("LAQAY_JUNCTION_LINK", &link)
+            .env("LAQAY_JUNCTION_TARGET", &other.0)
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("Junction fixture preparation exceeded its deadline");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success(), "Junction fixture preparation failed");
+        struct Junction(PathBuf);
+        impl Drop for Junction {
+            fn drop(&mut self) {
+                fs::remove_dir(&self.0).unwrap();
+            }
+        }
+        let junction = Junction(link);
+        assert_ne!(
+            fs::symlink_metadata(&junction.0).unwrap().file_attributes()
+                & FILE_ATTRIBUTE_REPARSE_POINT.0,
+            0
+        );
+        let result = create_screenshot(&junction.0, time(), |_| panic!("must not encode"));
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(&other.0).unwrap().count(), 0);
     }
 
     #[test]
