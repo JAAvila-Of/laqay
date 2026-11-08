@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- refresh folder text transitions with native list items
 - confirm accessible empty Explorer lists through native evidence
 - confirm transient folder identity before initial image reads
 - retry transient clipboard contention within the original request
