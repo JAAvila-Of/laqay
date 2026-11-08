@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- confirm accessible empty Explorer lists through native evidence
 - confirm transient folder identity before initial image reads
 - retry transient clipboard contention within the original request
 - complete teardown before ending the Windows session
