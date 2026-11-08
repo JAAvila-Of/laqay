@@ -1,6 +1,6 @@
 # Using the portable Windows build
 
-Laqay is an engineering preview for Windows x64. It saves clipboard images as
+Laqay is a portable application for Windows x64. It saves clipboard images as
 PNG files when you press Ctrl+V in a physical Windows Explorer folder. There is
 no installer, service, driver, or automatic updater. The executable requests no
 administrator access. Windows may show a reputation warning for an unsigned

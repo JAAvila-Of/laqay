@@ -4,7 +4,7 @@
   <p><strong>Paste it. Save it.</strong></p>
   <p>Clipboard image → PNG in your current Windows Explorer folder.<br>Just press <kbd>Ctrl</kbd> + <kbd>V</kbd>.</p>
   <p>Windows x64 · Portable · MIT</p>
-  <p><a href="https://github.com/JAAvila-Of/laqay/releases"><strong>Download the engineering preview</strong></a> · <a href="docs/PORTABLE.md">Verify &amp; get started</a> · <a href="docs/integration-tests.md">Test coverage</a></p>
+  <p><a href="https://github.com/JAAvila-Of/laqay/releases/latest"><strong>Download for Windows</strong></a> · <a href="docs/PORTABLE.md">Verify &amp; get started</a> · <a href="docs/integration-tests.md">Test coverage</a></p>
 </div>
 
 ![CI](https://github.com/JAAvila-Of/laqay/actions/workflows/ci.yml/badge.svg?branch=main)
@@ -41,24 +41,28 @@ Keep the executable in a stable location if you enable startup. The
 [portable guide](docs/PORTABLE.md) covers download verification, startup,
 updates and removal. Normal use does not request administrator privileges.
 
-## Engineering preview
+## Stable release, bounded validation
 
-The published v0.1.0 → v0.1.1 portable cycle passed 37 assertions in an isolated
-Windows 11 Enterprise evaluation console, including upgrade, real-login startup
-and removal. Separate desktop suites cover Explorer paste, native file/text
-behavior, UNC, RDP clipboard transfer and selected lifecycle failures.
+[Laqay 1.0.0](https://github.com/JAAvila-Of/laqay/releases/tag/v1.0.0) is available
+for Windows x64. Its source passed a consolidated isolated guest batch:
 
-Recent isolated regression suites passed 37 cases on Windows 11, 12 basic
-cases on Windows 10 Pro 22H2 (native file tabs do not apply), and 16 UNC cases.
-Separate RDP suites passed with an earlier build of the same production logic.
-Hosted CI also checks native clipboard conversion, publication cancellation,
-disk-full and SMB recovery, and directed session-ending notifications.
+| Environment | Passed |
+| --- | --- |
+| Windows 11 Enterprise evaluation, build 26300 | 37 cases and 20 double-paste rounds |
+| Windows 10 Pro 22H2, build 19045, es-MX | 12 cases; native file tabs do not apply |
+| RDP between two Windows 11 guests | 17 cases |
+| Isolated UNC share | 16 cases |
 
-**The full integration matrix remains incomplete.** Real shutdown with pending
-work, additional context-change stages and the intermittent context rejection
-tracked in [#41](https://github.com/JAAvila-Of/laqay/issues/41) retain explicit
-limits. See the [integration matrix](docs/integration-tests.md) for the tested
-sources and scope; these engineering previews are not a claim of 1.0 readiness.
+Actual Windows 11 shutdown with a pending image read also passed, with normal
+application exit and verified restoration. CI passed 90 tests, including native
+clipboard, publication cancellation, Shell staging, disk-full and SMB recovery.
+The published downloads passed independent checksum, package, Windows metadata
+and build/release provenance checks and are protected by release immutability.
+
+Coverage is specific to the recorded builds, applications and stages. The final
+context check is not atomic with publication. See the
+[integration matrix](docs/integration-tests.md) for diagnostic modes, source and
+artifact identities, historical package-cycle results and remaining limits.
 
 ## Build and contribute
 
