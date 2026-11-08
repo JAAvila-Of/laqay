@@ -2,10 +2,11 @@
 
 use std::{
     collections::VecDeque,
+    ffi::OsString,
     fs::{self, File, OpenOptions},
     io,
     os::windows::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::{MetadataExt, OpenOptionsExt},
         io::AsRawHandle,
     },
@@ -25,8 +26,9 @@ use windows::{
             DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
             FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-            FILE_SHARE_READ, FileDispositionInfo, FileIdInfo, GetFileInformationByHandleEx,
-            SetFileInformationByHandle,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileIdInfo,
+            GETFINALPATHNAMEBYHANDLE_FLAGS, GetFileInformationByHandleEx,
+            GetFinalPathNameByHandleW, SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -108,10 +110,10 @@ impl DirectoryLease {
         for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
             let file = OpenOptions::new()
                 .access_mode(FILE_READ_DATA.0 | FILE_READ_ATTRIBUTES.0)
-                // Deny directory write handles as well as deletion: a writable
-                // directory handle could install a reparse point in place.
-                // This does not prevent creating entries inside the directory.
-                .share_mode(FILE_SHARE_READ.0)
+                // SMB servers need directory write sharing for child operations.
+                // Deny renames/deletion; independently verify the actual staged
+                // file's parent by handle before any image bytes are written.
+                .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
                 .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
                 .open(component)?;
             let metadata = file.metadata()?;
@@ -125,9 +127,59 @@ impl DirectoryLease {
             components.push(file);
         }
         Ok(Self {
-            path: path.canonicalize()?,
+            path: final_path(
+                components
+                    .last()
+                    .ok_or_else(|| io::Error::other("Missing destination handle"))?,
+            )?,
             _components: components,
         })
+    }
+
+    fn verify_staging(&self, file: &File) -> io::Result<()> {
+        for component in &self._components {
+            if component.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                return Err(io::Error::other("Destination became a reparse point"));
+            }
+        }
+        let actual = final_path(file)?;
+        if actual.parent().map(directory_key) != Some(directory_key(&self.path)) {
+            return Err(io::Error::other(
+                "Staging file is outside the pinned destination",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn final_path(file: &File) -> io::Result<PathBuf> {
+    let mut capacity = 512usize;
+    loop {
+        if capacity > 32768 {
+            return Err(io::Error::other(
+                "Resolved path exceeds the supported limit",
+            ));
+        }
+        let mut buffer = vec![0u16; capacity];
+        // SAFETY: The live owned handle and bounded writable UTF-16 allocation
+        // remain valid throughout this synchronous query. Default flags request
+        // the normalized DOS-volume path of this object, not a reopened pathname.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                HANDLE(file.as_raw_handle()),
+                &mut buffer,
+                GETFINALPATHNAMEBYHANDLE_FLAGS::default(),
+            )
+        } as usize;
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length < capacity {
+            return Ok(PathBuf::from(OsString::from_wide(&buffer[..length])));
+        }
+        capacity = length
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("Resolved path is too large"))?;
     }
 }
 
@@ -393,6 +445,26 @@ impl PendingFile {
 
 impl Drop for PendingFile {
     fn drop(&mut self) {
+        if self.path.is_some() {
+            if let Some(file) = self.file.as_ref() {
+                let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+                // SAFETY: Delete only the original still-exclusive file object
+                // created by this writer, without resolving a possibly redirected
+                // pathname. Disconnection falls back to verified deferred cleanup.
+                if unsafe {
+                    SetFileInformationByHandle(
+                        HANDLE(file.as_raw_handle()),
+                        FileDispositionInfo,
+                        (&raw const disposition).cast(),
+                        size_of::<FILE_DISPOSITION_INFO>() as u32,
+                    )
+                }
+                .is_ok()
+                {
+                    self.path.take();
+                }
+            }
+        }
         self.close_staging();
         if let Some(path) = self.path.take() {
             if let Some(snapshot) = self.snapshot {
@@ -565,6 +637,7 @@ pub(crate) fn create_screenshot_with_staging_checked(
         .file
         .as_mut()
         .ok_or_else(|| io::Error::other("Missing staging handle"))?;
+    directory_lease.verify_staging(file)?;
     let encoded = encode(file).and_then(|()| file.sync_all());
     encoded?;
     // Commit an explicit completion time before collecting evidence. In
@@ -587,6 +660,12 @@ pub(crate) fn create_screenshot_with_staging_checked(
                 .as_ref()
                 .ok_or_else(|| io::Error::other("Missing staging handle"))?,
         })?;
+        directory_lease.verify_staging(
+            pending
+                .file
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Missing staging handle"))?,
+        )?;
         let filename = time.filename(collision);
         let destination = directory.join(&filename);
         let result = rename_staging(
@@ -619,7 +698,6 @@ pub(crate) fn create_screenshot_with_staging_checked(
 mod tests {
     use super::*;
     use std::io::Write;
-    use windows::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_WRITE};
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -709,21 +787,9 @@ mod tests {
         let directory = ancestor.0.join("destination");
         fs::create_dir(&directory).unwrap();
         let moved = ancestor.0.with_extension("moved");
-        let writable_directory = |path: &Path| {
-            OpenOptions::new()
-                .access_mode(FILE_GENERIC_WRITE.0)
-                .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
-                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
-                .open(path)
-        };
-        // Establish that the fixture's ACL allows these handles without a lease.
-        drop(writable_directory(&directory).unwrap());
-        drop(writable_directory(&ancestor.0).unwrap());
         let tamper = || {
             assert!(fs::rename(&directory, ancestor.0.join("replacement")).is_err());
             assert!(fs::rename(&ancestor.0, &moved).is_err());
-            assert!(writable_directory(&directory).is_err());
-            assert!(writable_directory(&ancestor.0).is_err());
         };
         let output = create_screenshot_checked(
             &directory,
@@ -740,8 +806,6 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(&output).unwrap(), b"original image");
         // All directory handles are released when the operation returns.
-        drop(writable_directory(&directory).unwrap());
-        drop(writable_directory(&ancestor.0).unwrap());
         fs::rename(&ancestor.0, &moved).unwrap();
         fs::rename(&moved, &ancestor.0).unwrap();
         fs::remove_file(output).unwrap();
@@ -797,6 +861,25 @@ mod tests {
         );
         let result = create_screenshot(&junction.0, time(), |_| panic!("must not encode"));
         assert!(result.is_err());
+        assert_eq!(fs::read_dir(&other.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn resolved_staging_parent_must_match_the_pinned_directory() {
+        let directory = TestDirectory::new();
+        let other = TestDirectory::new();
+        let lease = DirectoryLease::pin(&directory.0).unwrap();
+        let owned = reserve_staging_file(&lease.path).unwrap();
+        assert!(lease.verify_staging(owned.file.as_ref().unwrap()).is_ok());
+        let foreign = reserve_staging_file(&other.0).unwrap();
+        assert!(
+            lease
+                .verify_staging(foreign.file.as_ref().unwrap())
+                .is_err()
+        );
+        drop(foreign);
+        drop(owned);
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
         assert_eq!(fs::read_dir(&other.0).unwrap().count(), 0);
     }
 

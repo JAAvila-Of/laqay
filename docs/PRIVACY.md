@@ -39,8 +39,9 @@ Temporary encoded files are staged in the destination folder. Failed operations
 attempt to clean up their own staging data; interruptions or unavailable storage
 can leave a temporary file. Saved PNGs remain until you remove them.
 
-Current development code holds the resolved directory chain and the original
-staging file open through publication. If the required access or sharing
+Current development code holds the directory chain against renaming, verifies
+the staging file's resolved parent by handle before writing image data, and
+keeps the original staging handle open through publication. If the required access or sharing
 guarantees cannot be obtained, saving fails rather than relaxing the locks.
 This does not make Explorer's focus check atomic with the file operation, and
 it cannot protect against an administrator, kernel-level changes, or a remote
