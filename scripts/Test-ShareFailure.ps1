@@ -91,7 +91,8 @@ try{
     $report.Withdrawn=$true
     Write-ShareMarker (Join-Path $plan.Control 'withdrawn.txt') $plan.Token
     $failure=Wait-SharePhase 'failed.json';$report.Failure=$failure
-    if($failure.pid -ne $child.Id -or $failure.error -notin @(53,64,67,1203,1231,1232,2250)){throw 'The native publication did not fail on the withdrawn resource.'}
+    # Handle-based rename can report ERROR_UNEXP_NET_ERR (59) after withdrawal.
+    if($failure.pid -ne $child.Id -or $failure.error -notin @(53,59,64,67,1203,1231,1232,2250)){throw 'The native publication did not fail on the withdrawn resource.'}
     if(@(Get-ChildItem -LiteralPath $plan.Data -Filter '*.png').Count -ne 1 -or (Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash -cne $report.OriginalHash){throw 'Withdrawal published unexpected PNG output or changed the original.'}
     New-OwnShare
     $deadline=[DateTime]::UtcNow.AddSeconds(15);$available=$false
