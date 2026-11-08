@@ -57,13 +57,19 @@ that key after exiting. Saved PNGs belong to you and remain in their folders.
 
 ## Validation limits and support
 
-Automated desktop evidence covers one Windows 11 Enterprise evaluation setup,
-including local Explorer, real login startup, an authenticated UNC share, RDP
-clipboard redirection, Explorer restart, and exit during a blocked clipboard
-read. The full matrix remains incomplete. Windows 10, every storage failure,
-RDP reconnects, and all shutdown/encoding stages have not been validated.
-The initial release delivery and portable update/removal lifecycle must also
-be checked separately from development artifacts.
+Recorded desktop evidence for 1.0.0 covers Windows 11 Enterprise evaluation
+and basic Windows 10 Pro scenarios, with separate UNC, RDP and pending-read
+shutdown results. The writer changes prepared for 1.0.1 passed directed native,
+real disk-full and SMB recovery checks and CI application preference tests.
+The complete interactive guest matrix was not repeated for those changes.
+
+Consult the release's tagged validation matrix for exact source/artifact
+identities, OS builds and remaining limits; the repository's current matrix is
+at https://github.com/JAAvila-Of/laqay/blob/main/docs/integration-tests.md.
+Coverage does not establish every application, filesystem, reconnect or
+shutdown/encoding stage. Published downloads and their lifecycle must be checked
+separately from development artifacts. See the keyboard and data-handling policy
+at https://github.com/JAAvila-Of/laqay/blob/main/docs/PRIVACY.md.
 
 Report reproducible problems at https://github.com/JAAvila-Of/laqay/issues.
 For undisclosed security issues, use the repository's private vulnerability

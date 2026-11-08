@@ -39,10 +39,11 @@ Temporary encoded files are staged in the destination folder. Failed operations
 attempt to clean up their own staging data; interruptions or unavailable storage
 can leave a temporary file. Saved PNGs remain until you remove them.
 
-Current development code holds the directory chain against renaming, verifies
+The writer holds the directory chain against renaming, verifies
 the staging file's resolved parent by handle before writing image data, and
-keeps the original staging handle open through publication. If the required access or sharing
-guarantees cannot be obtained, saving fails rather than relaxing the locks.
+keeps the original staging handle open through publication. If the required
+access or sharing guarantees cannot be obtained, saving fails rather than
+relaxing the locks.
 This does not make Explorer's focus check atomic with the file operation, and
 it cannot protect against an administrator, kernel-level changes, or a remote
 file server that does not enforce Windows sharing semantics. These filesystem
@@ -67,7 +68,7 @@ never attach private clipboard contents or unsanitized paths to a public issue.
 
 Run Laqay as a normal user, without administrator privileges, and keep Windows
 updated: the application processes untrusted image data using Windows codecs.
-The published 1.0.0 executable is not Authenticode-signed. Checksums and GitHub
+The portable executable is not Authenticode-signed. Checksums and GitHub
 attestations help verify the distribution but do not add a Windows publisher
 signature. No signing method guarantees the absence of antivirus warnings.
 

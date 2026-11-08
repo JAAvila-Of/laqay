@@ -17,7 +17,7 @@ An ordinary feature defect belongs in the public bug form after sanitization.
 
 ## Supported code
 
-Security fixes target the latest stable release, currently 1.0.0, and current
+Security fixes target the latest stable release and current
 `main` for the next release. Older releases and unofficial builds have no
 backport commitment. A development build or passing CI is not evidence that
 the full desktop validation matrix has passed.

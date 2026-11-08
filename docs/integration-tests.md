@@ -1,5 +1,29 @@
 # Windows integration validation
 
+## 1.0.1 preparation evidence — 2026-11-08 UTC
+
+[PR #68](https://github.com/JAAvila-Of/laqay/pull/68) changes file publication:
+the original staging handle remains exclusive through a native same-parent
+rename, and the actual staging parent is verified by handle before image writes.
+Its reviewed source `4a4aa7a` and merged `efd9aaf` have identical Git trees.
+
+[Main CI 42488130507](https://github.com/JAAvila-Of/laqay/actions/runs/42488130507)
+passed on that source, including 94 native tests, private Shell/clipboard child
+suites, real disk-full recovery, real SMB withdrawal/recovery, application
+preference checks and portable packaging. Five opt-in cases remain ignored in
+the regular harness; the child wrappers and storage controllers run their
+respective cases separately. SMB recovery preserved the original, rejected an
+incomplete publication, saved the fresh image, and retired its own staging file
+without controller cleanup. Source checks also passed policy, dependencies and
+secret scanning; the main development artifacts passed build provenance checks.
+
+release-plz prepares the package version and changelog separately. These results
+do not establish exact-byte runtime acceptance of a future published download.
+The complete interactive guest matrix below was not repeated for the writer
+changes. Its 1.0.0 results retain their original source and artifact identities;
+they are not presented as runs of the new writer. The final Explorer focus check
+remains non-atomic with publication.
+
 ## 1.0 release evidence — 2026-11-08 UTC
 
 The [1.0 release PR](https://github.com/JAAvila-Of/laqay/pull/55) records a
