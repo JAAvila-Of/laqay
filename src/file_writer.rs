@@ -16,13 +16,13 @@ use std::{
     },
 };
 use windows::Win32::{
-    Foundation::{FILETIME, HANDLE},
+    Foundation::HANDLE,
     Storage::FileSystem::{
         DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
         FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ,
         FileDispositionInfo, FileIdInfo, FileRenameInfo, GetFileInformationByHandleEx,
-        SetFileInformationByHandle, SetFileTime,
+        SetFileInformationByHandle,
     },
 };
 
@@ -132,7 +132,7 @@ impl StagingLease {
         let Some(parent) = item.parent().and_then(|parent| parent.canonicalize().ok()) else {
             return false;
         };
-        self.path.parent() == Some(parent.as_path())
+        self.path.parent().map(directory_key) == Some(directory_key(&parent))
             && item.file_name().is_some()
             && item.file_name() == self.path.file_name()
             && open_staging(item, 0)
@@ -239,13 +239,27 @@ fn retain_cleanup(pending: &mut VecDeque<OwnedStaging>, staging: OwnedStaging) {
     pending.push_back(staging);
 }
 
+fn directory_key(path: &Path) -> Vec<u16> {
+    let mut key: Vec<_> = path.as_os_str().encode_wide().collect();
+    // Verbatim UNC roots can retain a trailing separator after canonicalize,
+    // while parent() returns the same root without it. Do not case-fold or
+    // resolve paths here: queue selection must stay lexical and nonblocking.
+    while key.last().is_some_and(|unit| matches!(*unit, 0x2f | 0x5c)) {
+        key.pop();
+    }
+    key
+}
+
 fn cleanup_batch(pending: &mut VecDeque<OwnedStaging>, directory: &Path) -> Vec<OwnedStaging> {
     let mut selected = Vec::new();
+    let key = directory_key(directory);
     for _ in 0..MAX_CLEANUPS_PER_PASTE {
-        let Some(index) = pending
-            .iter()
-            .position(|entry| entry.path.parent() == Some(directory))
-        else {
+        let Some(index) = pending.iter().position(|entry| {
+            entry
+                .path
+                .parent()
+                .is_some_and(|parent| directory_key(parent) == key)
+        }) else {
             break;
         };
         if let Some(entry) = pending.remove(index) {
@@ -358,8 +372,8 @@ impl PendingFile {
         self.file.take();
         // Refresh after closing when possible. A disconnected destination must
         // not discard a completed snapshot captured from our exclusive handle.
-        // Its write time was frozen before encoding, so closing our handle
-        // cannot invalidate that proof. A successful mismatch revokes it.
+        // Its write time was explicitly finalized before collecting the proof.
+        // A successful mismatch revokes the evidence instead of weakening it.
         if let (Some(path), Some(identity)) = (self.path.as_deref(), self.identity) {
             self.snapshot = match open_staging(path, 0).and_then(|file| staging_snapshot(&file)) {
                 Ok(snapshot) => (snapshot.identity == identity).then_some(snapshot),
@@ -412,7 +426,7 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
             .open(&path)
         {
             Ok(file) => {
-                let pending = PendingFile {
+                return Ok(PendingFile {
                     path: Some(path),
                     identity: staging_snapshot(&file)
                         .ok()
@@ -420,23 +434,7 @@ fn reserve_staging_file(directory: &Path) -> io::Result<PendingFile> {
                     file: Some(file),
                     snapshot: None,
                     closed: false,
-                };
-                let file = pending
-                    .file
-                    .as_ref()
-                    .ok_or_else(|| io::Error::other("Missing staging handle"))?;
-                let preserve = FILETIME {
-                    dwLowDateTime: u32::MAX,
-                    dwHighDateTime: u32::MAX,
-                };
-                // SAFETY: This newly created, owned handle has WRITE_ATTRIBUTES.
-                // Windows' documented sentinel preserves its initial write time
-                // for this handle's lifetime; it does not backdate the file.
-                // Deferred cleanup can then verify an offline snapshot after
-                // close without accepting arbitrary size/time changes.
-                unsafe { SetFileTime(HANDLE(file.as_raw_handle()), None, None, Some(&preserve)) }
-                    .map_err(windows_io)?;
-                return Ok(pending);
+                });
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -1089,6 +1087,31 @@ mod tests {
         );
         assert_eq!(pending.len(), MAX_PENDING_CLEANUPS - MAX_CLEANUPS_PER_PASTE);
         assert!(cleanup_batch(&mut pending, Path::new(r"C:\absent")).is_empty());
+    }
+
+    #[test]
+    fn cleanup_selects_verbatim_unc_roots_with_or_without_a_trailing_separator() {
+        let root = Path::new(r"\\?\UNC\server\share\");
+        let path = root.join(".laqay-fixture.tmp");
+        assert_eq!(directory_key(path.parent().unwrap()), directory_key(root));
+        let mut pending = VecDeque::from([OwnedStaging {
+            path,
+            snapshot: StagingSnapshot {
+                identity: FileIdentity {
+                    volume: 1,
+                    id: [1; 16],
+                    created: 1,
+                },
+                length: 1,
+                written: 1,
+            },
+        }]);
+        assert_eq!(cleanup_batch(&mut pending, root).len(), 1);
+        assert!(pending.is_empty());
+        assert_ne!(
+            directory_key(root),
+            directory_key(Path::new(r"\\?\UNC\server\other\"))
+        );
     }
 
     #[test]
