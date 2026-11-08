@@ -20,7 +20,7 @@ use windows::Win32::{
     Storage::FileSystem::{
         DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
-        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_SHARE_READ,
         FileDispositionInfo, FileIdInfo, FileRenameInfo, GetFileInformationByHandleEx,
         SetFileInformationByHandle, SetFileTime,
     },
@@ -102,7 +102,10 @@ impl DirectoryLease {
         for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
             let file = OpenOptions::new()
                 .access_mode(FILE_READ_DATA.0 | FILE_READ_ATTRIBUTES.0)
-                .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+                // Deny directory write handles as well as deletion: a writable
+                // directory handle could install a reparse point in place.
+                // This does not prevent creating entries inside the directory.
+                .share_mode(FILE_SHARE_READ.0)
                 .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
                 .open(component)?;
             let metadata = file.metadata()?;
@@ -600,6 +603,7 @@ pub(crate) fn create_screenshot_with_staging_checked(
 mod tests {
     use super::*;
     use std::io::Write;
+    use windows::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_WRITE};
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -689,9 +693,21 @@ mod tests {
         let directory = ancestor.0.join("destination");
         fs::create_dir(&directory).unwrap();
         let moved = ancestor.0.with_extension("moved");
+        let writable_directory = |path: &Path| {
+            OpenOptions::new()
+                .access_mode(FILE_GENERIC_WRITE.0)
+                .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
+                .open(path)
+        };
+        // Establish that the fixture's ACL allows these handles without a lease.
+        drop(writable_directory(&directory).unwrap());
+        drop(writable_directory(&ancestor.0).unwrap());
         let tamper = || {
             assert!(fs::rename(&directory, ancestor.0.join("replacement")).is_err());
             assert!(fs::rename(&ancestor.0, &moved).is_err());
+            assert!(writable_directory(&directory).is_err());
+            assert!(writable_directory(&ancestor.0).is_err());
         };
         let output = create_screenshot_checked(
             &directory,
@@ -708,6 +724,8 @@ mod tests {
         .unwrap();
         assert_eq!(fs::read(&output).unwrap(), b"original image");
         // All directory handles are released when the operation returns.
+        drop(writable_directory(&directory).unwrap());
+        drop(writable_directory(&ancestor.0).unwrap());
         fs::rename(&ancestor.0, &moved).unwrap();
         fs::rename(&moved, &ancestor.0).unwrap();
         fs::remove_file(output).unwrap();
